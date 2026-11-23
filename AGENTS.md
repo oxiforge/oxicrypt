@@ -81,7 +81,7 @@ picking a home or copying the fact into several places.
 | **Internal dependency version requirement** | **root `Cargo.toml` `[workspace.dependencies]`** — one `{ path, version }` entry per internal crate | members declare `{ workspace = true }`. One member (`esv-harness`) cannot inherit and states its own version; see below |
 | **Pending work** — concrete, scoped deliverables | **GitHub Issues** (`tier:` labels) | closed via `Closes #N`; `ROADMAP.md` holds not-yet-deliverable work |
 | **Forward-looking, not-yet-a-deliverable work** | **`ROADMAP.md`** (Ideas / Designs / Features) | becomes GitHub issue(s) when scoped, then removed |
-| **Design-of-record** — design-first epics | **`docs/design/*.md`** | `ROADMAP.md` Designs carries a one-line pointer |
+| **Product requirements document** — what a feature will be, approved before code | **`prd/<slug>.md`** | approved together with its `ISA.md` criteria by a code-free pull request; `ROADMAP.md` Designs carries a one-line pointer; `docs/design/*.md` holds earlier design records and takes no new files |
 
 ### Internal dependencies and packaging
 
@@ -148,16 +148,19 @@ Three surfaces, one direction of flow — speculative → designed → actionabl
   → `tier:backlog` cold; **unlabeled tier = needs triage**). A PR closes its issue the ordinary way —
   `Closes #N` / `Fixes #N` in the PR or commit body, auto-closing on merge to `main`.
 - **`ROADMAP.md`** (root) holds *forward-looking work that is not yet a deliverable*: `Ideas`
-  (speculative), `Designs` (design-first epics — one-line pointers to `docs/design/`), `Features`
+  (speculative), `Designs` (design-first epics — one-line pointers to their PRD under `prd/`), `Features`
   (wanted-but-deferred). Forward-only, no status/history. When an item is decomposed into actionable
   work it **is removed** from `ROADMAP.md`, and a change to released work becomes GitHub issue(s).
-- **`docs/design/*.md`** hold the *design-of-record* for design-first epics (RFC-lite: problem →
-  constraints / ISC invariants → approach → open questions). An accepted design is built, through issues
-  when it changes released work; the doc **persists** as rationale.
+- **`prd/<slug>.md`** holds the product requirements document for a feature: user outcomes, every state
+  and failure path, every number with its derivation, every platform behaviour relied on, out of scope.
+  It is approved, together with the feature's acceptance criteria in `ISA.md`, by merging both in a pull
+  request that carries no feature code; no feature code is written before that merge. A gap found during
+  the build is added to the PRD and approved the same way before the code that depends on it merges. The
+  document **persists** as rationale. `docs/design/*.md` holds the design records written before this
+  convention and takes no new files.
 
-So: an idea enters `ROADMAP.md`; if it needs design, it gets a `docs/design/` doc; once actionable, its
-roadmap entry is removed and it is built, with GitHub issues when it changes released work (the design
-doc stays). Nothing here records
+So: an idea enters `ROADMAP.md`; it gets a PRD under `prd/`; once actionable, its
+roadmap entry is removed and it is built, with GitHub issues when it changes released work (the PRD stays). Nothing here records
 *status* or *history* — that is issues + git tags + `CHANGELOG.md`.
 
 ## Branch & merge workflow
