@@ -8,11 +8,13 @@ GitHub issue and is removed from here**.
 
 ## Ideas
 
-*(speculative — none captured yet.)*
+*(speculative.)*
+
+- **Module-side pieces for post-quantum disk encryption.** The data path of disk encryption, AES-256 in XTS mode (SP 800-38E), is already quantum-resistant; what is not is the key plumbing around the volume key: wrapping it toward a recovery or key-management service, and the integrity of the volume header. Two module services would cover it: AES-XTS as an approved mode, and an ML-KEM-based wrap of a volume key. The on-disk format, the kernel or driver integration and the key-management protocol are a separate project.
 
 ## Designs
 
-*(design-first epics — one-line pointers to `docs/design/*.md`.)*
+*(design-first epics — one-line pointers to their PRD under `prd/`; the two entries below predate that rule and keep their `docs/design/` records.)*
 
 - **AVX2/AVX-512 Keccak** — tracked in [#110](https://github.com/oxiforge/oxicrypt/issues/110); design-of-record at [`docs/design/avx2-keccak.md`](docs/design/avx2-keccak.md).
 - **ESV submission client (`esv-harness`)** — design-of-record at [`docs/design/esv-harness.md`](docs/design/esv-harness.md).
