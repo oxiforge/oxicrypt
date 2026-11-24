@@ -542,7 +542,7 @@ types:
       - name: Uninstantiated
         description: The instance has not been instantiated.
       - name: ReseedRequired
-        description: The reseed counter reached the SP 800-90A interval and the instance cannot reseed itself.
+        description: The reseed counter passed the SP 800-90A reseed interval on an instance that does not reseed itself.
       - name: RequestTooLong
         description: The request exceeds the maximum number of bits per request.
       - name: EntropyUnavailable
@@ -612,7 +612,7 @@ types:
       - name: Uninstantiated
         description: generate or reseed was called before instantiate succeeded on this DRBG handle.
       - name: ReseedRequired
-        description: reseed_counter reached the SP 800-90A Table 3 reseed-interval bound.
+        description: The reseed counter passed the SP 800-90A reseed interval on an instance that does not reseed itself, a state no exported function reaches at ABI 2.
       - name: NullPointer
         description: Caller passed a NULL pointer where one is required.
       - name: BufferTooSmall
@@ -792,7 +792,7 @@ types:
       - name: Uninstantiated
         description: generate or reseed called before instantiate.
       - name: ReseedRequired
-        description: Reseed counter exceeded SP 800-90A limit.
+        description: The reseed counter passed the SP 800-90A reseed interval on an instance that does not reseed itself.
       - name: InputTooLong
         description: Entropy or additional input exceeds maximum.
       - name: InvalidSeedLength
@@ -2133,6 +2133,12 @@ types:
         description: "Code 29: a DRBG's entropy input is shorter than its security strength."
       - name: NonceTooShort
         description: "Code 30: a DRBG's nonce is shorter than half its security strength."
+      - name: RbgTooWeak
+        description: "Code 31: the random bit generator handed to a service is weaker than the service requires."
+      - name: Busy
+        description: "Code 32: a DRBG handle is in use by another call, or the module's seed path was held past its wait bound; nothing changed, retry after a pause."
+      - name: EntropyUnavailable
+        description: "Code 33: the entropy source failed while seeding or testing, and the module has entered its error state."
       - name: Internal
         description: "Code 255."
       - name: SignatureInvalid
@@ -2171,19 +2177,43 @@ types:
       - name: Overrun
         description: "The library reported writing more than the buffer it was given."
 
-  - name: Aes256Key
+  - name: Drbg
     module: oxicrypt
-    kind: opaque
-    description: "An AES-256 key schedule held by the library, freed exactly once when dropped; Send and Sync."
+    kind: struct
+    description: "The Rust wrapper for the library's module-seeded DRBG handle, one of nine kinds, freed exactly once when dropped; Send and not Sync."
     security:
       contains_secret: true
       zeroize_on_drop: true
       constant_time: false
 
-  - name: HmacDrbgSha256
+  - name: DrbgKind
+    module: oxicrypt
+    kind: enum
+    description: "The SP 800-90A mechanism and primitive a Drbg holds."
+    variants:
+      - name: HmacSha256
+        description: "HMAC_DRBG with SHA-256."
+      - name: HmacSha384
+        description: "HMAC_DRBG with SHA-384."
+      - name: HmacSha512
+        description: "HMAC_DRBG with SHA-512."
+      - name: HashSha256
+        description: "Hash_DRBG with SHA-256."
+      - name: HashSha384
+        description: "Hash_DRBG with SHA-384."
+      - name: HashSha512
+        description: "Hash_DRBG with SHA-512."
+      - name: CtrAes128
+        description: "CTR_DRBG with AES-128 and the derivation function."
+      - name: CtrAes192
+        description: "CTR_DRBG with AES-192 and the derivation function."
+      - name: CtrAes256
+        description: "CTR_DRBG with AES-256 and the derivation function."
+
+  - name: Aes256Key
     module: oxicrypt
     kind: opaque
-    description: "An HMAC_DRBG-SHA-256 instance held by the library and seeded by the caller, freed exactly once when dropped; Send, not Sync."
+    description: "An AES-256 key schedule held by the library, freed exactly once when dropped; Send and Sync."
     security:
       contains_secret: true
       zeroize_on_drop: true
@@ -2269,11 +2299,6 @@ types:
       contains_secret: true
       zeroize_on_drop: true
       constant_time: false
-
-  - name: DrbgSeed
-    module: oxicrypt
-    kind: trait
-    description: "Sealed trait of the four seed types, which HmacDrbgSha256::seed can fill."
 
   - name: MlDsa87PublicKey
     module: oxicrypt
@@ -5085,7 +5110,7 @@ functions:
         - name: Uninstantiated
           condition: DRBG was not instantiated.
         - name: ReseedRequired
-          condition: Reseed counter exceeded 2^48.
+          condition: The reseed counter passed the SP 800-90A Table 3 reseed interval on an instance that does not reseed itself.
         - name: RequestTooLong
           condition: "out.len() > 65536"
         - name: InputTooLong
@@ -5195,6 +5220,19 @@ functions:
       handles_secrets: false
       fips_approved: false
 
+  - name: seed_path_label
+    module: oxicrypt-drbg
+    description: "Returns, without deciding the path, the label of the seed path the process has decided, or \"undecided\" when no draw has decided it yet or the seed-path cell is busy."
+    signature: "pub fn seed_path_label() -> &'static str"
+    returns:
+      type: "&'static str"
+      description: "The decided path's label, or \"undecided\"."
+    thread_safety: thread-safe
+    security:
+      constant_time: false
+      handles_secrets: false
+      fips_approved: false
+
   - name: rbg_error
     module: oxicrypt-drbg
     description: "Maps a DrbgError onto the shared random-bit-generator error type exhaustively: Uninstantiated and ReseedRequired map to their namesakes, RequestTooLong, InputTooLong, InvalidSeedLength and EntropyInputTooShort map to RequestTooLong, Module wrapping an Rbg error maps to that error, and any other Module error maps to NotOperational."
@@ -5287,6 +5325,32 @@ functions:
     returns:
       type: "u64"
       description: "The draw count."
+    thread_safety: thread-safe
+    security:
+      constant_time: false
+      handles_secrets: false
+      fips_approved: false
+
+  - name: "seam::wiped_draw_count"
+    module: oxicrypt-drbg
+    description: "The number of seed-draw buffers of a module-seeded instantiate or reseed that read as all zero when they were dropped, after their wipe; available with the fault-injection feature or in the crate's own tests."
+    signature: "pub fn wiped_draw_count() -> u64"
+    returns:
+      type: "u64"
+      description: "The count of wiped draw buffers."
+    thread_safety: thread-safe
+    security:
+      constant_time: false
+      handles_secrets: false
+      fips_approved: false
+
+  - name: "seam::unwiped_draw_count"
+    module: oxicrypt-drbg
+    description: "The number of seed-draw buffers that held a non-zero byte when they were dropped, after their wipe; available with the fault-injection feature or in the crate's own tests."
+    signature: "pub fn unwiped_draw_count() -> u64"
+    returns:
+      type: "u64"
+      description: "The count of draw buffers not wiped."
     thread_safety: thread-safe
     security:
       constant_time: false
@@ -5427,7 +5491,7 @@ functions:
 
   - name: "seam::park_before_output"
     module: oxicrypt-drbg
-    description: "While true, the next service to reach its output re-check parks there until release_parked; available with the fault-injection feature or in the crate's own tests."
+    description: "While true, the next service to reach its output re-check parks there until release_parked or until 2^32 spins have passed; available with the fault-injection feature or in the crate's own tests."
     signature: "pub fn park_before_output(on: bool)"
     parameters:
       - name: on
@@ -6639,6 +6703,8 @@ functions:
           condition: Pairwise consistency test (sign-then-verify) failed.
         - name: Rbg
           condition: The generator produced no output.
+        - name: RbgTooWeak
+          condition: The generator reports a security strength below 128 bits (oxicrypt_ecdsa::p256_keygen::RBG_STRENGTH_BITS); returned before any draw.
     preconditions:
       - description: Module must be Operational.
       - description: DRBG must be instantiated.
@@ -6678,6 +6744,8 @@ functions:
           condition: Module not initialized.
         - name: Rbg
           condition: The generator produced no output.
+        - name: RbgTooWeak
+          condition: The generator reports a security strength below 128 bits (oxicrypt_ecdsa::p256_keygen::RBG_STRENGTH_BITS); returned before any draw.
     preconditions:
       - description: Module must be Operational.
       - description: DRBG must be instantiated.
@@ -6889,6 +6957,8 @@ functions:
             PCT mismatch. In practice only a broken DRBG.
         - name: Rbg
           condition: The generator produced no output.
+        - name: RbgTooWeak
+          condition: The generator reports a security strength below 128 bits (oxicrypt_ecdh::RBG_STRENGTH_BITS); returned before any draw.
     preconditions:
       - description: Module must be Operational.
       - description: DRBG handle must be live and instantiated.
@@ -6924,6 +6994,8 @@ functions:
           condition: DRBG fault, sampling exhaustion, or PCT mismatch.
         - name: Rbg
           condition: The generator produced no output.
+        - name: RbgTooWeak
+          condition: The generator reports a security strength below 192 bits (oxicrypt_ecdh::P384_RBG_STRENGTH_BITS); returned before any draw.
     preconditions:
       - description: Module must be Operational.
       - description: DRBG handle must be live and instantiated.
@@ -7014,6 +7086,8 @@ functions:
           condition: Keygen failed (DRBG exhaustion or repeated failures).
         - name: Rbg
           condition: The generator produced no output.
+        - name: RbgTooWeak
+          condition: The generator reports a security strength below 128 bits (oxicrypt_dh::RBG_STRENGTH_BITS); returned before any draw.
         - name: AlgorithmRestricted
           condition: DH-3072 blocked by active profile.
     preconditions:
@@ -14357,8 +14431,6 @@ functions:
           condition: The module has left Operational since the handle was instantiated (or was never started).
         - name: Uninstantiated
           condition: The handle was never instantiated with oxi_hmac_drbg_sha256_instantiate_from_module.
-        - name: ReseedRequired
-          condition: The reseed counter reached the SP 800-90A Table 3 reseed interval and fresh entropy is required before further output.
         - name: OutputTooLong
           condition: The requested output length exceeds the maximum this construction permits.
         - name: InvalidInput
@@ -14842,7 +14914,7 @@ functions:
 
   - name: oxi_test_hold_busy
     module: oxicrypt-ffi
-    description: "Set or clear the handle busy flag as a call in progress on another thread would; available with the fault-injection feature"
+    description: "Take or release the hold on the handle as a call in progress on another thread would; available with the fault-injection feature"
     signature: >-
       void oxi_test_hold_busy(OxiDrbg *h, int on)
     parameters:
@@ -14896,6 +14968,20 @@ functions:
       handles_secrets: false
       fips_approved: false
 
+  - name: oxi_test_fail_next_on_demand
+    module: oxicrypt-ffi
+    description: "Make the next oxi_entropy_on_demand_test call return EntropyUnavailable = 33, as a failed on-demand health test does, which puts the module into its error state; available with the fault-injection feature"
+    signature: >-
+      void oxi_test_fail_next_on_demand(void)
+    returns:
+      type: void
+      description: "No return value"
+    thread_safety: "thread-safe"
+    security:
+      constant_time: false
+      handles_secrets: false
+      fips_approved: false
+
   - name: oxi_test_last_freed_bytes_zero
     module: oxicrypt-ffi
     description: "Report whether the last freed DRBG handle read as all zero before its memory was released; available with the fault-injection feature"
@@ -14918,6 +15004,53 @@ functions:
     returns:
       type: void
       description: "No return value"
+    thread_safety: "thread-safe"
+    security:
+      constant_time: false
+      handles_secrets: false
+      fips_approved: false
+
+  - name: oxi_test_park_before_output
+    module: oxicrypt-ffi
+    description: "Arm (on non-zero) or disarm a hold at the DRBG's re-check of the module state before it produces output bytes, where the next generate to reach it waits until oxi_test_release_parked or until a bound of 2^32 spins passes; available with the fault-injection feature"
+    signature: >-
+      void oxi_test_park_before_output(int on)
+    parameters:
+      - name: "on"
+        type: int
+        direction: in
+        description: "Non-zero arms the hold, zero disarms it"
+    returns:
+      type: void
+      description: "No return value"
+    thread_safety: "thread-safe"
+    security:
+      constant_time: false
+      handles_secrets: false
+      fips_approved: false
+
+  - name: oxi_test_release_parked
+    module: oxicrypt-ffi
+    description: "Release a generate waiting at its output check and disarm the hold; available with the fault-injection feature"
+    signature: >-
+      void oxi_test_release_parked(void)
+    returns:
+      type: void
+      description: "No return value"
+    thread_safety: "thread-safe"
+    security:
+      constant_time: false
+      handles_secrets: false
+      fips_approved: false
+
+  - name: oxi_test_is_parked
+    module: oxicrypt-ffi
+    description: "Report whether a generate is waiting at its output check; available with the fault-injection feature"
+    signature: >-
+      int oxi_test_is_parked(void)
+    returns:
+      type: int
+      description: "1 while a generate is waiting at its output check, 0 otherwise"
     thread_safety: "thread-safe"
     security:
       constant_time: false
@@ -15091,8 +15224,6 @@ functions:
           condition: The module has left Operational since the handle was instantiated (or was never started).
         - name: Uninstantiated
           condition: The handle was never instantiated with oxi_hmac_drbg_sha384_instantiate_from_module.
-        - name: ReseedRequired
-          condition: The reseed counter reached the SP 800-90A Table 3 reseed interval and fresh entropy is required before further output.
         - name: OutputTooLong
           condition: The requested output length exceeds the maximum this construction permits.
         - name: InvalidInput
@@ -15268,8 +15399,6 @@ functions:
           condition: The module has left Operational since the handle was instantiated (or was never started).
         - name: Uninstantiated
           condition: The handle was never instantiated with oxi_hmac_drbg_sha512_instantiate_from_module.
-        - name: ReseedRequired
-          condition: The reseed counter reached the SP 800-90A Table 3 reseed interval and fresh entropy is required before further output.
         - name: OutputTooLong
           condition: The requested output length exceeds the maximum this construction permits.
         - name: InvalidInput
@@ -15446,8 +15575,6 @@ functions:
       error_variants:
         - name: Uninstantiated
           condition: The handle was never instantiated with oxi_hash_drbg_sha256_instantiate_from_module.
-        - name: ReseedRequired
-          condition: The reseed counter reached the SP 800-90A Table 3 reseed interval and fresh entropy is required before further output.
         - name: OutputTooLong
           condition: The requested output length exceeds the maximum this construction permits.
         - name: InvalidInput
@@ -15621,8 +15748,6 @@ functions:
       error_variants:
         - name: Uninstantiated
           condition: The handle was never instantiated with oxi_hash_drbg_sha384_instantiate_from_module.
-        - name: ReseedRequired
-          condition: The reseed counter reached the SP 800-90A Table 3 reseed interval and fresh entropy is required before further output.
         - name: OutputTooLong
           condition: The requested output length exceeds the maximum this construction permits.
         - name: InvalidInput
@@ -15796,8 +15921,6 @@ functions:
       error_variants:
         - name: Uninstantiated
           condition: The handle was never instantiated with oxi_hash_drbg_sha512_instantiate_from_module.
-        - name: ReseedRequired
-          condition: The reseed counter reached the SP 800-90A Table 3 reseed interval and fresh entropy is required before further output.
         - name: OutputTooLong
           condition: The requested output length exceeds the maximum this construction permits.
         - name: InvalidInput
@@ -15972,8 +16095,6 @@ functions:
       error_variants:
         - name: Uninstantiated
           condition: The handle was never instantiated with oxi_ctr_drbg_aes128_instantiate_from_module.
-        - name: ReseedRequired
-          condition: The reseed counter reached the SP 800-90A Table 3 reseed interval and fresh entropy is required before further output.
         - name: OutputTooLong
           condition: The requested output length exceeds the maximum this construction permits.
         - name: InvalidInput
@@ -16144,8 +16265,6 @@ functions:
       error_variants:
         - name: Uninstantiated
           condition: The handle was never instantiated with oxi_ctr_drbg_aes192_instantiate_from_module.
-        - name: ReseedRequired
-          condition: The reseed counter reached the SP 800-90A Table 3 reseed interval and fresh entropy is required before further output.
         - name: OutputTooLong
           condition: The requested output length exceeds the maximum this construction permits.
         - name: InvalidInput
@@ -16316,8 +16435,6 @@ functions:
       error_variants:
         - name: Uninstantiated
           condition: The handle was never instantiated with oxi_ctr_drbg_aes256_instantiate_from_module.
-        - name: ReseedRequired
-          condition: The reseed counter reached the SP 800-90A Table 3 reseed interval and fresh entropy is required before further output.
         - name: OutputTooLong
           condition: The requested output length exceeds the maximum this construction permits.
         - name: InvalidInput
@@ -18975,17 +19092,158 @@ functions:
       handles_secrets: true
       fips_approved: false
 
-  - name: "Module::hmac_drbg_sha256"
+  - name: "Module::drbg"
     module: oxicrypt
-    description: "A new HMAC_DRBG-SHA-256 handle."
-    signature: "pub fn Module::hmac_drbg_sha256(self) -> Result<HmacDrbgSha256, Error>"
+    description: "A new, uninstantiated DRBG of kind, seeded by the module when Drbg::instantiate is called."
+    signature: "pub fn Module::drbg(self, kind: DrbgKind) -> Result<Drbg, Error>"
+    parameters:
+      - name: kind
+        type: DrbgKind
+        direction: in
+        description: "The mechanism and primitive of the DRBG."
     returns:
-      type: "Result<HmacDrbgSha256, Error>"
+      type: "Result<Drbg, Error>"
       description: "An uninstantiated handle."
+      error_variants:
+        - name: NotOperational
+          condition: "The module is not in the Operational state."
+        - name: NullPointer
+          condition: "The library returned no handle."
     thread_safety: thread-safe
     security:
       constant_time: false
       handles_secrets: true
+      fips_approved: false
+
+  - name: "Drbg::instantiate"
+    module: oxicrypt
+    description: "Instantiate from the module's seed path with a personalization string, replacing any earlier instantiation, which also makes a handle inherited across fork usable again."
+    signature: "pub fn Drbg::instantiate(&mut self, personalization: &[u8]) -> Result<(), Error>"
+    parameters:
+      - name: personalization
+        type: "&[u8]"
+        direction: in
+        description: "The personalization string, at most 720 bytes."
+    returns:
+      type: "Result<(), Error>"
+      description: "Ok when instantiated."
+      error_variants:
+        - name: InvalidInput
+          condition: "The personalization string is longer than the DRBG accepts."
+        - name: Busy
+          condition: "The seed path was busy; the handle is unchanged, retry after a pause."
+        - name: EntropyUnavailable
+          condition: "The entropy source failed; the handle is unchanged."
+        - name: NotOperational
+          condition: "The module is not in the Operational state."
+        - name: AlgorithmRestricted
+          condition: "The DRBG is not available in the module's current profile."
+    thread_safety: "not-thread-safe; Drbg is Send and not Sync"
+    security:
+      constant_time: false
+      handles_secrets: true
+      fips_approved: false
+
+  - name: "Drbg::reseed"
+    module: oxicrypt
+    description: "Reseed from the module's seed path with additional input; an empty slice is passed as absent."
+    signature: "pub fn Drbg::reseed(&mut self, additional: &[u8]) -> Result<(), Error>"
+    parameters:
+      - name: additional
+        type: "&[u8]"
+        direction: in
+        description: "The additional input."
+    returns:
+      type: "Result<(), Error>"
+      description: "Ok when reseeded."
+      error_variants:
+        - name: Uninstantiated
+          condition: "The handle was not instantiated."
+        - name: InvalidInput
+          condition: "The additional input is longer than the DRBG accepts."
+        - name: Busy
+          condition: "The seed path was busy; retry after a pause."
+        - name: EntropyUnavailable
+          condition: "The entropy source failed."
+        - name: NotOperational
+          condition: "The module is not in the Operational state."
+    thread_safety: "not-thread-safe; Drbg is Send and not Sync"
+    security:
+      constant_time: false
+      handles_secrets: true
+      fips_approved: false
+
+  - name: "Drbg::generate"
+    module: oxicrypt
+    description: "Generate out.len() bytes with additional input; out is zeroed on every error, and the DRBG reseeds itself from the module's seed path at its reseed interval."
+    signature: "pub fn Drbg::generate(&mut self, additional: &[u8], out: &mut [u8]) -> Result<(), Error>"
+    parameters:
+      - name: additional
+        type: "&[u8]"
+        direction: in
+        description: "The additional input; an empty slice is passed as absent."
+      - name: out
+        type: "&mut [u8]"
+        direction: out
+        description: "The buffer to fill, at most 65,536 bytes."
+    returns:
+      type: "Result<(), Error>"
+      description: "Ok when out was filled."
+      error_variants:
+        - name: OutputTooLong
+          condition: "out is longer than 65,536 bytes, refused before calling."
+        - name: Uninstantiated
+          condition: "The handle was not instantiated."
+        - name: InvalidInput
+          condition: "The additional input is longer than the DRBG accepts."
+        - name: Busy
+          condition: "The handle or the seed path was busy; retry after a pause."
+        - name: EntropyUnavailable
+          condition: "A reseed at the reseed interval failed because the entropy source failed."
+        - name: NotOperational
+          condition: "The module is not in the Operational state."
+    thread_safety: "not-thread-safe; Drbg is Send and not Sync"
+    security:
+      constant_time: false
+      handles_secrets: true
+      fips_approved: false
+
+  - name: "Drbg::strength_bits"
+    module: oxicrypt
+    description: "The security strength of the instantiated DRBG, in bits."
+    signature: "pub fn Drbg::strength_bits(&self) -> Result<u32, Error>"
+    returns:
+      type: "Result<u32, Error>"
+      description: "The strength in bits."
+      error_variants:
+        - name: Uninstantiated
+          condition: "The handle was not instantiated."
+        - name: NotOperational
+          condition: "The module is not in the Operational state."
+    thread_safety: "not-thread-safe; Drbg is Send and not Sync"
+    security:
+      constant_time: false
+      handles_secrets: false
+      fips_approved: false
+
+  - name: "Module::entropy_on_demand_test"
+    module: oxicrypt
+    description: "Run the entropy source's on-demand test on the module's seed path; the first call in a process decides the seed path, as the first DRBG instantiation does."
+    signature: "pub fn Module::entropy_on_demand_test(self) -> Result<&'static str, Error>"
+    returns:
+      type: "Result<&'static str, Error>"
+      description: "The label naming the seed path."
+      error_variants:
+        - name: EntropyUnavailable
+          condition: "The test failed; the module is then in its error state."
+        - name: Busy
+          condition: "The seed path was busy; retry after a pause."
+        - name: NotOperational
+          condition: "The module is not in the Operational state."
+    thread_safety: thread-safe
+    security:
+      constant_time: false
+      handles_secrets: false
       fips_approved: false
 
   - name: "Module::ml_dsa_87_keygen"
@@ -19067,63 +19325,6 @@ functions:
       type: "Result<SharedSecret, Error>"
       description: "The shared secret, or the implicit-rejection secret for a modified ciphertext."
     thread_safety: thread-safe
-    security:
-      constant_time: false
-      handles_secrets: true
-      fips_approved: false
-
-  - name: "HmacDrbgSha256::instantiate"
-    module: oxicrypt
-    description: "Instantiate (SP 800-90A §10.1.2.3) with caller-supplied entropy."
-    signature: "pub fn HmacDrbgSha256::instantiate(&mut self, entropy: &[u8], nonce: &[u8], personalization: &[u8]) -> Result<(), Error>"
-    returns:
-      type: "Result<(), Error>"
-      description: "Ok when instantiated."
-    thread_safety: not-thread-safe
-    security:
-      constant_time: false
-      handles_secrets: true
-      fips_approved: false
-
-  - name: "HmacDrbgSha256::reseed"
-    module: oxicrypt
-    description: "Reseed (SP 800-90A §10.1.2.4)."
-    signature: "pub fn HmacDrbgSha256::reseed(&mut self, entropy: &[u8], additional: &[u8]) -> Result<(), Error>"
-    returns:
-      type: "Result<(), Error>"
-      description: "Ok when reseeded."
-    thread_safety: not-thread-safe
-    security:
-      constant_time: false
-      handles_secrets: true
-      fips_approved: false
-
-  - name: "HmacDrbgSha256::generate"
-    module: oxicrypt
-    description: "Generate (SP 800-90A §10.1.2.5) out.len() bytes; out is zeroed on every error."
-    signature: "pub fn HmacDrbgSha256::generate(&mut self, additional: &[u8], out: &mut [u8]) -> Result<(), Error>"
-    returns:
-      type: "Result<(), Error>"
-      description: "Ok when out was filled."
-      error_variants:
-        - name: OutputTooLong
-          condition: "out is longer than 65,536 bytes, refused before calling."
-        - name: Uninstantiated
-          condition: "The handle was not instantiated."
-    thread_safety: not-thread-safe
-    security:
-      constant_time: false
-      handles_secrets: true
-      fips_approved: false
-
-  - name: "HmacDrbgSha256::seed"
-    module: oxicrypt
-    description: "A 32-byte seed of type S from this DRBG, written into its zeroing owner."
-    signature: "pub fn HmacDrbgSha256::seed<S: DrbgSeed>(&mut self) -> Result<S, Error>"
-    returns:
-      type: "Result<S, Error>"
-      description: "A seed of the requested type."
-    thread_safety: not-thread-safe
     security:
       constant_time: false
       handles_secrets: true
@@ -19498,9 +19699,9 @@ error_types:
         recoverable: true
         user_action: Call instantiate_df or instantiate_no_df first.
       - name: ReseedRequired
-        description: Reseed counter exceeded 2^48 (SP 800-90A limit).
+        description: The reseed counter passed the SP 800-90A Table 3 reseed interval and the instance cannot reseed itself.
         recoverable: true
-        user_action: Call reseed_df with fresh entropy.
+        user_action: On a module-seeded instance this does not occur because the instance reseeds itself at the interval. On an instance instantiated through the testing interface with a caller-supplied entropy input, call that interface's reseed form.
       - name: RequestTooLong
         description: Requested more than 65536 bytes in one call.
         recoverable: true
@@ -19612,9 +19813,9 @@ error_types:
         user_action: Call the matching instantiate function on this handle and check it returns Ok, then retry.
       - name: ReseedRequired
         value: 9
-        description: The handle's reseed_counter reached the SP 800-90A Table 3 reseed-interval bound.
+        description: The DRBG's reseed counter passed the SP 800-90A Table 3 reseed interval on an instance that does not reseed itself, a state no exported function reaches at ABI 2.
         recoverable: true
-        user_action: Call reseed with fresh entropy on this handle; generate will not return further output until it succeeds.
+        user_action: Not returned through the C interface. The oxicrypt_drbg testing interface returns it from generate on an instance instantiated with a caller-supplied entropy input; reseed that instance through the same interface.
       - name: NullPointer
         value: 10
         description: A NULL pointer was passed where the function requires a valid one.
@@ -19959,6 +20160,60 @@ constants:
     type: usize
     value: "64"
     description: "ECDSA P-256 signature: r (32 bytes) || s (32 bytes)."
+
+  - name: "p256_keygen::RBG_STRENGTH_BITS"
+    module: oxicrypt-ecdsa
+    type: u32
+    value: "128"
+    description: "Security strength in bits (SP 800-57 Part 1 Rev. 5 Table 2, ECC f = 256) a random bit generator must report before any P-256 key or per-signature nonce is drawn from it, below which the call returns Error::RbgTooWeak."
+
+  - name: "p384_keygen::RBG_STRENGTH_BITS"
+    module: oxicrypt-ecdsa
+    type: u32
+    value: "192"
+    description: "Security strength in bits (SP 800-57 Part 1 Rev. 5 Table 2, ECC f = 384) a random bit generator must report before any P-384 key or per-signature nonce is drawn from it, below which the call returns Error::RbgTooWeak."
+
+  - name: RBG_STRENGTH_BITS
+    module: oxicrypt-ecdh
+    type: u32
+    value: "128"
+    description: "Security strength in bits a random bit generator must report before an ECDH P-256 key pair is generated from it; SP 800-57 Part 1 Rev. 5 Table 2, ECC f = 256."
+
+  - name: P384_RBG_STRENGTH_BITS
+    module: oxicrypt-ecdh
+    type: u32
+    value: "192"
+    description: "Security strength in bits a random bit generator must report before an ECDH P-384 key pair is generated from it; SP 800-57 Part 1 Rev. 5 Table 2, ECC f = 384."
+
+  - name: RBG_STRENGTH_BITS
+    module: oxicrypt-dh
+    type: u32
+    value: "128"
+    description: "Security strength in bits a random bit generator must report before a DH-3072 key pair is generated from it; SP 800-57 Part 1 Rev. 5 Table 2, FFC L = 3072."
+
+  - name: "ed25519::RBG_STRENGTH_BITS"
+    module: oxicrypt-eddsa
+    type: u32
+    value: "128"
+    description: "Security strength in bits a random bit generator must report before an Ed25519 seed is drawn from it; the strength SP 800-186 states for Edwards25519."
+
+  - name: RSA_2048_RBG_STRENGTH_BITS
+    module: oxicrypt-rsa
+    type: u32
+    value: "112"
+    description: "Security strength in bits a random bit generator must report before RSA-2048 key generation, PSS signing or OAEP encryption draws from it; SP 800-57 Part 1 Rev. 5 Table 2, IFC k = 2048."
+
+  - name: RSA_3072_RBG_STRENGTH_BITS
+    module: oxicrypt-rsa
+    type: u32
+    value: "128"
+    description: "Security strength in bits a random bit generator must report before RSA-3072 key generation, PSS signing or OAEP encryption draws from it; SP 800-57 Part 1 Rev. 5 Table 2, IFC k = 3072."
+
+  - name: RSA_4096_RBG_STRENGTH_BITS
+    module: oxicrypt-rsa
+    type: u32
+    value: "192"
+    description: "Security strength in bits a random bit generator must report before RSA-4096 key generation, PSS signing or OAEP encryption draws from it, equal to the SP 800-57 Part 1 Rev. 5 Table 2 strength for IFC k = 7680, the first tabulated modulus above 4096."
 
   - name: EK_LEN
     module: oxicrypt-ml-kem
@@ -20521,7 +20776,7 @@ constants:
     module: oxicrypt
     type: usize
     value: "768"
-    description: "The most entropy, nonce and personalization bytes HMAC_DRBG-SHA-256 accepts in one call."
+    description: "HMAC_DRBG's bound on the bytes provided to one seeding call, combined (SP 800-90A Table 2); the module supplies 48 at instantiate, so a personalization string over 720 bytes is refused."
 
   - name: HMAC_DRBG_MAX_REQUEST_LEN
     module: oxicrypt

@@ -1101,4 +1101,510 @@ mod tests {
             );
         }
     }
+
+    /// The functions whose bodies may copy into a caller buffer without
+    /// [`write_out`]: `write_out` itself, and the two status outputs a
+    /// caller reads after the module has entered its error state, which
+    /// `write_out`'s re-check would refuse.
+    const DIRECT_COPY_ALLOWED: &[&str] = &[
+        "write_out",
+        "oxi_integrity_key_fingerprint",
+        "oxi_integrity_status_detail",
+    ];
+
+    #[allow(
+        clippy::arithmetic_side_effects,
+        reason = "offsets into a source file, far below usize::MAX"
+    )]
+    mod output_copy_scan {
+        fn is_ident(c: Option<&char>) -> bool {
+            c.is_some_and(|c| c.is_ascii_alphanumeric() || *c == '_')
+        }
+
+        fn find(s: &[char], from: usize, pat: &[char]) -> Option<usize> {
+            (from..s.len()).find(|&k| s[k..].starts_with(pat))
+        }
+
+        fn blank(out: &mut [char], from: usize, to: usize) {
+            let to = to.min(out.len());
+            for c in out.iter_mut().take(to).skip(from) {
+                if *c != '\n' {
+                    *c = ' ';
+                }
+            }
+        }
+
+        /// `src` with its comments and string, byte-string and char literals
+        /// blanked to spaces. Newlines are kept, so offsets and line numbers
+        /// are those of `src`.
+        pub(super) fn code_only(src: &str) -> Vec<char> {
+            let text: Vec<char> = src.chars().collect();
+            let mut out = text.clone();
+            let at = |k: usize| text.get(k).copied();
+            let mut i = 0;
+            while i < text.len() {
+                let ch = text[i];
+                let next = at(i + 1);
+                let after_ident = i > 0 && is_ident(text.get(i - 1));
+                if ch == '/' && next == Some('/') {
+                    let stop = find(&text, i, &['\n']).unwrap_or(text.len());
+                    blank(&mut out, i, stop);
+                    i = stop;
+                } else if ch == '/' && next == Some('*') {
+                    let mut depth = 1;
+                    let mut k = i + 2;
+                    while k < text.len() && depth > 0 {
+                        if text[k] == '/' && at(k + 1) == Some('*') {
+                            depth += 1;
+                            k += 2;
+                        } else if text[k] == '*' && at(k + 1) == Some('/') {
+                            depth -= 1;
+                            k += 2;
+                        } else {
+                            k += 1;
+                        }
+                    }
+                    blank(&mut out, i, k);
+                    i = k;
+                } else if (ch == 'r' || ((ch == 'b' || ch == 'c') && next == Some('r')))
+                    && !after_ident
+                {
+                    // A raw string: `r`, an optional `b` or `c` before it,
+                    // then any number of `#`, then `"`.
+                    let mut k = if ch == 'r' { i + 1 } else { i + 2 };
+                    let mut close = vec!['"'];
+                    while at(k) == Some('#') {
+                        close.push('#');
+                        k += 1;
+                    }
+                    if at(k) == Some('"') {
+                        let stop =
+                            find(&text, k + 1, &close).map_or(text.len(), |end| end + close.len());
+                        blank(&mut out, i, stop);
+                        i = stop;
+                    } else {
+                        i += 1;
+                    }
+                } else if ch == '"'
+                    || ((ch == 'b' || ch == 'c') && next == Some('"') && !after_ident)
+                {
+                    let mut k = if ch == '"' { i + 1 } else { i + 2 };
+                    while k < text.len() && text[k] != '"' {
+                        k += if text[k] == '\\' { 2 } else { 1 };
+                    }
+                    blank(&mut out, i, k + 1);
+                    i = k + 1;
+                } else if ch == '\'' || (ch == 'b' && next == Some('\'') && !after_ident) {
+                    // A char literal closes within a few characters; a
+                    // lifetime does not.
+                    let quote = if ch == 'b' { i + 1 } else { i };
+                    let close = if at(quote + 1) == Some('\\') {
+                        find(&text, quote + 3, &['\'']).filter(|&end| end - quote <= 12)
+                    } else if at(quote + 2) == Some('\'') {
+                        Some(quote + 2)
+                    } else {
+                        None
+                    };
+                    if let Some(end) = close {
+                        blank(&mut out, i, end + 1);
+                        i = end + 1;
+                    } else {
+                        i = quote + 1;
+                    }
+                } else {
+                    i += 1;
+                }
+            }
+            out
+        }
+
+        /// The offset of the bracket that closes the one at `open`.
+        fn closing(code: &[char], open: usize, pair: (char, char)) -> Option<usize> {
+            let mut depth = 0usize;
+            for (k, &c) in code.iter().enumerate().skip(open) {
+                if c == pair.0 {
+                    depth += 1;
+                } else if c == pair.1 {
+                    depth -= 1;
+                    if depth == 0 {
+                        return Some(k);
+                    }
+                }
+            }
+            None
+        }
+
+        /// The offset of the bracket that opens the one at `close`.
+        fn opening(code: &[char], close: usize, pair: (char, char)) -> Option<usize> {
+            let mut depth = 0usize;
+            for k in (0..=close).rev() {
+                if code[k] == pair.1 {
+                    depth += 1;
+                } else if code[k] == pair.0 {
+                    depth -= 1;
+                    if depth == 0 {
+                        return Some(k);
+                    }
+                }
+            }
+            None
+        }
+
+        /// Every offset at which `needle` starts and is not the tail of a
+        /// longer identifier.
+        fn occurrences(code: &[char], needle: &str) -> Vec<usize> {
+            occurrences_in(code, needle, 0, code.len())
+        }
+
+        /// As [`occurrences`], within `code[from..to]`.
+        fn occurrences_in(code: &[char], needle: &str, from: usize, to: usize) -> Vec<usize> {
+            let pat: Vec<char> = needle.chars().collect();
+            (from..to)
+                .filter(|&k| code[k..].starts_with(&pat))
+                .filter(|&k| !(is_ident(pat.first()) && k > 0 && is_ident(code.get(k - 1))))
+                .collect()
+        }
+
+        /// Every function with a body, as its name and the offsets of the
+        /// braces around its body.
+        fn fn_bodies(code: &[char]) -> Vec<(String, usize, usize)> {
+            let mut found = Vec::new();
+            for start in occurrences(code, "fn ") {
+                let mut k = start + 3;
+                while code.get(k).is_some_and(|c| c.is_whitespace()) {
+                    k += 1;
+                }
+                let name_at = k;
+                while is_ident(code.get(k)) {
+                    k += 1;
+                }
+                let name: String = code[name_at..k].iter().collect();
+                if name.is_empty() && code.get(k) == Some(&'(') {
+                    // A function pointer type.
+                    continue;
+                }
+                // The body opens at the first `{` outside parentheses and
+                // brackets; a `;` there first means the function has none.
+                let (mut paren, mut bracket) = (0i32, 0i32);
+                let mut open = None;
+                while k < code.len() {
+                    match code[k] {
+                        '(' => paren += 1,
+                        ')' => paren -= 1,
+                        '[' => bracket += 1,
+                        ']' => bracket -= 1,
+                        '{' if paren == 0 && bracket == 0 => {
+                            open = Some(k);
+                            break;
+                        }
+                        ';' if paren == 0 && bracket == 0 => break,
+                        _ => {}
+                    }
+                    k += 1;
+                }
+                if let Some(open) = open
+                    && let Some(close) = closing(code, open, ('{', '}'))
+                {
+                    found.push((name, open, close));
+                }
+            }
+            found
+        }
+
+        /// The names a `let` in `code[open..close]` binds to a value whose
+        /// initializer calls `slice_from_raw_mut` or `from_raw_parts_mut`.
+        fn raw_bound(code: &[char], open: usize, close: usize) -> Vec<String> {
+            raw_bindings(code, open, close)
+                .into_iter()
+                .map(|(name, _)| name)
+                .collect()
+        }
+
+        /// As [`raw_bound`], each name with the offset of the `;` that ends
+        /// its `let` statement.
+        fn raw_bindings(code: &[char], open: usize, close: usize) -> Vec<(String, usize)> {
+            let mut names = Vec::new();
+            for start in occurrences_in(code, "let ", open, close) {
+                if start <= open || start >= close {
+                    continue;
+                }
+                let Some(eq) = (start..close).find(|&k| {
+                    code[k] == '='
+                        && !matches!(code.get(k + 1), Some('=' | '>'))
+                        && !matches!(code.get(k - 1), Some('=' | '!' | '<' | '>'))
+                }) else {
+                    continue;
+                };
+                let mut depth = 0i32;
+                let mut end = close;
+                for (k, &c) in code.iter().enumerate().take(close).skip(eq) {
+                    match c {
+                        '(' | '[' | '{' => depth += 1,
+                        ')' | ']' | '}' => depth -= 1,
+                        ';' if depth == 0 => {
+                            end = k;
+                            break;
+                        }
+                        _ => {}
+                    }
+                }
+                let init: String = code[eq..end].iter().collect();
+                if !init.contains("slice_from_raw_mut(") && !init.contains("from_raw_parts_mut(") {
+                    continue;
+                }
+                // The pattern ends at a type annotation's lone `:`, so the
+                // type's words are not taken for bound names.
+                let pattern_end = (start + 4..eq)
+                    .find(|&k| {
+                        code[k] == ':' && code.get(k + 1) != Some(&':') && code[k - 1] != ':'
+                    })
+                    .unwrap_or(eq);
+                let pattern: String = code[start + 4..pattern_end].iter().collect();
+                for word in pattern.split(|c: char| !(c.is_ascii_alphanumeric() || c == '_')) {
+                    if !word.is_empty() && word != "mut" && word != "ref" {
+                        names.push((word.to_owned(), end));
+                    }
+                }
+            }
+            names
+        }
+
+        /// Whether the identifier at `pos` sits directly inside the
+        /// parentheses of a call: a function, method or macro call, or a
+        /// call with a turbofish.
+        fn is_call_argument(code: &[char], pos: usize) -> bool {
+            let mut depth = 0usize;
+            for k in (0..pos).rev() {
+                match code[k] {
+                    ')' | ']' | '}' => depth += 1,
+                    '[' | '{' if depth == 0 => return false,
+                    '(' if depth == 0 => {
+                        let before = (0..k).rev().find(|&b| !code[b].is_whitespace());
+                        return before.is_some_and(|b| {
+                            is_ident(code.get(b)) || matches!(code[b], '>' | '!')
+                        });
+                    }
+                    '(' | '[' | '{' => depth -= 1,
+                    _ => {}
+                }
+            }
+            false
+        }
+
+        /// The 1-based lines at which a name bound from
+        /// `slice_from_raw_mut` or `from_raw_parts_mut` is passed as an
+        /// argument to a call after its binding, in the same function.
+        fn raw_slices_handed_on(
+            code: &[char],
+            bodies: &[(String, usize, usize)],
+            allowed: &[&str],
+        ) -> Vec<usize> {
+            let line = |pos: usize| code[..pos].iter().filter(|&&c| c == '\n').count() + 1;
+            let mut flagged = Vec::new();
+            for (fn_name, open, close) in bodies {
+                if allowed.contains(&fn_name.as_str()) {
+                    continue;
+                }
+                for (name, after) in raw_bindings(code, *open, *close) {
+                    for pos in occurrences_in(code, &name, after, *close) {
+                        let whole = !is_ident(code.get(pos + name.chars().count()));
+                        if pos > after && pos < *close && whole && is_call_argument(code, pos) {
+                            flagged.push(line(pos));
+                        }
+                    }
+                }
+            }
+            flagged
+        }
+
+        /// The root name of the receiver expression that ends at `dot`.
+        fn receiver_root(code: &[char], dot: usize) -> String {
+            let mut k = dot;
+            while k > 0 {
+                let c = code[k - 1];
+                if is_ident(Some(&c)) || c == '.' {
+                    k -= 1;
+                } else if c == ']' || c == ')' {
+                    let pair = if c == ']' { ('[', ']') } else { ('(', ')') };
+                    match opening(code, k - 1, pair) {
+                        Some(o) => k = o,
+                        None => break,
+                    }
+                } else {
+                    break;
+                }
+            }
+            let expr: String = code[k..dot].iter().collect();
+            expr.split(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
+                .find(|w| !w.is_empty())
+                .unwrap_or_default()
+                .to_owned()
+        }
+
+        /// The 1-based lines of `src` that copy into a caller buffer other
+        /// than inside a function named in `allowed`: any
+        /// `copy_nonoverlapping(` or `ptr::copy(` call, and any
+        /// `.copy_from_slice(` whose receiver is a name the enclosing
+        /// function binds from `slice_from_raw_mut` or `from_raw_parts_mut`.
+        /// With `slices_handed_on`, also any such name passed as an argument
+        /// to a call: the caller's buffer handed to a library call that may
+        /// write into it.
+        pub(super) fn raw_output_copies(
+            src: &str,
+            allowed: &[&str],
+            slices_handed_on: bool,
+        ) -> Vec<usize> {
+            let code = code_only(src);
+            let bodies = fn_bodies(&code);
+            let enclosing = |pos: usize| {
+                bodies
+                    .iter()
+                    .filter(|(_, open, close)| *open < pos && pos < *close)
+                    .max_by_key(|(_, open, _)| *open)
+            };
+            let line = |pos: usize| code[..pos].iter().filter(|&&c| c == '\n').count() + 1;
+            let mut flagged = Vec::new();
+            let copies = occurrences(&code, "copy_nonoverlapping(")
+                .into_iter()
+                .chain(occurrences(&code, "ptr::copy("));
+            for pos in copies {
+                if !enclosing(pos).is_some_and(|(name, _, _)| allowed.contains(&name.as_str())) {
+                    flagged.push(line(pos));
+                }
+            }
+            for pos in occurrences(&code, ".copy_from_slice(") {
+                let Some((name, open, close)) = enclosing(pos) else {
+                    continue;
+                };
+                if allowed.contains(&name.as_str()) {
+                    continue;
+                }
+                if raw_bound(&code, *open, *close).contains(&receiver_root(&code, pos)) {
+                    flagged.push(line(pos));
+                }
+            }
+            if slices_handed_on {
+                flagged.extend(raw_slices_handed_on(&code, &bodies, allowed));
+            }
+            flagged.sort_unstable();
+            flagged.dedup();
+            flagged
+        }
+    }
+
+    /// Every copy into a caller buffer in this crate goes through
+    /// [`write_out`], so the module's operational state is re-checked
+    /// immediately before any output leaves it.
+    #[test]
+    fn no_raw_output_copies() {
+        use output_copy_scan::raw_output_copies;
+
+        let raw = r"
+fn into_slice(p: *mut u8, n: usize) -> c_int {
+    let buf = [0u8; 4];
+    let out = unsafe { slice_from_raw_mut(p, n)? };
+    out.copy_from_slice(&buf);
+    0
+}
+fn into_pointer(a: *const u8, b: *mut u8, n: usize) {
+    unsafe { core::ptr::copy_nonoverlapping(a, b, n) };
+}
+";
+        assert_eq!(
+            raw_output_copies(raw, DIRECT_COPY_ALLOWED, true),
+            vec![5, 9]
+        );
+        let local = r"
+fn into_local(b: &[u8]) {
+    let mut a = [0u8; 4];
+    a.copy_from_slice(b);
+}
+";
+        assert_eq!(
+            raw_output_copies(local, DIRECT_COPY_ALLOWED, true),
+            Vec::<usize>::new()
+        );
+        // A caller-derived slice passed to any call is flagged, whether the
+        // callee writes into it or only reads it: the scan cannot tell the
+        // two apart, so any argument use counts.
+        let handed_on = r"
+fn into_kdf(p: *mut u8, n: usize) -> c_int {
+    let out = unsafe { slice_from_raw_mut(p, n)? };
+    kdf(&mut key, out);
+    0
+}
+fn into_reader(p: *mut u8, n: usize) {
+    let out = unsafe { slice_from_raw_mut(p, n)? };
+    checksum(out);
+}
+";
+        assert_eq!(
+            raw_output_copies(handed_on, DIRECT_COPY_ALLOWED, true),
+            vec![4, 9]
+        );
+        assert_eq!(
+            raw_output_copies(handed_on, DIRECT_COPY_ALLOWED, false),
+            Vec::<usize>::new()
+        );
+
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+        let mut files: Vec<_> = std::fs::read_dir(&dir)
+            .unwrap_or_else(|e| panic!("reading {}: {e}", dir.display()))
+            .map(|entry| entry.unwrap_or_else(|e| panic!("{e}")).path())
+            .filter(|p| p.extension().is_some_and(|x| x == "rs"))
+            .collect();
+        files.sort();
+        let mut flagged = Vec::new();
+        let mut unexempted = 0;
+        let mut lib_rs_handed_on = None;
+        let mut aes_handed_on = 0;
+        for path in &files {
+            let src = std::fs::read_to_string(path)
+                .unwrap_or_else(|e| panic!("reading {}: {e}", path.display()));
+            // The handed-on rule covers the algorithm symbols in `lib.rs`.
+            // The AES mode symbols in `aes.rs` hand the caller's slice to the
+            // AES block methods, which make the re-check themselves before
+            // writing, so those sites are owned by the AES block methods and
+            // `aes.rs` is held to the copy rules only. The one mutable slice
+            // in `rbg.rs` views a handle's own allocation, not a caller
+            // buffer.
+            let slices_handed_on = path.ends_with("lib.rs");
+            unexempted += raw_output_copies(&src, &[], false).len();
+            if slices_handed_on {
+                lib_rs_handed_on = Some(raw_output_copies(&src, DIRECT_COPY_ALLOWED, true));
+            }
+            if path.ends_with("aes.rs") {
+                aes_handed_on = raw_output_copies(&src, DIRECT_COPY_ALLOWED, true).len();
+            }
+            let file = path.file_name().unwrap_or_default().to_string_lossy();
+            for line in raw_output_copies(&src, DIRECT_COPY_ALLOWED, slices_handed_on) {
+                flagged.push(format!("src/{file}:{line}"));
+            }
+        }
+        assert!(
+            files.iter().any(|p| p.ends_with("lib.rs"))
+                && files.iter().any(|p| p.ends_with("rbg.rs")),
+            "the scan did not reach lib.rs and rbg.rs"
+        );
+        assert!(
+            flagged.is_empty(),
+            "copies into a caller buffer outside write_out:\n{}",
+            flagged.join("\n")
+        );
+        assert_eq!(
+            lib_rs_handed_on,
+            Some(Vec::new()),
+            "lib.rs copies into or hands on a caller-derived slice"
+        );
+        // The rule sees the AES mode symbols' slices it is not applied to.
+        assert!(
+            aes_handed_on > 0,
+            "the handed-on rule finds nothing in aes.rs"
+        );
+        // `write_out` and the two status outputs each copy once.
+        assert_eq!(
+            unexempted, 3,
+            "the scan no longer sees the permitted copies"
+        );
+    }
 }

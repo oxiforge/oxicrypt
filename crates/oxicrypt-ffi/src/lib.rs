@@ -120,6 +120,7 @@ pub use test_api::{
 
 use crate::error::{OxiResult as R, status_kdf, status_module};
 use crate::handle::OxiHandle;
+use crate::rbg::write_out;
 use core::ffi::c_int;
 #[cfg(test)]
 use kat_tests::initialize_with_profile;
@@ -167,6 +168,52 @@ unsafe fn slice_from_raw_mut<'a>(ptr: *mut u8, len: usize) -> Result<&'a mut [u8
         return Ok(&mut []);
     }
     Ok(unsafe { core::slice::from_raw_parts_mut(ptr, len) })
+}
+
+/// One byte over the longest HKDF-Expand output with a 32-byte hash,
+/// 255 blocks (RFC 5869 §2.3).
+const STAGE_CAP_SHA256: usize = 255 * 32 + 1;
+/// One byte over the longest HKDF-Expand output with a 48-byte hash.
+const STAGE_CAP_SHA384: usize = 255 * 48 + 1;
+/// One byte over the longest HKDF-Expand output with a 64-byte hash.
+const STAGE_CAP_SHA512: usize = 255 * 64 + 1;
+
+/// Runs `fill` on a module-owned buffer of `len` bytes, then writes the
+/// buffer to the caller's `out` through [`write_out`] and wipes it.
+///
+/// `fill` returns a status code. Any code but `Ok` is returned unchanged
+/// and nothing is written to `out`. A request above `cap` is staged at
+/// `cap` bytes: `cap` is more than the longest output `fill` serves, so
+/// `fill` refuses the staged request with the code it returns for the full
+/// one, without the full length being allocated.
+///
+/// # Safety
+///
+/// `out` must be valid for writes of `len` bytes. It may be NULL only when
+/// `len` is 0.
+unsafe fn staged_output(
+    out: *mut u8,
+    len: usize,
+    cap: usize,
+    fill: impl FnOnce(&mut [u8]) -> c_int,
+) -> c_int {
+    let mut buf = vec![0u8; len.min(cap)];
+    let mut code = fill(&mut buf);
+    if code == R::Ok as c_int {
+        code = if buf.len() == len {
+            // SAFETY: `out` is valid for writes of `len` bytes by contract,
+            // `buf` holds `len` bytes, and `buf` is this function's own
+            // allocation, so the two do not overlap.
+            match unsafe { write_out(out, &buf) } {
+                Ok(()) => R::Ok as c_int,
+                Err(e) => e as c_int,
+            }
+        } else {
+            R::Internal as c_int
+        };
+    }
+    oxicrypt_zeroize::zeroize(&mut buf);
+    code
 }
 
 // ── Module lifecycle ─────────────────────────────────────────────
@@ -528,7 +575,11 @@ pub unsafe extern "C" fn oxi_sha256(data_ptr: *const u8, data_len: usize, out: *
     }
     match oxicrypt_sha::sha256(data) {
         Ok(digest) => {
-            unsafe { core::ptr::copy_nonoverlapping(digest.as_ptr(), out, 32) };
+            // SAFETY: `out` is valid for writes of 32 bytes by contract,
+            // and the local `digest` does not overlap it.
+            if let Err(e) = unsafe { write_out(out, &digest[..32]) } {
+                return e as c_int;
+            }
             R::Ok as c_int
         }
         Err(e) => status_module(Err(e)),
@@ -556,7 +607,11 @@ pub unsafe extern "C" fn oxi_sha512(data_ptr: *const u8, data_len: usize, out: *
     }
     match oxicrypt_sha::sha512(data) {
         Ok(digest) => {
-            unsafe { core::ptr::copy_nonoverlapping(digest.as_ptr(), out, 64) };
+            // SAFETY: `out` is valid for writes of 64 bytes by contract,
+            // and the local `digest` does not overlap it.
+            if let Err(e) = unsafe { write_out(out, &digest[..64]) } {
+                return e as c_int;
+            }
             R::Ok as c_int
         }
         Err(e) => status_module(Err(e)),
@@ -584,7 +639,11 @@ pub unsafe extern "C" fn oxi_sha224(data_ptr: *const u8, data_len: usize, out: *
     }
     match oxicrypt_sha::sha224(data) {
         Ok(digest) => {
-            unsafe { core::ptr::copy_nonoverlapping(digest.as_ptr(), out, 28) };
+            // SAFETY: `out` is valid for writes of 28 bytes by contract,
+            // and the local `digest` does not overlap it.
+            if let Err(e) = unsafe { write_out(out, &digest[..28]) } {
+                return e as c_int;
+            }
             R::Ok as c_int
         }
         Err(e) => status_module(Err(e)),
@@ -612,7 +671,11 @@ pub unsafe extern "C" fn oxi_sha384(data_ptr: *const u8, data_len: usize, out: *
     }
     match oxicrypt_sha::sha384(data) {
         Ok(digest) => {
-            unsafe { core::ptr::copy_nonoverlapping(digest.as_ptr(), out, 48) };
+            // SAFETY: `out` is valid for writes of 48 bytes by contract,
+            // and the local `digest` does not overlap it.
+            if let Err(e) = unsafe { write_out(out, &digest[..48]) } {
+                return e as c_int;
+            }
             R::Ok as c_int
         }
         Err(e) => status_module(Err(e)),
@@ -649,7 +712,11 @@ pub unsafe extern "C" fn oxi_sha512_224(
     }
     match oxicrypt_sha::sha512_224(data) {
         Ok(digest) => {
-            unsafe { core::ptr::copy_nonoverlapping(digest.as_ptr(), out, 28) };
+            // SAFETY: `out` is valid for writes of 28 bytes by contract,
+            // and the local `digest` does not overlap it.
+            if let Err(e) = unsafe { write_out(out, &digest[..28]) } {
+                return e as c_int;
+            }
             R::Ok as c_int
         }
         Err(e) => status_module(Err(e)),
@@ -684,7 +751,11 @@ pub unsafe extern "C" fn oxi_sha512_256(
     }
     match oxicrypt_sha::sha512_256(data) {
         Ok(digest) => {
-            unsafe { core::ptr::copy_nonoverlapping(digest.as_ptr(), out, 32) };
+            // SAFETY: `out` is valid for writes of 32 bytes by contract,
+            // and the local `digest` does not overlap it.
+            if let Err(e) = unsafe { write_out(out, &digest[..32]) } {
+                return e as c_int;
+            }
             R::Ok as c_int
         }
         Err(e) => status_module(Err(e)),
@@ -721,7 +792,11 @@ pub unsafe extern "C" fn oxi_sha3_224(data_ptr: *const u8, data_len: usize, out:
     }
     match oxicrypt_sha::sha3_224(data) {
         Ok(digest) => {
-            unsafe { core::ptr::copy_nonoverlapping(digest.as_ptr(), out, 28) };
+            // SAFETY: `out` is valid for writes of 28 bytes by contract,
+            // and the local `digest` does not overlap it.
+            if let Err(e) = unsafe { write_out(out, &digest[..28]) } {
+                return e as c_int;
+            }
             R::Ok as c_int
         }
         Err(e) => status_module(Err(e)),
@@ -747,7 +822,11 @@ pub unsafe extern "C" fn oxi_sha3_256(data_ptr: *const u8, data_len: usize, out:
     }
     match oxicrypt_sha::sha3_256(data) {
         Ok(digest) => {
-            unsafe { core::ptr::copy_nonoverlapping(digest.as_ptr(), out, 32) };
+            // SAFETY: `out` is valid for writes of 32 bytes by contract,
+            // and the local `digest` does not overlap it.
+            if let Err(e) = unsafe { write_out(out, &digest[..32]) } {
+                return e as c_int;
+            }
             R::Ok as c_int
         }
         Err(e) => status_module(Err(e)),
@@ -773,7 +852,11 @@ pub unsafe extern "C" fn oxi_sha3_384(data_ptr: *const u8, data_len: usize, out:
     }
     match oxicrypt_sha::sha3_384(data) {
         Ok(digest) => {
-            unsafe { core::ptr::copy_nonoverlapping(digest.as_ptr(), out, 48) };
+            // SAFETY: `out` is valid for writes of 48 bytes by contract,
+            // and the local `digest` does not overlap it.
+            if let Err(e) = unsafe { write_out(out, &digest[..48]) } {
+                return e as c_int;
+            }
             R::Ok as c_int
         }
         Err(e) => status_module(Err(e)),
@@ -799,7 +882,11 @@ pub unsafe extern "C" fn oxi_sha3_512(data_ptr: *const u8, data_len: usize, out:
     }
     match oxicrypt_sha::sha3_512(data) {
         Ok(digest) => {
-            unsafe { core::ptr::copy_nonoverlapping(digest.as_ptr(), out, 64) };
+            // SAFETY: `out` is valid for writes of 64 bytes by contract,
+            // and the local `digest` does not overlap it.
+            if let Err(e) = unsafe { write_out(out, &digest[..64]) } {
+                return e as c_int;
+            }
             R::Ok as c_int
         }
         Err(e) => status_module(Err(e)),
@@ -843,7 +930,11 @@ pub unsafe extern "C" fn oxi_hmac_sha256(
         Ok(t) => t,
         Err(e) => return status_module(Err(e)),
     };
-    unsafe { core::ptr::copy_nonoverlapping(tag.as_ptr(), out, 32) };
+    // SAFETY: `out` is valid for writes of 32 bytes by contract,
+    // and the local `tag` does not overlap it.
+    if let Err(e) = unsafe { write_out(out, &tag[..32]) } {
+        return e as c_int;
+    }
     R::Ok as c_int
 }
 
@@ -884,7 +975,11 @@ pub unsafe extern "C" fn oxi_hmac_sha384(
         Ok(t) => t,
         Err(e) => return status_module(Err(e)),
     };
-    unsafe { core::ptr::copy_nonoverlapping(tag.as_ptr(), out, 48) };
+    // SAFETY: `out` is valid for writes of 48 bytes by contract,
+    // and the local `tag` does not overlap it.
+    if let Err(e) = unsafe { write_out(out, &tag[..48]) } {
+        return e as c_int;
+    }
     R::Ok as c_int
 }
 
@@ -925,7 +1020,11 @@ pub unsafe extern "C" fn oxi_hmac_sha512(
         Ok(t) => t,
         Err(e) => return status_module(Err(e)),
     };
-    unsafe { core::ptr::copy_nonoverlapping(tag.as_ptr(), out, 64) };
+    // SAFETY: `out` is valid for writes of 64 bytes by contract,
+    // and the local `tag` does not overlap it.
+    if let Err(e) = unsafe { write_out(out, &tag[..64]) } {
+        return e as c_int;
+    }
     R::Ok as c_int
 }
 
@@ -966,7 +1065,11 @@ pub unsafe extern "C" fn oxi_hmac_sha3_224(
         Ok(t) => t,
         Err(e) => return status_module(Err(e)),
     };
-    unsafe { core::ptr::copy_nonoverlapping(tag.as_ptr(), out, 28) };
+    // SAFETY: `out` is valid for writes of 28 bytes by contract,
+    // and the local `tag` does not overlap it.
+    if let Err(e) = unsafe { write_out(out, &tag[..28]) } {
+        return e as c_int;
+    }
     R::Ok as c_int
 }
 
@@ -1007,7 +1110,11 @@ pub unsafe extern "C" fn oxi_hmac_sha3_256(
         Ok(t) => t,
         Err(e) => return status_module(Err(e)),
     };
-    unsafe { core::ptr::copy_nonoverlapping(tag.as_ptr(), out, 32) };
+    // SAFETY: `out` is valid for writes of 32 bytes by contract,
+    // and the local `tag` does not overlap it.
+    if let Err(e) = unsafe { write_out(out, &tag[..32]) } {
+        return e as c_int;
+    }
     R::Ok as c_int
 }
 
@@ -1048,7 +1155,11 @@ pub unsafe extern "C" fn oxi_hmac_sha3_384(
         Ok(t) => t,
         Err(e) => return status_module(Err(e)),
     };
-    unsafe { core::ptr::copy_nonoverlapping(tag.as_ptr(), out, 48) };
+    // SAFETY: `out` is valid for writes of 48 bytes by contract,
+    // and the local `tag` does not overlap it.
+    if let Err(e) = unsafe { write_out(out, &tag[..48]) } {
+        return e as c_int;
+    }
     R::Ok as c_int
 }
 
@@ -1089,7 +1200,11 @@ pub unsafe extern "C" fn oxi_hmac_sha3_512(
         Ok(t) => t,
         Err(e) => return status_module(Err(e)),
     };
-    unsafe { core::ptr::copy_nonoverlapping(tag.as_ptr(), out, 64) };
+    // SAFETY: `out` is valid for writes of 64 bytes by contract,
+    // and the local `tag` does not overlap it.
+    if let Err(e) = unsafe { write_out(out, &tag[..64]) } {
+        return e as c_int;
+    }
     R::Ok as c_int
 }
 
@@ -1141,7 +1256,11 @@ pub unsafe extern "C" fn oxi_ecdsa_p256_derive_public_key(
         Ok(p) => p,
         Err(e) => return R::from(e) as c_int,
     };
-    unsafe { core::ptr::copy_nonoverlapping(pk.as_ptr(), public_key_out, 65) };
+    // SAFETY: `public_key_out` is valid for writes of 65 bytes by contract,
+    // and the local `pk` does not overlap it.
+    if let Err(e) = unsafe { write_out(public_key_out, &pk[..65]) } {
+        return e as c_int;
+    }
     R::Ok as c_int
 }
 
@@ -1190,7 +1309,11 @@ pub unsafe extern "C" fn oxi_ecdsa_p256_sign_with_k(
         Ok(s) => s,
         Err(e) => return R::from(e) as c_int,
     };
-    unsafe { core::ptr::copy_nonoverlapping(sig.as_ptr(), sig_out, 64) };
+    // SAFETY: `sig_out` is valid for writes of 64 bytes by contract,
+    // and the local `sig` does not overlap it.
+    if let Err(e) = unsafe { write_out(sig_out, &sig[..64]) } {
+        return e as c_int;
+    }
     R::Ok as c_int
 }
 
@@ -1270,7 +1393,11 @@ pub unsafe extern "C" fn oxi_ecdsa_p384_derive_public_key(
         Ok(p) => p,
         Err(e) => return R::from(e) as c_int,
     };
-    unsafe { core::ptr::copy_nonoverlapping(pk.as_ptr(), public_key_out, 97) };
+    // SAFETY: `public_key_out` is valid for writes of 97 bytes by contract,
+    // and the local `pk` does not overlap it.
+    if let Err(e) = unsafe { write_out(public_key_out, &pk[..97]) } {
+        return e as c_int;
+    }
     R::Ok as c_int
 }
 
@@ -1318,7 +1445,11 @@ pub unsafe extern "C" fn oxi_ecdsa_p384_sign_with_k(
         Ok(s) => s,
         Err(e) => return R::from(e) as c_int,
     };
-    unsafe { core::ptr::copy_nonoverlapping(sig.as_ptr(), sig_out, 96) };
+    // SAFETY: `sig_out` is valid for writes of 96 bytes by contract,
+    // and the local `sig` does not overlap it.
+    if let Err(e) = unsafe { write_out(sig_out, &sig[..96]) } {
+        return e as c_int;
+    }
     R::Ok as c_int
 }
 
@@ -1418,7 +1549,11 @@ pub unsafe extern "C" fn oxi_hkdf_sha256_extract(
         Ok(p) => p,
         Err(e) => return R::from(e) as c_int,
     };
-    unsafe { core::ptr::copy_nonoverlapping(prk.as_ptr(), prk_out, 32) };
+    // SAFETY: `prk_out` is valid for writes of 32 bytes by contract,
+    // and the local `prk` does not overlap it.
+    if let Err(e) = unsafe { write_out(prk_out, &prk[..32]) } {
+        return e as c_int;
+    }
     R::Ok as c_int
 }
 
@@ -1450,15 +1585,20 @@ pub unsafe extern "C" fn oxi_hkdf_sha256_expand(
         Ok(s) => s,
         Err(e) => return e,
     };
-    let okm = match unsafe { slice_from_raw_mut(okm_out, okm_len) } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
+    if okm_out.is_null() && okm_len > 0 {
+        return R::NullPointer as c_int;
+    }
     let hk = match oxicrypt_kdf::HkdfSha256::from_prk(prk) {
         Ok(h) => h,
         Err(e) => return R::from(e) as c_int,
     };
-    status_kdf(hk.expand(info, okm))
+    // SAFETY: `okm_out` is valid for writes of `okm_len` bytes by contract
+    // and is non-NULL unless `okm_len` is 0.
+    unsafe {
+        staged_output(okm_out, okm_len, STAGE_CAP_SHA256, |okm| {
+            status_kdf(hk.expand(info, okm))
+        })
+    }
 }
 
 // ── HKDF-SHA-384 ─────────────────────────────────────────────────
@@ -1503,7 +1643,11 @@ pub unsafe extern "C" fn oxi_hkdf_sha384_extract(
         Ok(p) => p,
         Err(e) => return R::from(e) as c_int,
     };
-    unsafe { core::ptr::copy_nonoverlapping(prk.as_ptr(), prk_out, 48) };
+    // SAFETY: `prk_out` is valid for writes of 48 bytes by contract,
+    // and the local `prk` does not overlap it.
+    if let Err(e) = unsafe { write_out(prk_out, &prk[..48]) } {
+        return e as c_int;
+    }
     R::Ok as c_int
 }
 
@@ -1535,15 +1679,20 @@ pub unsafe extern "C" fn oxi_hkdf_sha384_expand(
         Ok(s) => s,
         Err(e) => return e,
     };
-    let okm = match unsafe { slice_from_raw_mut(okm_out, okm_len) } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
+    if okm_out.is_null() && okm_len > 0 {
+        return R::NullPointer as c_int;
+    }
     let hk = match oxicrypt_kdf::HkdfSha384::from_prk(prk) {
         Ok(h) => h,
         Err(e) => return R::from(e) as c_int,
     };
-    status_kdf(hk.expand(info, okm))
+    // SAFETY: `okm_out` is valid for writes of `okm_len` bytes by contract
+    // and is non-NULL unless `okm_len` is 0.
+    unsafe {
+        staged_output(okm_out, okm_len, STAGE_CAP_SHA384, |okm| {
+            status_kdf(hk.expand(info, okm))
+        })
+    }
 }
 
 // ── HKDF-SHA-512 ─────────────────────────────────────────────────
@@ -1588,7 +1737,11 @@ pub unsafe extern "C" fn oxi_hkdf_sha512_extract(
         Ok(p) => p,
         Err(e) => return R::from(e) as c_int,
     };
-    unsafe { core::ptr::copy_nonoverlapping(prk.as_ptr(), prk_out, 64) };
+    // SAFETY: `prk_out` is valid for writes of 64 bytes by contract,
+    // and the local `prk` does not overlap it.
+    if let Err(e) = unsafe { write_out(prk_out, &prk[..64]) } {
+        return e as c_int;
+    }
     R::Ok as c_int
 }
 
@@ -1620,15 +1773,20 @@ pub unsafe extern "C" fn oxi_hkdf_sha512_expand(
         Ok(s) => s,
         Err(e) => return e,
     };
-    let okm = match unsafe { slice_from_raw_mut(okm_out, okm_len) } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
+    if okm_out.is_null() && okm_len > 0 {
+        return R::NullPointer as c_int;
+    }
     let hk = match oxicrypt_kdf::HkdfSha512::from_prk(prk) {
         Ok(h) => h,
         Err(e) => return R::from(e) as c_int,
     };
-    status_kdf(hk.expand(info, okm))
+    // SAFETY: `okm_out` is valid for writes of `okm_len` bytes by contract
+    // and is non-NULL unless `okm_len` is 0.
+    unsafe {
+        staged_output(okm_out, okm_len, STAGE_CAP_SHA512, |okm| {
+            status_kdf(hk.expand(info, okm))
+        })
+    }
 }
 
 // ── TLS 1.3 KDF (RFC 8446 §7.1) ──────────────────────────────────
@@ -1680,14 +1838,19 @@ pub unsafe extern "C" fn oxi_tls13_hkdf_expand_label_sha256(
         Ok(s) => s,
         Err(e) => return e,
     };
-    let out_slice = match unsafe { slice_from_raw_mut(out, out_len) } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    status_module(oxicrypt_tls_kdf::tls13_hkdf_expand_label::<
-        oxicrypt_hmac::HmacSha256,
-        32,
-    >(secret, label, context, out_slice))
+    if out.is_null() && out_len > 0 {
+        return R::NullPointer as c_int;
+    }
+    // SAFETY: `out` is valid for writes of `out_len` bytes by contract and
+    // is non-NULL unless `out_len` is 0.
+    unsafe {
+        staged_output(out, out_len, STAGE_CAP_SHA256, |okm| {
+            status_module(oxicrypt_tls_kdf::tls13_hkdf_expand_label::<
+                oxicrypt_hmac::HmacSha256,
+                32,
+            >(secret, label, context, okm))
+        })
+    }
 }
 
 /// Run HKDF-Expand-Label per RFC 8446 §7.1 with HMAC-SHA-384.
@@ -1727,14 +1890,19 @@ pub unsafe extern "C" fn oxi_tls13_hkdf_expand_label_sha384(
         Ok(s) => s,
         Err(e) => return e,
     };
-    let out_slice = match unsafe { slice_from_raw_mut(out, out_len) } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    status_module(oxicrypt_tls_kdf::tls13_hkdf_expand_label::<
-        oxicrypt_hmac::HmacSha384,
-        48,
-    >(secret, label, context, out_slice))
+    if out.is_null() && out_len > 0 {
+        return R::NullPointer as c_int;
+    }
+    // SAFETY: `out` is valid for writes of `out_len` bytes by contract and
+    // is non-NULL unless `out_len` is 0.
+    unsafe {
+        staged_output(out, out_len, STAGE_CAP_SHA384, |okm| {
+            status_module(oxicrypt_tls_kdf::tls13_hkdf_expand_label::<
+                oxicrypt_hmac::HmacSha384,
+                48,
+            >(secret, label, context, okm))
+        })
+    }
 }
 
 // ── TLS 1.3 Derive-Secret ────────────────────────────────────────
@@ -1777,14 +1945,19 @@ pub unsafe extern "C" fn oxi_tls13_derive_secret_sha256(
         Ok(s) => s,
         Err(e) => return e,
     };
-    let out_slice = match unsafe { slice_from_raw_mut(out, out_len) } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    status_module(oxicrypt_tls_kdf::tls13_derive_secret::<
-        oxicrypt_hmac::HmacSha256,
-        32,
-    >(secret, label, transcript_hash, out_slice))
+    if out.is_null() && out_len > 0 {
+        return R::NullPointer as c_int;
+    }
+    // SAFETY: `out` is valid for writes of `out_len` bytes by contract and
+    // is non-NULL unless `out_len` is 0.
+    unsafe {
+        staged_output(out, out_len, STAGE_CAP_SHA256, |okm| {
+            status_module(oxicrypt_tls_kdf::tls13_derive_secret::<
+                oxicrypt_hmac::HmacSha256,
+                32,
+            >(secret, label, transcript_hash, okm))
+        })
+    }
 }
 
 /// Run Derive-Secret per RFC 8446 §7.1 with HMAC-SHA-384.
@@ -1825,14 +1998,19 @@ pub unsafe extern "C" fn oxi_tls13_derive_secret_sha384(
         Ok(s) => s,
         Err(e) => return e,
     };
-    let out_slice = match unsafe { slice_from_raw_mut(out, out_len) } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    status_module(oxicrypt_tls_kdf::tls13_derive_secret::<
-        oxicrypt_hmac::HmacSha384,
-        48,
-    >(secret, label, transcript_hash, out_slice))
+    if out.is_null() && out_len > 0 {
+        return R::NullPointer as c_int;
+    }
+    // SAFETY: `out` is valid for writes of `out_len` bytes by contract and
+    // is non-NULL unless `out_len` is 0.
+    unsafe {
+        staged_output(out, out_len, STAGE_CAP_SHA384, |okm| {
+            status_module(oxicrypt_tls_kdf::tls13_derive_secret::<
+                oxicrypt_hmac::HmacSha384,
+                48,
+            >(secret, label, transcript_hash, okm))
+        })
+    }
 }
 
 // ── EdDSA Ed25519 (RFC 8032, FIPS 186-5 §7.8) ────────────────────
@@ -1887,7 +2065,11 @@ pub unsafe extern "C" fn oxi_ed25519_keygen(seed_ptr: *const u8, public_key_out:
         Ok(p) => p,
         Err(e) => return R::from(e) as c_int,
     };
-    unsafe { core::ptr::copy_nonoverlapping(pk.as_ptr(), public_key_out, 32) };
+    // SAFETY: `public_key_out` is valid for writes of 32 bytes by contract,
+    // and the local `pk` does not overlap it.
+    if let Err(e) = unsafe { write_out(public_key_out, &pk[..32]) } {
+        return e as c_int;
+    }
     R::Ok as c_int
 }
 
@@ -1929,7 +2111,11 @@ pub unsafe extern "C" fn oxi_ed25519_sign(
         Ok(s) => s,
         Err(e) => return R::from(e) as c_int,
     };
-    unsafe { core::ptr::copy_nonoverlapping(sig.as_ptr(), sig_out, 64) };
+    // SAFETY: `sig_out` is valid for writes of 64 bytes by contract,
+    // and the local `sig` does not overlap it.
+    if let Err(e) = unsafe { write_out(sig_out, &sig[..64]) } {
+        return e as c_int;
+    }
     R::Ok as c_int
 }
 
@@ -2059,7 +2245,11 @@ pub unsafe extern "C" fn oxi_ecdh_p256_compute_shared_secret(
         Ok(z) => z,
         Err(e) => return R::from(e) as c_int,
     };
-    unsafe { core::ptr::copy_nonoverlapping(z.as_ptr(), shared_secret_out, 32) };
+    // SAFETY: `shared_secret_out` is valid for writes of 32 bytes by
+    // contract, and the local `z` does not overlap it.
+    if let Err(e) = unsafe { write_out(shared_secret_out, &z[..32]) } {
+        return e as c_int;
+    }
     R::Ok as c_int
 }
 
@@ -2109,7 +2299,11 @@ pub unsafe extern "C" fn oxi_ecdh_p384_compute_shared_secret(
         Ok(z) => z,
         Err(e) => return R::from(e) as c_int,
     };
-    unsafe { core::ptr::copy_nonoverlapping(z.as_ptr(), shared_secret_out, 48) };
+    // SAFETY: `shared_secret_out` is valid for writes of 48 bytes by
+    // contract, and the local `z` does not overlap it.
+    if let Err(e) = unsafe { write_out(shared_secret_out, &z[..48]) } {
+        return e as c_int;
+    }
     R::Ok as c_int
 }
 
@@ -2175,8 +2369,16 @@ pub unsafe extern "C" fn oxi_ecdh_p256_generate_keypair(
         Ok(pair) => pair,
         Err(e) => return R::from(e) as c_int,
     };
-    unsafe { core::ptr::copy_nonoverlapping(d.as_ptr(), private_out, 32) };
-    unsafe { core::ptr::copy_nonoverlapping(q.as_ptr(), public_out, 65) };
+    // SAFETY: `private_out` is valid for writes of 32 bytes by contract,
+    // and the local `d` does not overlap it.
+    if let Err(e) = unsafe { write_out(private_out, &d[..32]) } {
+        return e as c_int;
+    }
+    // SAFETY: `public_out` is valid for writes of 65 bytes by contract,
+    // and the local `q` does not overlap it.
+    if let Err(e) = unsafe { write_out(public_out, &q[..65]) } {
+        return e as c_int;
+    }
     R::Ok as c_int
 }
 
@@ -2217,8 +2419,16 @@ pub unsafe extern "C" fn oxi_ecdh_p384_generate_keypair(
         Ok(pair) => pair,
         Err(e) => return R::from(e) as c_int,
     };
-    unsafe { core::ptr::copy_nonoverlapping(d.as_ptr(), private_out, 48) };
-    unsafe { core::ptr::copy_nonoverlapping(q.as_ptr(), public_out, 97) };
+    // SAFETY: `private_out` is valid for writes of 48 bytes by contract,
+    // and the local `d` does not overlap it.
+    if let Err(e) = unsafe { write_out(private_out, &d[..48]) } {
+        return e as c_int;
+    }
+    // SAFETY: `public_out` is valid for writes of 97 bytes by contract,
+    // and the local `q` does not overlap it.
+    if let Err(e) = unsafe { write_out(public_out, &q[..97]) } {
+        return e as c_int;
+    }
     R::Ok as c_int
 }
 
@@ -2302,7 +2512,11 @@ pub unsafe extern "C" fn oxi_dh3072_compute_shared_secret(
         Ok(z) => z,
         Err(e) => return R::from(e) as c_int,
     };
-    unsafe { core::ptr::copy_nonoverlapping(z.as_ptr(), shared_secret_out, 384) };
+    // SAFETY: `shared_secret_out` is valid for writes of 384 bytes by
+    // contract, and the local `z` does not overlap it.
+    if let Err(e) = unsafe { write_out(shared_secret_out, &z[..384]) } {
+        return e as c_int;
+    }
     R::Ok as c_int
 }
 
@@ -2365,8 +2579,16 @@ pub unsafe extern "C" fn oxi_dh3072_generate_keypair(
         Ok(pair) => pair,
         Err(e) => return R::from(e) as c_int,
     };
-    unsafe { core::ptr::copy_nonoverlapping(x.as_ptr(), private_out, 384) };
-    unsafe { core::ptr::copy_nonoverlapping(y.as_ptr(), public_out, 384) };
+    // SAFETY: `private_out` is valid for writes of 384 bytes by contract,
+    // and the local `x` does not overlap it.
+    if let Err(e) = unsafe { write_out(private_out, &x[..384]) } {
+        return e as c_int;
+    }
+    // SAFETY: `public_out` is valid for writes of 384 bytes by contract,
+    // and the local `y` does not overlap it.
+    if let Err(e) = unsafe { write_out(public_out, &y[..384]) } {
+        return e as c_int;
+    }
     R::Ok as c_int
 }
 
@@ -2749,8 +2971,16 @@ pub unsafe extern "C" fn oxi_ml_dsa_87_keygen(
         Ok(pair) => pair,
         Err(e) => return R::from(e) as c_int,
     };
-    unsafe { core::ptr::copy_nonoverlapping(pk.as_ptr(), pk_out, 2592) };
-    unsafe { core::ptr::copy_nonoverlapping(sk.as_ptr(), sk_out, 4896) };
+    // SAFETY: `pk_out` is valid for writes of 2592 bytes by contract,
+    // and the local `pk` does not overlap it.
+    if let Err(e) = unsafe { write_out(pk_out, &pk[..2592]) } {
+        return e as c_int;
+    }
+    // SAFETY: `sk_out` is valid for writes of 4896 bytes by contract,
+    // and the local `sk` does not overlap it.
+    if let Err(e) = unsafe { write_out(sk_out, &sk[..4896]) } {
+        return e as c_int;
+    }
     R::Ok as c_int
 }
 
@@ -2805,7 +3035,11 @@ pub unsafe extern "C" fn oxi_ml_dsa_87_sign(
         Ok(s) => s,
         Err(e) => return R::from(e) as c_int,
     };
-    unsafe { core::ptr::copy_nonoverlapping(sig.as_ptr(), sig_out, 4627) };
+    // SAFETY: `sig_out` is valid for writes of 4627 bytes by contract,
+    // and the local `sig` does not overlap it.
+    if let Err(e) = unsafe { write_out(sig_out, &sig[..4627]) } {
+        return e as c_int;
+    }
     R::Ok as c_int
 }
 
@@ -2918,8 +3152,16 @@ pub unsafe extern "C" fn oxi_ml_dsa_44_keygen(
         Ok(pair) => pair,
         Err(e) => return R::from(e) as c_int,
     };
-    unsafe { core::ptr::copy_nonoverlapping(pk.as_ptr(), pk_out, 1312) };
-    unsafe { core::ptr::copy_nonoverlapping(sk.as_ptr(), sk_out, 2560) };
+    // SAFETY: `pk_out` is valid for writes of 1312 bytes by contract,
+    // and the local `pk` does not overlap it.
+    if let Err(e) = unsafe { write_out(pk_out, &pk[..1312]) } {
+        return e as c_int;
+    }
+    // SAFETY: `sk_out` is valid for writes of 2560 bytes by contract,
+    // and the local `sk` does not overlap it.
+    if let Err(e) = unsafe { write_out(sk_out, &sk[..2560]) } {
+        return e as c_int;
+    }
     R::Ok as c_int
 }
 
@@ -2974,7 +3216,11 @@ pub unsafe extern "C" fn oxi_ml_dsa_44_sign(
         Ok(s) => s,
         Err(e) => return R::from(e) as c_int,
     };
-    unsafe { core::ptr::copy_nonoverlapping(sig.as_ptr(), sig_out, 2420) };
+    // SAFETY: `sig_out` is valid for writes of 2420 bytes by contract,
+    // and the local `sig` does not overlap it.
+    if let Err(e) = unsafe { write_out(sig_out, &sig[..2420]) } {
+        return e as c_int;
+    }
     R::Ok as c_int
 }
 
@@ -3087,8 +3333,16 @@ pub unsafe extern "C" fn oxi_ml_dsa_65_keygen(
         Ok(pair) => pair,
         Err(e) => return R::from(e) as c_int,
     };
-    unsafe { core::ptr::copy_nonoverlapping(pk.as_ptr(), pk_out, 1952) };
-    unsafe { core::ptr::copy_nonoverlapping(sk.as_ptr(), sk_out, 4032) };
+    // SAFETY: `pk_out` is valid for writes of 1952 bytes by contract,
+    // and the local `pk` does not overlap it.
+    if let Err(e) = unsafe { write_out(pk_out, &pk[..1952]) } {
+        return e as c_int;
+    }
+    // SAFETY: `sk_out` is valid for writes of 4032 bytes by contract,
+    // and the local `sk` does not overlap it.
+    if let Err(e) = unsafe { write_out(sk_out, &sk[..4032]) } {
+        return e as c_int;
+    }
     R::Ok as c_int
 }
 
@@ -3143,7 +3397,11 @@ pub unsafe extern "C" fn oxi_ml_dsa_65_sign(
         Ok(s) => s,
         Err(e) => return R::from(e) as c_int,
     };
-    unsafe { core::ptr::copy_nonoverlapping(sig.as_ptr(), sig_out, 3309) };
+    // SAFETY: `sig_out` is valid for writes of 3309 bytes by contract,
+    // and the local `sig` does not overlap it.
+    if let Err(e) = unsafe { write_out(sig_out, &sig[..3309]) } {
+        return e as c_int;
+    }
     R::Ok as c_int
 }
 
@@ -3291,8 +3549,16 @@ pub unsafe extern "C" fn oxi_ml_kem_1024_keygen(
         Ok(pair) => pair,
         Err(e) => return R::from(e) as c_int,
     };
-    unsafe { core::ptr::copy_nonoverlapping(ek.as_ptr(), ek_out, 1568) };
-    unsafe { core::ptr::copy_nonoverlapping(dk.as_ptr(), dk_out, 3168) };
+    // SAFETY: `ek_out` is valid for writes of 1568 bytes by contract,
+    // and the local `ek` does not overlap it.
+    if let Err(e) = unsafe { write_out(ek_out, &ek[..1568]) } {
+        return e as c_int;
+    }
+    // SAFETY: `dk_out` is valid for writes of 3168 bytes by contract,
+    // and the local `dk` does not overlap it.
+    if let Err(e) = unsafe { write_out(dk_out, &dk[..3168]) } {
+        return e as c_int;
+    }
     R::Ok as c_int
 }
 
@@ -3340,8 +3606,16 @@ pub unsafe extern "C" fn oxi_ml_kem_1024_encapsulate(
         Ok(pair) => pair,
         Err(e) => return R::from(e) as c_int,
     };
-    unsafe { core::ptr::copy_nonoverlapping(ss.as_ptr(), ss_out, 32) };
-    unsafe { core::ptr::copy_nonoverlapping(ct.as_ptr(), ct_out, 1568) };
+    // SAFETY: `ss_out` is valid for writes of 32 bytes by contract,
+    // and the local `ss` does not overlap it.
+    if let Err(e) = unsafe { write_out(ss_out, &ss[..32]) } {
+        return e as c_int;
+    }
+    // SAFETY: `ct_out` is valid for writes of 1568 bytes by contract,
+    // and the local `ct` does not overlap it.
+    if let Err(e) = unsafe { write_out(ct_out, &ct[..1568]) } {
+        return e as c_int;
+    }
     R::Ok as c_int
 }
 
@@ -3390,7 +3664,11 @@ pub unsafe extern "C" fn oxi_ml_kem_1024_decapsulate(
         Ok(s) => s,
         Err(e) => return R::from(e) as c_int,
     };
-    unsafe { core::ptr::copy_nonoverlapping(ss.as_ptr(), ss_out, 32) };
+    // SAFETY: `ss_out` is valid for writes of 32 bytes by contract,
+    // and the local `ss` does not overlap it.
+    if let Err(e) = unsafe { write_out(ss_out, &ss[..32]) } {
+        return e as c_int;
+    }
     R::Ok as c_int
 }
 
@@ -3462,8 +3740,16 @@ pub unsafe extern "C" fn oxi_ml_kem_512_keygen(
         Ok(pair) => pair,
         Err(e) => return R::from(e) as c_int,
     };
-    unsafe { core::ptr::copy_nonoverlapping(ek.as_ptr(), ek_out, 800) };
-    unsafe { core::ptr::copy_nonoverlapping(dk.as_ptr(), dk_out, 1632) };
+    // SAFETY: `ek_out` is valid for writes of 800 bytes by contract,
+    // and the local `ek` does not overlap it.
+    if let Err(e) = unsafe { write_out(ek_out, &ek[..800]) } {
+        return e as c_int;
+    }
+    // SAFETY: `dk_out` is valid for writes of 1632 bytes by contract,
+    // and the local `dk` does not overlap it.
+    if let Err(e) = unsafe { write_out(dk_out, &dk[..1632]) } {
+        return e as c_int;
+    }
     R::Ok as c_int
 }
 
@@ -3511,8 +3797,16 @@ pub unsafe extern "C" fn oxi_ml_kem_512_encapsulate(
         Ok(pair) => pair,
         Err(e) => return R::from(e) as c_int,
     };
-    unsafe { core::ptr::copy_nonoverlapping(ss.as_ptr(), ss_out, 32) };
-    unsafe { core::ptr::copy_nonoverlapping(ct.as_ptr(), ct_out, 768) };
+    // SAFETY: `ss_out` is valid for writes of 32 bytes by contract,
+    // and the local `ss` does not overlap it.
+    if let Err(e) = unsafe { write_out(ss_out, &ss[..32]) } {
+        return e as c_int;
+    }
+    // SAFETY: `ct_out` is valid for writes of 768 bytes by contract,
+    // and the local `ct` does not overlap it.
+    if let Err(e) = unsafe { write_out(ct_out, &ct[..768]) } {
+        return e as c_int;
+    }
     R::Ok as c_int
 }
 
@@ -3561,7 +3855,11 @@ pub unsafe extern "C" fn oxi_ml_kem_512_decapsulate(
         Ok(s) => s,
         Err(e) => return R::from(e) as c_int,
     };
-    unsafe { core::ptr::copy_nonoverlapping(ss.as_ptr(), ss_out, 32) };
+    // SAFETY: `ss_out` is valid for writes of 32 bytes by contract,
+    // and the local `ss` does not overlap it.
+    if let Err(e) = unsafe { write_out(ss_out, &ss[..32]) } {
+        return e as c_int;
+    }
     R::Ok as c_int
 }
 
@@ -3633,8 +3931,16 @@ pub unsafe extern "C" fn oxi_ml_kem_768_keygen(
         Ok(pair) => pair,
         Err(e) => return R::from(e) as c_int,
     };
-    unsafe { core::ptr::copy_nonoverlapping(ek.as_ptr(), ek_out, 1184) };
-    unsafe { core::ptr::copy_nonoverlapping(dk.as_ptr(), dk_out, 2400) };
+    // SAFETY: `ek_out` is valid for writes of 1184 bytes by contract,
+    // and the local `ek` does not overlap it.
+    if let Err(e) = unsafe { write_out(ek_out, &ek[..1184]) } {
+        return e as c_int;
+    }
+    // SAFETY: `dk_out` is valid for writes of 2400 bytes by contract,
+    // and the local `dk` does not overlap it.
+    if let Err(e) = unsafe { write_out(dk_out, &dk[..2400]) } {
+        return e as c_int;
+    }
     R::Ok as c_int
 }
 
@@ -3682,8 +3988,16 @@ pub unsafe extern "C" fn oxi_ml_kem_768_encapsulate(
         Ok(pair) => pair,
         Err(e) => return R::from(e) as c_int,
     };
-    unsafe { core::ptr::copy_nonoverlapping(ss.as_ptr(), ss_out, 32) };
-    unsafe { core::ptr::copy_nonoverlapping(ct.as_ptr(), ct_out, 1088) };
+    // SAFETY: `ss_out` is valid for writes of 32 bytes by contract,
+    // and the local `ss` does not overlap it.
+    if let Err(e) = unsafe { write_out(ss_out, &ss[..32]) } {
+        return e as c_int;
+    }
+    // SAFETY: `ct_out` is valid for writes of 1088 bytes by contract,
+    // and the local `ct` does not overlap it.
+    if let Err(e) = unsafe { write_out(ct_out, &ct[..1088]) } {
+        return e as c_int;
+    }
     R::Ok as c_int
 }
 
@@ -3732,7 +4046,11 @@ pub unsafe extern "C" fn oxi_ml_kem_768_decapsulate(
         Ok(s) => s,
         Err(e) => return R::from(e) as c_int,
     };
-    unsafe { core::ptr::copy_nonoverlapping(ss.as_ptr(), ss_out, 32) };
+    // SAFETY: `ss_out` is valid for writes of 32 bytes by contract,
+    // and the local `ss` does not overlap it.
+    if let Err(e) = unsafe { write_out(ss_out, &ss[..32]) } {
+        return e as c_int;
+    }
     R::Ok as c_int
 }
 
@@ -3827,8 +4145,16 @@ pub unsafe extern "C" fn oxi_slh_dsa_sha2_256s_keygen(
         Ok(pair) => pair,
         Err(e) => return R::from(e) as c_int,
     };
-    unsafe { core::ptr::copy_nonoverlapping(pk.as_ptr(), pk_out, 64) };
-    unsafe { core::ptr::copy_nonoverlapping(sk.as_ptr(), sk_out, 128) };
+    // SAFETY: `pk_out` is valid for writes of 64 bytes by contract,
+    // and the local `pk` does not overlap it.
+    if let Err(e) = unsafe { write_out(pk_out, &pk[..64]) } {
+        return e as c_int;
+    }
+    // SAFETY: `sk_out` is valid for writes of 128 bytes by contract,
+    // and the local `sk` does not overlap it.
+    if let Err(e) = unsafe { write_out(sk_out, &sk[..128]) } {
+        return e as c_int;
+    }
     R::Ok as c_int
 }
 
@@ -3881,7 +4207,11 @@ pub unsafe extern "C" fn oxi_slh_dsa_sha2_256s_sign(
         Ok(s) => s,
         Err(e) => return R::from(e) as c_int,
     };
-    unsafe { core::ptr::copy_nonoverlapping(sig.as_ptr(), sig_out, 29_792) };
+    // SAFETY: `sig_out` is valid for writes of 29_792 bytes by contract,
+    // and the local `sig` does not overlap it.
+    if let Err(e) = unsafe { write_out(sig_out, &sig[..29_792]) } {
+        return e as c_int;
+    }
     R::Ok as c_int
 }
 
@@ -3990,8 +4320,16 @@ pub unsafe extern "C" fn oxi_slh_dsa_sha2_128s_keygen(
         Ok(pair) => pair,
         Err(e) => return R::from(e) as c_int,
     };
-    unsafe { core::ptr::copy_nonoverlapping(pk.as_ptr(), pk_out, 32) };
-    unsafe { core::ptr::copy_nonoverlapping(sk.as_ptr(), sk_out, 64) };
+    // SAFETY: `pk_out` is valid for writes of 32 bytes by contract,
+    // and the local `pk` does not overlap it.
+    if let Err(e) = unsafe { write_out(pk_out, &pk[..32]) } {
+        return e as c_int;
+    }
+    // SAFETY: `sk_out` is valid for writes of 64 bytes by contract,
+    // and the local `sk` does not overlap it.
+    if let Err(e) = unsafe { write_out(sk_out, &sk[..64]) } {
+        return e as c_int;
+    }
     R::Ok as c_int
 }
 
@@ -4030,7 +4368,11 @@ pub unsafe extern "C" fn oxi_slh_dsa_sha2_128s_sign(
         Ok(s) => s,
         Err(e) => return R::from(e) as c_int,
     };
-    unsafe { core::ptr::copy_nonoverlapping(sig.as_ptr(), sig_out, 7_856) };
+    // SAFETY: `sig_out` is valid for writes of 7_856 bytes by contract,
+    // and the local `sig` does not overlap it.
+    if let Err(e) = unsafe { write_out(sig_out, &sig[..7_856]) } {
+        return e as c_int;
+    }
     R::Ok as c_int
 }
 
@@ -4097,8 +4439,16 @@ pub unsafe extern "C" fn oxi_slh_dsa_sha2_128f_keygen(
         Ok(pair) => pair,
         Err(e) => return R::from(e) as c_int,
     };
-    unsafe { core::ptr::copy_nonoverlapping(pk.as_ptr(), pk_out, 32) };
-    unsafe { core::ptr::copy_nonoverlapping(sk.as_ptr(), sk_out, 64) };
+    // SAFETY: `pk_out` is valid for writes of 32 bytes by contract,
+    // and the local `pk` does not overlap it.
+    if let Err(e) = unsafe { write_out(pk_out, &pk[..32]) } {
+        return e as c_int;
+    }
+    // SAFETY: `sk_out` is valid for writes of 64 bytes by contract,
+    // and the local `sk` does not overlap it.
+    if let Err(e) = unsafe { write_out(sk_out, &sk[..64]) } {
+        return e as c_int;
+    }
     R::Ok as c_int
 }
 
@@ -4137,7 +4487,11 @@ pub unsafe extern "C" fn oxi_slh_dsa_sha2_128f_sign(
         Ok(s) => s,
         Err(e) => return R::from(e) as c_int,
     };
-    unsafe { core::ptr::copy_nonoverlapping(sig.as_ptr(), sig_out, 17_088) };
+    // SAFETY: `sig_out` is valid for writes of 17_088 bytes by contract,
+    // and the local `sig` does not overlap it.
+    if let Err(e) = unsafe { write_out(sig_out, &sig[..17_088]) } {
+        return e as c_int;
+    }
     R::Ok as c_int
 }
 
@@ -4207,8 +4561,16 @@ pub unsafe extern "C" fn oxi_slh_dsa_sha2_192s_keygen(
         Ok(pair) => pair,
         Err(e) => return R::from(e) as c_int,
     };
-    unsafe { core::ptr::copy_nonoverlapping(pk.as_ptr(), pk_out, 48) };
-    unsafe { core::ptr::copy_nonoverlapping(sk.as_ptr(), sk_out, 96) };
+    // SAFETY: `pk_out` is valid for writes of 48 bytes by contract,
+    // and the local `pk` does not overlap it.
+    if let Err(e) = unsafe { write_out(pk_out, &pk[..48]) } {
+        return e as c_int;
+    }
+    // SAFETY: `sk_out` is valid for writes of 96 bytes by contract,
+    // and the local `sk` does not overlap it.
+    if let Err(e) = unsafe { write_out(sk_out, &sk[..96]) } {
+        return e as c_int;
+    }
     R::Ok as c_int
 }
 
@@ -4248,7 +4610,11 @@ pub unsafe extern "C" fn oxi_slh_dsa_sha2_192s_sign(
         Ok(s) => s,
         Err(e) => return R::from(e) as c_int,
     };
-    unsafe { core::ptr::copy_nonoverlapping(sig.as_ptr(), sig_out, 16_224) };
+    // SAFETY: `sig_out` is valid for writes of 16_224 bytes by contract,
+    // and the local `sig` does not overlap it.
+    if let Err(e) = unsafe { write_out(sig_out, &sig[..16_224]) } {
+        return e as c_int;
+    }
     R::Ok as c_int
 }
 
@@ -4313,8 +4679,16 @@ pub unsafe extern "C" fn oxi_slh_dsa_sha2_192f_keygen(
         Ok(pair) => pair,
         Err(e) => return R::from(e) as c_int,
     };
-    unsafe { core::ptr::copy_nonoverlapping(pk.as_ptr(), pk_out, 48) };
-    unsafe { core::ptr::copy_nonoverlapping(sk.as_ptr(), sk_out, 96) };
+    // SAFETY: `pk_out` is valid for writes of 48 bytes by contract,
+    // and the local `pk` does not overlap it.
+    if let Err(e) = unsafe { write_out(pk_out, &pk[..48]) } {
+        return e as c_int;
+    }
+    // SAFETY: `sk_out` is valid for writes of 96 bytes by contract,
+    // and the local `sk` does not overlap it.
+    if let Err(e) = unsafe { write_out(sk_out, &sk[..96]) } {
+        return e as c_int;
+    }
     R::Ok as c_int
 }
 
@@ -4354,7 +4728,11 @@ pub unsafe extern "C" fn oxi_slh_dsa_sha2_192f_sign(
         Ok(s) => s,
         Err(e) => return R::from(e) as c_int,
     };
-    unsafe { core::ptr::copy_nonoverlapping(sig.as_ptr(), sig_out, 35_664) };
+    // SAFETY: `sig_out` is valid for writes of 35_664 bytes by contract,
+    // and the local `sig` does not overlap it.
+    if let Err(e) = unsafe { write_out(sig_out, &sig[..35_664]) } {
+        return e as c_int;
+    }
     R::Ok as c_int
 }
 
@@ -4419,8 +4797,16 @@ pub unsafe extern "C" fn oxi_slh_dsa_sha2_256f_keygen(
         Ok(pair) => pair,
         Err(e) => return R::from(e) as c_int,
     };
-    unsafe { core::ptr::copy_nonoverlapping(pk.as_ptr(), pk_out, 64) };
-    unsafe { core::ptr::copy_nonoverlapping(sk.as_ptr(), sk_out, 128) };
+    // SAFETY: `pk_out` is valid for writes of 64 bytes by contract,
+    // and the local `pk` does not overlap it.
+    if let Err(e) = unsafe { write_out(pk_out, &pk[..64]) } {
+        return e as c_int;
+    }
+    // SAFETY: `sk_out` is valid for writes of 128 bytes by contract,
+    // and the local `sk` does not overlap it.
+    if let Err(e) = unsafe { write_out(sk_out, &sk[..128]) } {
+        return e as c_int;
+    }
     R::Ok as c_int
 }
 
@@ -4460,7 +4846,11 @@ pub unsafe extern "C" fn oxi_slh_dsa_sha2_256f_sign(
         Ok(s) => s,
         Err(e) => return R::from(e) as c_int,
     };
-    unsafe { core::ptr::copy_nonoverlapping(sig.as_ptr(), sig_out, 49_856) };
+    // SAFETY: `sig_out` is valid for writes of 49_856 bytes by contract,
+    // and the local `sig` does not overlap it.
+    if let Err(e) = unsafe { write_out(sig_out, &sig[..49_856]) } {
+        return e as c_int;
+    }
     R::Ok as c_int
 }
 
@@ -4539,8 +4929,16 @@ pub unsafe extern "C" fn oxi_slh_dsa_shake_128s_keygen(
         Ok(pair) => pair,
         Err(e) => return R::from(e) as c_int,
     };
-    unsafe { core::ptr::copy_nonoverlapping(pk.as_ptr(), pk_out, 32) };
-    unsafe { core::ptr::copy_nonoverlapping(sk.as_ptr(), sk_out, 64) };
+    // SAFETY: `pk_out` is valid for writes of 32 bytes by contract,
+    // and the local `pk` does not overlap it.
+    if let Err(e) = unsafe { write_out(pk_out, &pk[..32]) } {
+        return e as c_int;
+    }
+    // SAFETY: `sk_out` is valid for writes of 64 bytes by contract,
+    // and the local `sk` does not overlap it.
+    if let Err(e) = unsafe { write_out(sk_out, &sk[..64]) } {
+        return e as c_int;
+    }
     R::Ok as c_int
 }
 
@@ -4579,7 +4977,11 @@ pub unsafe extern "C" fn oxi_slh_dsa_shake_128s_sign(
         Ok(s) => s,
         Err(e) => return R::from(e) as c_int,
     };
-    unsafe { core::ptr::copy_nonoverlapping(sig.as_ptr(), sig_out, 7_856) };
+    // SAFETY: `sig_out` is valid for writes of 7_856 bytes by contract,
+    // and the local `sig` does not overlap it.
+    if let Err(e) = unsafe { write_out(sig_out, &sig[..7_856]) } {
+        return e as c_int;
+    }
     R::Ok as c_int
 }
 
@@ -4644,8 +5046,16 @@ pub unsafe extern "C" fn oxi_slh_dsa_shake_128f_keygen(
         Ok(pair) => pair,
         Err(e) => return R::from(e) as c_int,
     };
-    unsafe { core::ptr::copy_nonoverlapping(pk.as_ptr(), pk_out, 32) };
-    unsafe { core::ptr::copy_nonoverlapping(sk.as_ptr(), sk_out, 64) };
+    // SAFETY: `pk_out` is valid for writes of 32 bytes by contract,
+    // and the local `pk` does not overlap it.
+    if let Err(e) = unsafe { write_out(pk_out, &pk[..32]) } {
+        return e as c_int;
+    }
+    // SAFETY: `sk_out` is valid for writes of 64 bytes by contract,
+    // and the local `sk` does not overlap it.
+    if let Err(e) = unsafe { write_out(sk_out, &sk[..64]) } {
+        return e as c_int;
+    }
     R::Ok as c_int
 }
 
@@ -4684,7 +5094,11 @@ pub unsafe extern "C" fn oxi_slh_dsa_shake_128f_sign(
         Ok(s) => s,
         Err(e) => return R::from(e) as c_int,
     };
-    unsafe { core::ptr::copy_nonoverlapping(sig.as_ptr(), sig_out, 17_088) };
+    // SAFETY: `sig_out` is valid for writes of 17_088 bytes by contract,
+    // and the local `sig` does not overlap it.
+    if let Err(e) = unsafe { write_out(sig_out, &sig[..17_088]) } {
+        return e as c_int;
+    }
     R::Ok as c_int
 }
 
@@ -4749,8 +5163,16 @@ pub unsafe extern "C" fn oxi_slh_dsa_shake_192s_keygen(
         Ok(pair) => pair,
         Err(e) => return R::from(e) as c_int,
     };
-    unsafe { core::ptr::copy_nonoverlapping(pk.as_ptr(), pk_out, 48) };
-    unsafe { core::ptr::copy_nonoverlapping(sk.as_ptr(), sk_out, 96) };
+    // SAFETY: `pk_out` is valid for writes of 48 bytes by contract,
+    // and the local `pk` does not overlap it.
+    if let Err(e) = unsafe { write_out(pk_out, &pk[..48]) } {
+        return e as c_int;
+    }
+    // SAFETY: `sk_out` is valid for writes of 96 bytes by contract,
+    // and the local `sk` does not overlap it.
+    if let Err(e) = unsafe { write_out(sk_out, &sk[..96]) } {
+        return e as c_int;
+    }
     R::Ok as c_int
 }
 
@@ -4789,7 +5211,11 @@ pub unsafe extern "C" fn oxi_slh_dsa_shake_192s_sign(
         Ok(s) => s,
         Err(e) => return R::from(e) as c_int,
     };
-    unsafe { core::ptr::copy_nonoverlapping(sig.as_ptr(), sig_out, 16_224) };
+    // SAFETY: `sig_out` is valid for writes of 16_224 bytes by contract,
+    // and the local `sig` does not overlap it.
+    if let Err(e) = unsafe { write_out(sig_out, &sig[..16_224]) } {
+        return e as c_int;
+    }
     R::Ok as c_int
 }
 
@@ -4854,8 +5280,16 @@ pub unsafe extern "C" fn oxi_slh_dsa_shake_192f_keygen(
         Ok(pair) => pair,
         Err(e) => return R::from(e) as c_int,
     };
-    unsafe { core::ptr::copy_nonoverlapping(pk.as_ptr(), pk_out, 48) };
-    unsafe { core::ptr::copy_nonoverlapping(sk.as_ptr(), sk_out, 96) };
+    // SAFETY: `pk_out` is valid for writes of 48 bytes by contract,
+    // and the local `pk` does not overlap it.
+    if let Err(e) = unsafe { write_out(pk_out, &pk[..48]) } {
+        return e as c_int;
+    }
+    // SAFETY: `sk_out` is valid for writes of 96 bytes by contract,
+    // and the local `sk` does not overlap it.
+    if let Err(e) = unsafe { write_out(sk_out, &sk[..96]) } {
+        return e as c_int;
+    }
     R::Ok as c_int
 }
 
@@ -4894,7 +5328,11 @@ pub unsafe extern "C" fn oxi_slh_dsa_shake_192f_sign(
         Ok(s) => s,
         Err(e) => return R::from(e) as c_int,
     };
-    unsafe { core::ptr::copy_nonoverlapping(sig.as_ptr(), sig_out, 35_664) };
+    // SAFETY: `sig_out` is valid for writes of 35_664 bytes by contract,
+    // and the local `sig` does not overlap it.
+    if let Err(e) = unsafe { write_out(sig_out, &sig[..35_664]) } {
+        return e as c_int;
+    }
     R::Ok as c_int
 }
 
@@ -4959,8 +5397,16 @@ pub unsafe extern "C" fn oxi_slh_dsa_shake_256s_keygen(
         Ok(pair) => pair,
         Err(e) => return R::from(e) as c_int,
     };
-    unsafe { core::ptr::copy_nonoverlapping(pk.as_ptr(), pk_out, 64) };
-    unsafe { core::ptr::copy_nonoverlapping(sk.as_ptr(), sk_out, 128) };
+    // SAFETY: `pk_out` is valid for writes of 64 bytes by contract,
+    // and the local `pk` does not overlap it.
+    if let Err(e) = unsafe { write_out(pk_out, &pk[..64]) } {
+        return e as c_int;
+    }
+    // SAFETY: `sk_out` is valid for writes of 128 bytes by contract,
+    // and the local `sk` does not overlap it.
+    if let Err(e) = unsafe { write_out(sk_out, &sk[..128]) } {
+        return e as c_int;
+    }
     R::Ok as c_int
 }
 
@@ -4999,7 +5445,11 @@ pub unsafe extern "C" fn oxi_slh_dsa_shake_256s_sign(
         Ok(s) => s,
         Err(e) => return R::from(e) as c_int,
     };
-    unsafe { core::ptr::copy_nonoverlapping(sig.as_ptr(), sig_out, 29_792) };
+    // SAFETY: `sig_out` is valid for writes of 29_792 bytes by contract,
+    // and the local `sig` does not overlap it.
+    if let Err(e) = unsafe { write_out(sig_out, &sig[..29_792]) } {
+        return e as c_int;
+    }
     R::Ok as c_int
 }
 
@@ -5064,8 +5514,16 @@ pub unsafe extern "C" fn oxi_slh_dsa_shake_256f_keygen(
         Ok(pair) => pair,
         Err(e) => return R::from(e) as c_int,
     };
-    unsafe { core::ptr::copy_nonoverlapping(pk.as_ptr(), pk_out, 64) };
-    unsafe { core::ptr::copy_nonoverlapping(sk.as_ptr(), sk_out, 128) };
+    // SAFETY: `pk_out` is valid for writes of 64 bytes by contract,
+    // and the local `pk` does not overlap it.
+    if let Err(e) = unsafe { write_out(pk_out, &pk[..64]) } {
+        return e as c_int;
+    }
+    // SAFETY: `sk_out` is valid for writes of 128 bytes by contract,
+    // and the local `sk` does not overlap it.
+    if let Err(e) = unsafe { write_out(sk_out, &sk[..128]) } {
+        return e as c_int;
+    }
     R::Ok as c_int
 }
 
@@ -5104,7 +5562,11 @@ pub unsafe extern "C" fn oxi_slh_dsa_shake_256f_sign(
         Ok(s) => s,
         Err(e) => return R::from(e) as c_int,
     };
-    unsafe { core::ptr::copy_nonoverlapping(sig.as_ptr(), sig_out, 49_856) };
+    // SAFETY: `sig_out` is valid for writes of 49_856 bytes by contract,
+    // and the local `sig` does not overlap it.
+    if let Err(e) = unsafe { write_out(sig_out, &sig[..49_856]) } {
+        return e as c_int;
+    }
     R::Ok as c_int
 }
 
@@ -9627,7 +10089,11 @@ pub unsafe extern "C" fn oxi_ecdsa_p256_private_key_public_key(
         Ok(v) => v,
         Err(e) => return status_module(Err(e)),
     };
-    unsafe { core::ptr::copy_nonoverlapping(pk.as_ptr(), public_key_out, 65) };
+    // SAFETY: `public_key_out` is valid for writes of 65 bytes by contract,
+    // and the local `pk` does not overlap it.
+    if let Err(e) = unsafe { write_out(public_key_out, &pk[..65]) } {
+        return e as c_int;
+    }
     R::Ok as c_int
 }
 
@@ -9687,7 +10153,11 @@ pub unsafe extern "C" fn oxi_ecdsa_p256_private_key_sign_sha256(
         Ok(s) => s,
         Err(e) => return R::from(e) as c_int,
     };
-    unsafe { core::ptr::copy_nonoverlapping(sig.as_ptr(), sig_out, 64) };
+    // SAFETY: `sig_out` is valid for writes of 64 bytes by contract,
+    // and the local `sig` does not overlap it.
+    if let Err(e) = unsafe { write_out(sig_out, &sig[..64]) } {
+        return e as c_int;
+    }
     R::Ok as c_int
 }
 
@@ -9772,7 +10242,11 @@ pub unsafe extern "C" fn oxi_ecdsa_p384_private_key_public_key(
         Ok(v) => v,
         Err(e) => return status_module(Err(e)),
     };
-    unsafe { core::ptr::copy_nonoverlapping(pk.as_ptr(), public_key_out, 97) };
+    // SAFETY: `public_key_out` is valid for writes of 97 bytes by contract,
+    // and the local `pk` does not overlap it.
+    if let Err(e) = unsafe { write_out(public_key_out, &pk[..97]) } {
+        return e as c_int;
+    }
     R::Ok as c_int
 }
 
@@ -9826,7 +10300,11 @@ pub unsafe extern "C" fn oxi_ecdsa_p384_private_key_sign_sha384(
         Ok(s) => s,
         Err(e) => return R::from(e) as c_int,
     };
-    unsafe { core::ptr::copy_nonoverlapping(sig.as_ptr(), sig_out, 96) };
+    // SAFETY: `sig_out` is valid for writes of 96 bytes by contract,
+    // and the local `sig` does not overlap it.
+    if let Err(e) = unsafe { write_out(sig_out, &sig[..96]) } {
+        return e as c_int;
+    }
     R::Ok as c_int
 }
 
@@ -10035,7 +10513,11 @@ pub unsafe extern "C" fn oxi_rsa_2048_modulus(
         Ok(v) => v,
         Err(e) => return status_module(Err(e)),
     };
-    unsafe { core::ptr::copy_nonoverlapping(n.as_ptr(), modulus_out, 256) };
+    // SAFETY: `modulus_out` is valid for writes of 256 bytes by contract,
+    // and the local `n` does not overlap it.
+    if let Err(e) = unsafe { write_out(modulus_out, &n[..256]) } {
+        return e as c_int;
+    }
     R::Ok as c_int
 }
 
@@ -10105,7 +10587,11 @@ pub unsafe extern "C" fn oxi_rsa_2048_sign_pkcs1_v15_sha256(
         Ok(s) => s,
         Err(err) => return R::from(err) as c_int,
     };
-    unsafe { core::ptr::copy_nonoverlapping(sig.as_ptr(), sig_out, 256) };
+    // SAFETY: `sig_out` is valid for writes of 256 bytes by contract,
+    // and the local `sig` does not overlap it.
+    if let Err(e) = unsafe { write_out(sig_out, &sig[..256]) } {
+        return e as c_int;
+    }
     R::Ok as c_int
 }
 
@@ -10152,7 +10638,11 @@ pub unsafe extern "C" fn oxi_rsa_2048_sign_pss_sha256(
         Ok(s) => s,
         Err(err) => return R::from(err) as c_int,
     };
-    unsafe { core::ptr::copy_nonoverlapping(sig.as_ptr(), sig_out, 256) };
+    // SAFETY: `sig_out` is valid for writes of 256 bytes by contract,
+    // and the local `sig` does not overlap it.
+    if let Err(e) = unsafe { write_out(sig_out, &sig[..256]) } {
+        return e as c_int;
+    }
     R::Ok as c_int
 }
 
@@ -10210,7 +10700,11 @@ pub unsafe extern "C" fn oxi_rsa_2048_oaep_encrypt_sha256(
         Ok(c) => c,
         Err(err) => return R::from(err) as c_int,
     };
-    unsafe { core::ptr::copy_nonoverlapping(ct.as_ptr(), ct_out, 256) };
+    // SAFETY: `ct_out` is valid for writes of 256 bytes by contract,
+    // and the local `ct` does not overlap it.
+    if let Err(e) = unsafe { write_out(ct_out, &ct[..256]) } {
+        return e as c_int;
+    }
     R::Ok as c_int
 }
 
@@ -10269,13 +10763,26 @@ pub unsafe extern "C" fn oxi_rsa_2048_oaep_decrypt_sha256(
         return R::NotOperational as c_int;
     };
     let mut buf = [0u8; oxicrypt_rsa::oaep::MAX_MSG_LEN];
-    let actual = match key_ref.decrypt_oaep_sha256(label, ct_arr, &mut buf) {
-        Ok(n) => n,
-        Err(err) => return R::from(err) as c_int,
+    let code = match key_ref.decrypt_oaep_sha256(label, ct_arr, &mut buf) {
+        Ok(actual) => match buf.get(..actual) {
+            // SAFETY: `out_ptr` is valid for writes of `out_max_len` bytes
+            // by contract, `out_max_len` is at least `buf.len()` >=
+            // `plain.len()`, and the local `buf` does not overlap it.
+            Some(plain) => match unsafe { write_out(out_ptr, plain) } {
+                Ok(()) => {
+                    // SAFETY: `out_actual_len` is non-NULL and valid for
+                    // one `size_t` by contract.
+                    unsafe { *out_actual_len = actual };
+                    R::Ok as c_int
+                }
+                Err(e) => e as c_int,
+            },
+            None => R::Internal as c_int,
+        },
+        Err(err) => R::from(err) as c_int,
     };
-    unsafe { core::ptr::copy_nonoverlapping(buf.as_ptr(), out_ptr, actual) };
-    unsafe { *out_actual_len = actual };
-    R::Ok as c_int
+    oxicrypt_zeroize::zeroize(&mut buf);
+    code
 }
 
 // ── RSA-3072 — DRBG-driven keygen + sign + OAEP ──────────────────
@@ -10354,7 +10861,11 @@ pub unsafe extern "C" fn oxi_rsa_3072_modulus(
         Ok(v) => v,
         Err(e) => return status_module(Err(e)),
     };
-    unsafe { core::ptr::copy_nonoverlapping(n.as_ptr(), modulus_out, 384) };
+    // SAFETY: `modulus_out` is valid for writes of 384 bytes by contract,
+    // and the local `n` does not overlap it.
+    if let Err(e) = unsafe { write_out(modulus_out, &n[..384]) } {
+        return e as c_int;
+    }
     R::Ok as c_int
 }
 
@@ -10416,7 +10927,11 @@ pub unsafe extern "C" fn oxi_rsa_3072_sign_pkcs1_v15_sha256(
         Ok(s) => s,
         Err(err) => return R::from(err) as c_int,
     };
-    unsafe { core::ptr::copy_nonoverlapping(sig.as_ptr(), sig_out, 384) };
+    // SAFETY: `sig_out` is valid for writes of 384 bytes by contract,
+    // and the local `sig` does not overlap it.
+    if let Err(e) = unsafe { write_out(sig_out, &sig[..384]) } {
+        return e as c_int;
+    }
     R::Ok as c_int
 }
 
@@ -10455,7 +10970,11 @@ pub unsafe extern "C" fn oxi_rsa_3072_sign_pss_sha256(
         Ok(s) => s,
         Err(err) => return R::from(err) as c_int,
     };
-    unsafe { core::ptr::copy_nonoverlapping(sig.as_ptr(), sig_out, 384) };
+    // SAFETY: `sig_out` is valid for writes of 384 bytes by contract,
+    // and the local `sig` does not overlap it.
+    if let Err(e) = unsafe { write_out(sig_out, &sig[..384]) } {
+        return e as c_int;
+    }
     R::Ok as c_int
 }
 
@@ -10508,7 +11027,11 @@ pub unsafe extern "C" fn oxi_rsa_3072_oaep_encrypt_sha256(
         Ok(c) => c,
         Err(err) => return R::from(err) as c_int,
     };
-    unsafe { core::ptr::copy_nonoverlapping(ct.as_ptr(), ct_out, 384) };
+    // SAFETY: `ct_out` is valid for writes of 384 bytes by contract,
+    // and the local `ct` does not overlap it.
+    if let Err(e) = unsafe { write_out(ct_out, &ct[..384]) } {
+        return e as c_int;
+    }
     R::Ok as c_int
 }
 
@@ -10551,19 +11074,30 @@ pub unsafe extern "C" fn oxi_rsa_3072_oaep_decrypt_sha256(
     let Some(key_ref) = (unsafe { (*key).inner_ref() }) else {
         return R::NotOperational as c_int;
     };
-    // Pass the caller's buffer directly — upstream `decrypt_oaep_sha256`
-    // (macro-generated, `&mut [u8]` slice variant) writes to `out` only
-    // on the success path of `emsa_oaep_decode_n` (after the
-    // constant-time accumulator check passes); failure returns `None`
-    // before any write, so the caller's buffer is left untouched on
-    // error. No intermediate stack copy needed.
-    let out_slice = unsafe { core::slice::from_raw_parts_mut(out_ptr, out_max_len) };
-    let actual = match key_ref.decrypt_oaep_sha256(label, ct_arr, out_slice) {
-        Ok(n) => n,
-        Err(err) => return R::from(err) as c_int,
+    // The message is decoded into a module-owned buffer and reaches the
+    // caller only through `write_out`. A failed decode writes nothing to
+    // the caller's buffer.
+    let mut buf = [0u8; oxicrypt_rsa::rsa3072::OAEP_MAX_MSG_LEN];
+    let code = match key_ref.decrypt_oaep_sha256(label, ct_arr, &mut buf) {
+        Ok(actual) => match buf.get(..actual) {
+            // SAFETY: `out_ptr` is valid for writes of `out_max_len` bytes
+            // by contract, `out_max_len` is at least `buf.len()` >=
+            // `plain.len()`, and the local `buf` does not overlap it.
+            Some(plain) => match unsafe { write_out(out_ptr, plain) } {
+                Ok(()) => {
+                    // SAFETY: `out_actual_len` is non-NULL and valid for
+                    // one `size_t` by contract.
+                    unsafe { *out_actual_len = actual };
+                    R::Ok as c_int
+                }
+                Err(e) => e as c_int,
+            },
+            None => R::Internal as c_int,
+        },
+        Err(err) => R::from(err) as c_int,
     };
-    unsafe { *out_actual_len = actual };
-    R::Ok as c_int
+    oxicrypt_zeroize::zeroize(&mut buf);
+    code
 }
 
 // ── RSA-4096 — DRBG-driven keygen + sign + OAEP ──────────────────
@@ -10640,7 +11174,11 @@ pub unsafe extern "C" fn oxi_rsa_4096_modulus(
         Ok(v) => v,
         Err(e) => return status_module(Err(e)),
     };
-    unsafe { core::ptr::copy_nonoverlapping(n.as_ptr(), modulus_out, 512) };
+    // SAFETY: `modulus_out` is valid for writes of 512 bytes by contract,
+    // and the local `n` does not overlap it.
+    if let Err(e) = unsafe { write_out(modulus_out, &n[..512]) } {
+        return e as c_int;
+    }
     R::Ok as c_int
 }
 
@@ -10701,7 +11239,11 @@ pub unsafe extern "C" fn oxi_rsa_4096_sign_pkcs1_v15_sha256(
         Ok(s) => s,
         Err(err) => return R::from(err) as c_int,
     };
-    unsafe { core::ptr::copy_nonoverlapping(sig.as_ptr(), sig_out, 512) };
+    // SAFETY: `sig_out` is valid for writes of 512 bytes by contract,
+    // and the local `sig` does not overlap it.
+    if let Err(e) = unsafe { write_out(sig_out, &sig[..512]) } {
+        return e as c_int;
+    }
     R::Ok as c_int
 }
 
@@ -10740,7 +11282,11 @@ pub unsafe extern "C" fn oxi_rsa_4096_sign_pss_sha256(
         Ok(s) => s,
         Err(err) => return R::from(err) as c_int,
     };
-    unsafe { core::ptr::copy_nonoverlapping(sig.as_ptr(), sig_out, 512) };
+    // SAFETY: `sig_out` is valid for writes of 512 bytes by contract,
+    // and the local `sig` does not overlap it.
+    if let Err(e) = unsafe { write_out(sig_out, &sig[..512]) } {
+        return e as c_int;
+    }
     R::Ok as c_int
 }
 
@@ -10792,7 +11338,11 @@ pub unsafe extern "C" fn oxi_rsa_4096_oaep_encrypt_sha256(
         Ok(c) => c,
         Err(err) => return R::from(err) as c_int,
     };
-    unsafe { core::ptr::copy_nonoverlapping(ct.as_ptr(), ct_out, 512) };
+    // SAFETY: `ct_out` is valid for writes of 512 bytes by contract,
+    // and the local `ct` does not overlap it.
+    if let Err(e) = unsafe { write_out(ct_out, &ct[..512]) } {
+        return e as c_int;
+    }
     R::Ok as c_int
 }
 
@@ -10834,15 +11384,28 @@ pub unsafe extern "C" fn oxi_rsa_4096_oaep_decrypt_sha256(
     let Some(key_ref) = (unsafe { (*key).inner_ref() }) else {
         return R::NotOperational as c_int;
     };
-    // Direct caller-buffer write — see `oxi_rsa_3072_oaep_decrypt_sha256`
-    // for the Manger-resistance + write-on-success-only argument.
-    let out_slice = unsafe { core::slice::from_raw_parts_mut(out_ptr, out_max_len) };
-    let actual = match key_ref.decrypt_oaep_sha256(label, ct_arr, out_slice) {
-        Ok(n) => n,
-        Err(err) => return R::from(err) as c_int,
+    // Staged as in `oxi_rsa_3072_oaep_decrypt_sha256`.
+    let mut buf = [0u8; oxicrypt_rsa::rsa4096::OAEP_MAX_MSG_LEN];
+    let code = match key_ref.decrypt_oaep_sha256(label, ct_arr, &mut buf) {
+        Ok(actual) => match buf.get(..actual) {
+            // SAFETY: `out_ptr` is valid for writes of `out_max_len` bytes
+            // by contract, `out_max_len` is at least `buf.len()` >=
+            // `plain.len()`, and the local `buf` does not overlap it.
+            Some(plain) => match unsafe { write_out(out_ptr, plain) } {
+                Ok(()) => {
+                    // SAFETY: `out_actual_len` is non-NULL and valid for
+                    // one `size_t` by contract.
+                    unsafe { *out_actual_len = actual };
+                    R::Ok as c_int
+                }
+                Err(e) => e as c_int,
+            },
+            None => R::Internal as c_int,
+        },
+        Err(err) => R::from(err) as c_int,
     };
-    unsafe { *out_actual_len = actual };
-    R::Ok as c_int
+    oxicrypt_zeroize::zeroize(&mut buf);
+    code
 }
 
 #[cfg(test)]

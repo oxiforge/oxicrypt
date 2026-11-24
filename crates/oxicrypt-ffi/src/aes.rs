@@ -1,10 +1,8 @@
 //! AES-256-GCM C ABI exposure with opaque key handle.
 //!
-//! One-shot encryption / decryption only — streaming AES-GCM exposure
-//! is deferred per PRD Decision D1 (the underlying `oxicrypt-aes`
-//! public API does not expose streaming GCM yet, and exposing a
-//! caller-managed streaming surface ahead of the Rust API would
-//! invert the dependency direction).
+//! One-shot encryption and decryption only: the `oxicrypt-aes` public API
+//! exposes no streaming GCM, and a caller-managed streaming surface ahead
+//! of the Rust API would invert the dependency direction.
 //!
 //! # Lifecycle
 //!
@@ -24,8 +22,6 @@
 //!
 //! - Distinct error variants per failure mode: tag mismatch returns
 //!   `OxiResult::TagMismatch = 22`, not a generic "operation failed".
-//! - Safe no-op after free: NULL-safe `_free` plus `OxiHandle<T>`
-//!   consumed-sentinel pattern (see `handle.rs`).
 //! - NULL AAD with length 0 is allowed: SP 800-38D defines AAD logically
 //!   by length, not by pointer presence. The shim mirrors the Rust
 //!   `slice_from_raw` helper, which returns an empty slice for the
@@ -33,6 +29,7 @@
 
 use crate::error::{OxiResult as R, status_aes};
 use crate::handle::OxiHandle;
+use crate::rbg::write_out;
 use crate::{slice_from_raw, slice_from_raw_mut};
 use core::ffi::c_int;
 use oxicrypt_aes::{
@@ -140,10 +137,7 @@ pub unsafe extern "C" fn oxi_aes256_gcm_encrypt(
     }
     // SAFETY: the handle lifecycle contract requires that the caller
     // not race `_free` against an in-flight `_gcm_*` call on the same
-    // handle. AES-GCM is one-shot so the
-    // `&self`-only `as_ref` projection cannot witness a torn `Option`,
-    // but a future streaming/finalize-bearing handle will need stronger
-    // synchronization between the consumed flag and the inner read.
+    // handle.
     let Some(key_ref) = (unsafe { (*key).inner.as_ref() }) else {
         return R::NotOperational as c_int;
     };
@@ -169,12 +163,8 @@ pub unsafe extern "C" fn oxi_aes256_gcm_encrypt(
 /// AES-256-GCM authenticated decryption (one-shot).
 ///
 /// Returns `OxiResult::TagMismatch = 22` on authentication failure.
-/// On tag mismatch the `plaintext` buffer contents are UNDEFINED —
-/// the caller MUST NOT use them. (FIPS 140-3 expects the
-/// implementation to release the plaintext only after successful
-/// tag verification, but operating-system buffers may have been
-/// touched during the constant-time tag check; treat the buffer as
-/// untrusted on any non-Ok return.)
+/// On any non-Ok return, `TagMismatch` included, the `plaintext`
+/// contents are undefined and MUST NOT be used.
 ///
 /// Buffer requirements identical to [`oxi_aes256_gcm_encrypt`] with
 /// `ciphertext`/`plaintext` directions swapped and `tag` as input.
@@ -546,7 +536,11 @@ pub unsafe extern "C" fn oxi_aes256_cmac(
         Ok(t) => t,
         Err(e) => return crate::error::status_module(Err(e)),
     };
-    unsafe { core::ptr::copy_nonoverlapping(t.as_ptr(), tag, 16) };
+    // SAFETY: `tag` is non-null and valid for writes of 16 bytes by
+    // contract, and the local `t` does not overlap it.
+    if let Err(e) = unsafe { write_out(tag, &t[..16]) } {
+        return e as c_int;
+    }
     R::Ok as c_int
 }
 
