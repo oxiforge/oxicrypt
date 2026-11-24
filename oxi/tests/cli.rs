@@ -168,9 +168,9 @@ fn is_in_extent(ranges: &[Range], file_off: u32) -> bool {
 /// A file offset inside the extent, in embedded read-only **data** rather
 /// than in code.
 ///
-/// The obvious choice — the middle of the executable range — was tried first
-/// and is wrong here. `oxi` embeds a large binary; a byte chosen by arithmetic
-/// lands on an arbitrary instruction, and corrupting one on the path the
+/// The middle of the executable range is the wrong choice here. `oxi` embeds
+/// a large binary; a byte chosen by arithmetic lands on an arbitrary
+/// instruction, and corrupting one on the path the
 /// process takes *before* the integrity test runs kills it in the loader or on
 /// an illegal instruction. The process then exits non-zero having printed
 /// nothing, which is indistinguishable from the integrity test correctly
@@ -334,9 +334,9 @@ fn a_byte_changed_inside_the_extent_after_signing_is_detected() {
 /// A file whose NAME is a flag is an operand, not a command.
 ///
 /// A flag scanned across the whole of argv cannot tell itself from a file whose
-/// NAME is that flag, so `oxi hash sha256 -- --integrity` reported on the binary
-/// instead of hashing the file and exited 0 — a script hashing filenames it did
-/// not choose would read the wrong thing as its digest. The pre-initialization
+/// NAME is that flag, so `oxi hash sha256 -- --integrity` would report on the
+/// binary instead of hashing the file and exit 0 — a script hashing filenames it
+/// did not choose would read the wrong thing as its digest. The pre-initialization
 /// flags are matched at argv[1] only.
 #[test]
 fn a_file_operand_named_like_a_flag_is_not_a_command() {
@@ -422,8 +422,7 @@ fn entries(dir: &Path) -> Vec<String> {
 
 /// `oxi` has no path that writes to its own executable.
 ///
-/// This is an ANTI-REGRESSION guard, not a description of behaviour. A
-/// self-signing subcommand was built and then deliberately removed: a binary
+/// This guards an absence, not a behaviour. A binary
 /// able to rewrite its own image gains nothing cryptographically — signing
 /// needs a private key no shipped binary carries — and costs two real things. It would
 /// link an executable-format parser into the very extent the integrity test
@@ -435,8 +434,8 @@ fn entries(dir: &Path) -> Vec<String> {
 /// see `docs/integrity-signing.md`.
 #[test]
 fn oxi_never_writes_to_its_own_executable() {
-    // Comments stripped: main.rs explains in prose why this capability was
-    // removed, and an unstripped scan would fail on the explanation.
+    // Comments stripped: main.rs explains in prose why this capability is
+    // absent, and an unstripped scan would fail on the explanation.
     let src: String = include_str!("../src/main.rs")
         .lines()
         .map(|l| match l.find("//") {
@@ -526,6 +525,78 @@ fn selftest_runs_the_whole_inventory_and_indicates_pass() {
     );
 }
 
+/// The entropy source's on-demand test is reported as its own group, directly
+/// after the integrity group, names the seed path, and is in the total.
+#[test]
+fn selftest_lists_entropy_source() {
+    let oxi = scratch("selftest-entropy");
+    sign(&oxi);
+
+    let (code, stdout, stderr) = run(&oxi, &["selftest"]);
+    assert_eq!(code, 0, "selftest must pass on a signed binary: {stderr}");
+    let lines: Vec<&str> = stdout.lines().collect();
+
+    let integrity = lines
+        .iter()
+        .position(|l| l.starts_with("integrity ("))
+        .expect("no integrity group");
+    // The first heading after the integrity group's own lines.
+    let heading = lines
+        .iter()
+        .enumerate()
+        .skip(integrity + 1)
+        .find(|(_, l)| !l.starts_with("  "))
+        .map(|(i, _)| i)
+        .expect("nothing follows the integrity group");
+    assert!(
+        lines[heading].starts_with("entropy source (1)"),
+        "the group after integrity must be `entropy source (1)`, got {:?}:\n{stdout}",
+        lines[heading]
+    );
+    let line = lines
+        .get(heading + 1)
+        .expect("the entropy group has no line");
+    assert!(
+        line.starts_with("  ok    "),
+        "the entropy line must pass: {line:?}"
+    );
+    assert!(
+        line.contains("jitter source") || line.contains("operating-system generator"),
+        "the entropy line must name the seed path: {line:?}"
+    );
+    assert!(
+        !lines
+            .get(heading + 2)
+            .is_some_and(|l| l.starts_with("  ok    ") || l.starts_with("  FAIL  ")),
+        "the entropy group holds exactly one line"
+    );
+
+    // The total counts it: every `ok` line, this one included.
+    let reported: usize = stdout
+        .lines()
+        .find_map(|l| l.strip_suffix(" self-tests passed"))
+        .and_then(|l| l.split_whitespace().next())
+        .expect("no summary line")
+        .parse()
+        .expect("summary count is a number");
+    let ok_lines = lines
+        .iter()
+        .filter(|l| l.trim_start().starts_with("ok    "))
+        .count();
+    assert_eq!(
+        reported, ok_lines,
+        "the summary must count the entropy line"
+    );
+    let total: usize = stdout
+        .lines()
+        .find_map(|l| l.strip_suffix(" self-tests passed"))
+        .and_then(|l| l.split_whitespace().nth(2))
+        .expect("no total")
+        .parse()
+        .expect("total is a number");
+    assert_eq!(total, ok_lines, "the total must include the entropy line");
+}
+
 /// `--quiet` prints the indicator and the count, and nothing per-test.
 #[test]
 fn selftest_quiet_still_carries_the_indicator() {
@@ -534,13 +605,21 @@ fn selftest_quiet_still_carries_the_indicator() {
 
     let (code, stdout, _) = run(&oxi, &["selftest", "--quiet"]);
     assert_eq!(code, 0);
-    assert!(stdout.contains("self-test indicator: PASS"));
+    let lines: Vec<&str> = stdout.lines().collect();
+    let Some((count, ["self-test indicator: PASS"])) = lines.split_first() else {
+        panic!("--quiet must print the count line, then the indicator, got:\n{stdout}");
+    };
+    let (passed, total) = count
+        .strip_suffix(" self-tests passed")
+        .and_then(|c| c.split_once(" of "))
+        .unwrap_or_else(|| panic!("not a count line: {count}"));
     assert!(
-        !stdout.contains("ok    "),
-        "--quiet must not print each test, got:\n{stdout}"
+        passed == total && passed.parse::<u32>().is_ok_and(|n| n > 0),
+        "--quiet on a passing run must count every test as passed, got: {count}"
     );
-    // The control: the non-quiet form DOES print them, so the absence above is
-    // the flag working rather than the subcommand printing nothing either way.
+    // The control: the non-quiet form DOES print each test, so the two lines
+    // above are the flag working rather than the subcommand printing no
+    // per-test lines either way.
     let (_, verbose, _) = run(&oxi, &["selftest"]);
     assert!(
         verbose.contains("ok    "),
@@ -584,7 +663,7 @@ fn selftest_refuses_arguments_it_does_not_understand() {
 /// Every HMAC variant the self-test reports is reachable from the prompt.
 ///
 /// `oxi selftest` prints eleven HMAC known-answer tests passing. A CLI that
-/// then refused six of them would be telling the operator the module can do
+/// then refused any of them would be telling the operator the module can do
 /// something this binary declines to do, and the inconsistency is visible on
 /// one screen.
 #[test]

@@ -18,11 +18,9 @@
 //! half is not the key the artifact embeds, because either would produce an
 //! artifact that can never pass its own test.
 
-// `forbid` everywhere but Windows, where the one call into the operating
-// system's random number generator (`key::windows_rng`) is allowed by name
-// under `deny`; nothing else in this crate uses `unsafe`.
-#![cfg_attr(not(windows), forbid(unsafe_code))]
-#![cfg_attr(windows, deny(unsafe_code))]
+// The signing key's randomness comes from the module's own seed path, so
+// nothing in this crate needs `unsafe` on any target.
+#![forbid(unsafe_code)]
 
 pub mod elf;
 pub mod image;

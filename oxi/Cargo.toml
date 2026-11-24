@@ -24,6 +24,11 @@ spec = "https://github.com/lamaspec/lama/blob/main/SPEC.md"
 name = "oxi"
 path = "src/main.rs"
 
+[features]
+default = []
+# Test builds only: `OXI_FAULT` arms the DRBG crate's fault seams at startup.
+fault-injection = ["oxicrypt-drbg/fault-injection"]
+
 [dependencies]
 oxicrypt-module = { workspace = true }
 oxicrypt-integrity = { workspace = true }

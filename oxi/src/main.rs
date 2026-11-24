@@ -39,18 +39,21 @@ use tests::initialize_with_tests;
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().collect();
 
+    // Test builds only: arm the DRBG crate's fault seams from `OXI_FAULT`
+    // before anything initialises the module. A value that does not parse
+    // arms nothing past its first bad entry, and the run goes on.
+    #[cfg(feature = "fault-injection")]
+    let _ = oxicrypt_drbg::seam::arm_from_env(std::env::var("OXI_FAULT").ok().as_deref());
+
     // The pre-initialization flags are matched at argv[1] ONLY, never scanned
     // across the whole command line.
     //
-    // `args.iter().any(|a| a == "--integrity")` reads naturally and is a defect:
-    // it cannot tell a flag from a file whose NAME is that flag, so
-    // `oxi hash sha256 -- --integrity` reported on the binary instead of
-    // hashing the file, and exited 0 having printed something a script would
-    // read as the digest. The subcommands below were already positional; these
-    // are now too.
+    // A scan such as `args.iter().any(|a| a == "--integrity")` cannot tell a
+    // flag from a file whose NAME is that flag: `oxi hash sha256 --
+    // --integrity` would report on the binary instead of hashing the file, and
+    // exit 0 having printed something a script would read as the digest.
     let flag = args.get(1).map(String::as_str);
 
-    // --lama: dump the LAMA manifest and exit.
     if flag == Some("--lama") {
         print!("{}", include_str!("../llm-api.yaml"));
         // The embedded manifest carries the exact build.
@@ -129,7 +132,7 @@ fn usage() -> ExitCode {
     eprintln!("  0  success");
     eprintln!("  1  a test ran and failed: the image does not match, its slot is unsigned or");
     eprintln!("     damaged, or it names another key; for a command other than --integrity,");
-    eprintln!("     also an algorithm self-test that failed after the image check passed");
+    eprintln!("     also a self-test that failed or was not run after the image check passed");
     eprintln!("  2  usage error");
     eprintln!("  3  the integrity test was not performed or could not decide: a CAST it");
     eprintln!("     depends on failed, the image could not be read, or the binary carries no");
@@ -379,7 +382,7 @@ fn report_integrity() -> ExitCode {
         println!("  {note}");
     }
     // Each outcome its own code, as `usage` lists them, because "the image is
-    // wrong", "we could not look" and "the image is right but the module
+    // wrong", "the image was not examined" and "the image is right but the module
     // failed a later self-test" call for different responses and a script
     // should not have to parse prose to tell them apart. Every one but a pass
     // into an operational module is non-zero: reporting success would be
@@ -542,8 +545,8 @@ fn cmd_hmac(args: &[String]) -> ExitCode {
     };
 
     // Every variant `oxicrypt-hmac` implements `BlockHash` for, which is every
-    // variant the power-up inventory self-tests. `oxi selftest` shows all
-    // eleven passing, so refusing six of them at the prompt would tell the
+    // variant the power-up inventory self-tests. `oxi selftest` shows every
+    // one passing, so refusing any of them at the prompt would tell the
     // operator the module can do something this CLI then declines to do.
     let result = match alg {
         "sha1" => hmac_oneshot::<oxicrypt_sha::Sha1, 64, 20>(&key, &input),
@@ -601,19 +604,14 @@ fn cmd_rand(args: &[String]) -> ExitCode {
         }
     };
 
-    // Seed HMAC_DRBG from OS entropy.
-    let mut entropy = [0u8; 48]; // 32 entropy + 16 nonce
-    if getrandom(&mut entropy).is_err() {
-        eprintln!("oxi rand: failed to read OS entropy");
-        return ExitCode::FAILURE;
-    }
-
-    let mut drbg = oxicrypt_drbg::HmacDrbgSha256::default();
-    let (ent, nonce) = entropy.split_at(32);
-    if let Err(e) = drbg.instantiate(ent, nonce, b"oxi-cli") {
-        eprintln!("oxi rand: DRBG instantiate failed: {e}");
-        return ExitCode::FAILURE;
-    }
+    // The module's seed path supplies the entropy input and the nonce.
+    let mut drbg = match oxicrypt_drbg::HmacDrbgSha256::instantiate_from_module(b"oxi rand") {
+        Ok(drbg) => drbg,
+        Err(e) => {
+            eprintln!("oxi rand: DRBG instantiate failed: {e}");
+            return ExitCode::FAILURE;
+        }
+    };
 
     let mut buf = vec![0u8; nbytes];
     if let Err(e) = drbg.generate(None, &mut buf) {
@@ -649,8 +647,12 @@ fn cmd_rand(args: &[String]) -> ExitCode {
 /// The integrity test runs only inside the power-up self-tests, so its line
 /// reports the verdict recorded when this process started rather than running
 /// it again. The algorithm self-tests are run again on the operational module
-/// and each is reported. The verdict line and the exit code agree, so a script
-/// need not parse prose.
+/// and each is reported. The entropy source's on-demand test runs on the seed
+/// path, and its line names the path. Once a test has placed the module in
+/// its error state, the report lists every later self-test as not run (the
+/// rest of its group by name, later groups by count), leaves those tests out
+/// of the passed count, and fails the verdict. The verdict line and the exit
+/// code agree, so a script need not parse prose.
 ///
 /// # What it does NOT claim
 ///
@@ -714,51 +716,167 @@ fn cmd_selftest(args: &[String]) -> ExitCode {
         groups.push(("other", rest));
     }
 
-    let mut passed = 0_usize;
-    let mut failed: Vec<&str> = Vec::new();
-    for (group, entries) in &groups {
-        if !quiet {
-            println!("{group} ({})", entries.len());
-        }
-        for entry in *entries {
-            if passes(entry) {
-                passed = passed.saturating_add(1);
-                if !quiet {
-                    println!("  ok    {}", entry.name);
-                }
-            } else {
-                failed.push(entry.name);
-                if !quiet {
-                    println!("  FAIL  {}", entry.name);
-                }
+    // Each line is printed as its test finishes, so a test that aborts the
+    // process leaves the report up to the test that aborted.
+    let tally = run_selftest_groups(
+        &groups,
+        passes,
+        || {
+            oxicrypt_drbg::entropy_on_demand_test()
+                .map(|report| report.label)
+                .map_err(|e| (oxicrypt_drbg::seed_path_label(), e.to_string()))
+        },
+        || oxicrypt_module::state() == oxicrypt_module::State::Operational,
+        &mut |line| {
+            if !quiet {
+                println!("{line}");
             }
-        }
-    }
+        },
+    );
 
-    let total = passed.saturating_add(failed.len());
-    if !quiet {
-        println!();
-    }
-    println!("{passed} of {total} self-tests passed");
-
-    if failed.is_empty() {
-        // The verdict line. One line, fixed wording, and the exit code
-        // agrees with it so a script need not parse prose.
-        println!("self-test indicator: PASS");
-        ExitCode::SUCCESS
-    } else {
+    let verdict = selftest_verdict(&tally, quiet);
+    if verdict.status != 0 {
         // A self-test that fails is not a report. The module goes to the error
         // state and refuses every service from here on, which is what a failed
         // self-test means.
         oxicrypt_module::enter_error_state("on-demand self-test failed");
-        for name in &failed {
-            println!("  failed: {name}");
-        }
-        println!("self-test indicator: FAIL");
-        println!("  The module has been placed in the error state and will refuse");
-        println!("  every service until it is restarted. Do not use this binary.");
-        ExitCode::FAILURE
     }
+    print!("{}", verdict.text);
+    ExitCode::from(verdict.status)
+}
+
+/// The counts [`run_selftest_groups`] arrived at.
+struct SelftestTally {
+    passed: usize,
+    /// The self-tests that ran, passed or failed.
+    ran: usize,
+    /// The self-tests listed as not run, because the module had left the
+    /// operational state before them.
+    not_run: usize,
+    failed: Vec<&'static str>,
+}
+
+/// The end of the `oxi selftest` report and the exit status that agrees
+/// with it.
+struct SelftestVerdict {
+    /// A blank line unless `--quiet`, the passed count and, when any test did
+    /// not run, the not-run count; then the indicator line, which a failing
+    /// verdict precedes with a `failed:` line per failed test and follows
+    /// with the two lines saying the module is in its error state.
+    text: String,
+    /// 0 when every self-test ran and passed, 1 otherwise.
+    status: u8,
+}
+
+/// The verdict on `tally`. PASS means every self-test ran and passed: a
+/// self-test that did not run fails the verdict as one that failed does.
+fn selftest_verdict(tally: &SelftestTally, quiet: bool) -> SelftestVerdict {
+    let mut text = String::new();
+    if !quiet {
+        let _ = writeln!(text);
+    }
+    let _ = writeln!(text, "{} of {} self-tests passed", tally.passed, tally.ran);
+    if tally.not_run > 0 {
+        let _ = writeln!(
+            text,
+            "{} self-tests not run: the module left the operational state before them",
+            tally.not_run
+        );
+    }
+    if tally.failed.is_empty() && tally.not_run == 0 {
+        // One line, fixed wording, so a script need not parse prose.
+        let _ = writeln!(text, "self-test indicator: PASS");
+        return SelftestVerdict { text, status: 0 };
+    }
+    for name in &tally.failed {
+        let _ = writeln!(text, "  failed: {name}");
+    }
+    let _ = writeln!(text, "self-test indicator: FAIL");
+    let _ = writeln!(
+        text,
+        "  The module has been placed in the error state and will refuse"
+    );
+    let _ = writeln!(
+        text,
+        "  every service until it is restarted. Do not use this binary."
+    );
+    SelftestVerdict { text, status: 1 }
+}
+
+/// Runs the self-test groups in order, passing each heading and result line
+/// to `emit` as it is decided. The entropy source's on-demand test follows
+/// the integrity group: it runs only in an operational module, which the
+/// integrity verdict admits.
+///
+/// A failure that places the module in its error state, as an entropy-source
+/// failure does, would fail every later test for that reason alone. So
+/// `operational` is asked before each test, and once it is false every later
+/// test is listed as not run and is left out of the passed and ran counts. A
+/// group reached in that state is listed on one line.
+fn run_selftest_groups(
+    groups: &[(&str, &[oxicrypt_module::KatEntry])],
+    passes: impl Fn(&oxicrypt_module::KatEntry) -> bool,
+    entropy: impl FnOnce() -> Result<&'static str, (&'static str, String)>,
+    operational: impl Fn() -> bool,
+    emit: &mut dyn FnMut(&str),
+) -> SelftestTally {
+    const NOT_RUN: &str = "not run, the module left the operational state";
+    let mut tally = SelftestTally {
+        passed: 0,
+        ran: 0,
+        not_run: 0,
+        failed: Vec::new(),
+    };
+    let mut entropy = Some(entropy);
+    for (group, entries) in groups {
+        if !operational() {
+            emit(&format!("{group} ({}): {NOT_RUN}", entries.len()));
+            tally.not_run = tally.not_run.saturating_add(entries.len());
+            if *group == "integrity" && entropy.take().is_some() {
+                emit(&format!("entropy source (1): {NOT_RUN}"));
+                tally.not_run = tally.not_run.saturating_add(1);
+            }
+            continue;
+        }
+        emit(&format!("{group} ({})", entries.len()));
+        for entry in *entries {
+            if !operational() {
+                emit(&format!("  not run  {}", entry.name));
+                tally.not_run = tally.not_run.saturating_add(1);
+                continue;
+            }
+            tally.ran = tally.ran.saturating_add(1);
+            if passes(entry) {
+                tally.passed = tally.passed.saturating_add(1);
+                emit(&format!("  ok    {}", entry.name));
+            } else {
+                tally.failed.push(entry.name);
+                emit(&format!("  FAIL  {}", entry.name));
+            }
+        }
+        if *group == "integrity"
+            && let Some(entropy) = entropy.take()
+        {
+            if !operational() {
+                emit(&format!("entropy source (1): {NOT_RUN}"));
+                tally.not_run = tally.not_run.saturating_add(1);
+                continue;
+            }
+            emit("entropy source (1)");
+            tally.ran = tally.ran.saturating_add(1);
+            match entropy() {
+                Ok(label) => {
+                    tally.passed = tally.passed.saturating_add(1);
+                    emit(&format!("  ok    {label}"));
+                }
+                Err((label, e)) => {
+                    tally.failed.push(label);
+                    emit(&format!("  FAIL  {label}: {e}"));
+                }
+            }
+        }
+    }
+    tally
 }
 
 // ── helpers ─────────────────────────────────────────────────────
@@ -799,13 +917,6 @@ fn decode_hex(s: &str) -> Result<Vec<u8>, String> {
                 .map_err(|e| format!("invalid hex at byte {}: {e}", i / 2))
         })
         .collect()
-}
-
-/// Read random bytes from the OS. Thin wrapper over /dev/urandom.
-fn getrandom(buf: &mut [u8]) -> io::Result<()> {
-    use std::io::Read as _;
-    let mut f = std::fs::File::open("/dev/urandom")?;
-    f.read_exact(buf)
 }
 
 #[cfg(test)]
@@ -998,12 +1109,12 @@ mod tests {
         let call = body
             .find("enter_error_state(")
             .expect("a failed self-test must place the module in the error state");
-        let pass = body
-            .find(r#"println!("self-test indicator: PASS")"#)
-            .expect("premise failed: the PASS indicator is gone");
+        let branch = body
+            .find("if verdict.status != 0 {")
+            .expect("premise failed: the failure branch on the verdict is gone");
         assert!(
-            pass < call,
-            "the error state belongs on the FAILURE branch, which follows the PASS one"
+            branch < call && body.get(branch..call).is_some_and(|s| !s.contains('}')),
+            "the error state belongs inside the branch taken on a failing verdict"
         );
 
         // The mirror control: the extractor is not simply returning the file.
@@ -1113,5 +1224,277 @@ mod tests {
             assert_eq!(tests, names(&want_tests), "{what}");
             assert!(!tests.is_empty());
         }
+    }
+
+    #[allow(clippy::unnecessary_wraps, reason = "a KatEntry's run signature")]
+    fn kat_ok() -> Result<(), oxicrypt_module::SelfTestFailure> {
+        Ok(())
+    }
+
+    const INTEGRITY: &[KatEntry] = &[KatEntry {
+        name: "integrity",
+        run: kat_ok,
+    }];
+    const SHA: &[KatEntry] = &[
+        KatEntry {
+            name: "sha-a",
+            run: kat_ok,
+        },
+        KatEntry {
+            name: "sha-b",
+            run: kat_ok,
+        },
+    ];
+    const HMAC: &[KatEntry] = &[KatEntry {
+        name: "hmac-a",
+        run: kat_ok,
+    }];
+
+    /// What one run of the three groups above produced.
+    struct Run {
+        tally: super::SelftestTally,
+        /// The names `passes` was asked about, in order.
+        asked: Vec<&'static str>,
+        /// The lines `emit` received, in order.
+        lines: Vec<String>,
+        /// Every test run (`run <name>`) and every emitted line
+        /// (`emit <line>`), in the order they happened.
+        events: Vec<String>,
+    }
+
+    /// [`run_groups_from`] on a module that starts operational.
+    fn run_groups(entropy_ok: bool, failing: Option<&str>) -> Run {
+        run_groups_from(true, entropy_ok, failing)
+    }
+
+    /// Runs the three groups above on a module that is operational at the
+    /// start if `start_operational`. The entropy source passes unless
+    /// `entropy_ok` is false, and the entry named `failing`, if any, fails.
+    /// Either failure places the module in its error state, as the seed path
+    /// and a latching self-test do, and a test passes only in an operational
+    /// module, as the module's own tests do.
+    fn run_groups_from(start_operational: bool, entropy_ok: bool, failing: Option<&str>) -> Run {
+        let operational = std::cell::Cell::new(start_operational);
+        let asked = std::cell::RefCell::new(Vec::new());
+        let events = std::cell::RefCell::new(Vec::new());
+        let groups: [(&str, &[KatEntry]); 3] =
+            [("integrity", INTEGRITY), ("sha", SHA), ("hmac", HMAC)];
+        let tally = super::run_selftest_groups(
+            &groups,
+            |entry| {
+                asked.borrow_mut().push(entry.name);
+                events.borrow_mut().push(format!("run {}", entry.name));
+                if failing == Some(entry.name) {
+                    operational.set(false);
+                }
+                operational.get()
+            },
+            || {
+                events.borrow_mut().push("run entropy".to_owned());
+                if entropy_ok {
+                    Ok("test seed path")
+                } else {
+                    operational.set(false);
+                    Err(("test seed path", "entropy source failed".to_owned()))
+                }
+            },
+            || operational.get(),
+            &mut |line| events.borrow_mut().push(format!("emit {line}")),
+        );
+        let events = events.into_inner();
+        let lines = events
+            .iter()
+            .filter_map(|e| e.strip_prefix("emit "))
+            .map(str::to_owned)
+            .collect();
+        Run {
+            tally,
+            asked: asked.into_inner(),
+            lines,
+            events,
+        }
+    }
+
+    /// Each line reaches `emit` as its test finishes, before the next test
+    /// runs, so a test that aborts the process leaves every earlier line
+    /// printed.
+    #[test]
+    fn selftest_emits_each_line_before_the_next_test_runs() {
+        let run = run_groups(true, None);
+        let at = |event: &str| {
+            run.events
+                .iter()
+                .position(|e| e == event)
+                .unwrap_or_else(|| panic!("no {event:?} in {:?}", run.events))
+        };
+        assert!(at("emit   ok    integrity") < at("run entropy"));
+        assert!(at("emit   ok    test seed path") < at("run sha-a"));
+        assert!(at("emit   ok    sha-a") < at("run sha-b"));
+        assert!(at("emit   ok    sha-b") < at("run hmac-a"));
+    }
+
+    /// A module already out of the operational state runs nothing: every
+    /// group, the entropy source's test included, is listed as not run and
+    /// counted as such.
+    #[test]
+    fn selftest_runs_nothing_on_a_module_that_is_not_operational() {
+        let run = run_groups_from(false, true, None);
+        assert!(run.asked.is_empty(), "ran {:?}", run.asked);
+        assert_eq!(
+            run.lines,
+            [
+                "integrity (1): not run, the module left the operational state",
+                "entropy source (1): not run, the module left the operational state",
+                "sha (2): not run, the module left the operational state",
+                "hmac (1): not run, the module left the operational state",
+            ]
+        );
+        assert_eq!(
+            (run.tally.passed, run.tally.ran, run.tally.not_run),
+            (0, 0, 5)
+        );
+        assert_eq!(super::selftest_verdict(&run.tally, true).status, 1);
+    }
+
+    /// A failed integrity entry leaves the module in its error state, so the
+    /// entropy source's test after it is listed as not run.
+    #[test]
+    fn selftest_lists_the_entropy_test_after_an_integrity_failure_as_not_run() {
+        let run = run_groups(true, Some("integrity"));
+        assert_eq!(run.asked, ["integrity"]);
+        assert_eq!(
+            run.lines,
+            [
+                "integrity (1)",
+                "  FAIL  integrity",
+                "entropy source (1): not run, the module left the operational state",
+                "sha (2): not run, the module left the operational state",
+                "hmac (1): not run, the module left the operational state",
+            ]
+        );
+        assert_eq!(
+            (run.tally.passed, run.tally.ran, run.tally.not_run),
+            (0, 1, 4)
+        );
+        assert_eq!(run.tally.failed, ["integrity"]);
+    }
+
+    /// An entropy-source failure leaves the module in its error state, so the
+    /// algorithm groups after it are reported as not run, never as failed,
+    /// and are left out of the count; the verdict is still a failure.
+    #[test]
+    fn selftest_lists_groups_after_an_entropy_failure_as_not_run() {
+        let run = run_groups(false, None);
+        assert_eq!(
+            run.asked,
+            ["integrity"],
+            "a group after the failure was run"
+        );
+        assert_eq!(
+            run.lines,
+            [
+                "integrity (1)",
+                "  ok    integrity",
+                "entropy source (1)",
+                "  FAIL  test seed path: entropy source failed",
+                "sha (2): not run, the module left the operational state",
+                "hmac (1): not run, the module left the operational state",
+            ]
+        );
+        assert_eq!(
+            (run.tally.passed, run.tally.ran, run.tally.not_run),
+            (1, 2, 3)
+        );
+        assert_eq!(run.tally.failed, ["test seed path"]);
+
+        let verdict = super::selftest_verdict(&run.tally, false);
+        assert_eq!(verdict.status, 1, "an entropy failure must not exit 0");
+        assert_eq!(
+            verdict.text,
+            "\n1 of 2 self-tests passed\n\
+             3 self-tests not run: the module left the operational state before them\n  \
+             failed: test seed path\nself-test indicator: FAIL\n  \
+             The module has been placed in the error state and will refuse\n  \
+             every service until it is restarted. Do not use this binary.\n"
+        );
+        // --quiet keeps the counts, which a script reads.
+        let quiet = super::selftest_verdict(&run.tally, true);
+        assert!(
+            quiet
+                .text
+                .starts_with("1 of 2 self-tests passed\n3 self-tests not run"),
+            "{}",
+            quiet.text
+        );
+    }
+
+    /// A test that places the module in its error state partway through a
+    /// group: the rest of that group, and every later group, is not run.
+    #[test]
+    fn selftest_lists_tests_after_a_mid_group_error_state_as_not_run() {
+        let run = run_groups(true, Some("sha-a"));
+        assert_eq!(run.asked, ["integrity", "sha-a"]);
+        assert_eq!(
+            run.lines,
+            [
+                "integrity (1)",
+                "  ok    integrity",
+                "entropy source (1)",
+                "  ok    test seed path",
+                "sha (2)",
+                "  FAIL  sha-a",
+                "  not run  sha-b",
+                "hmac (1): not run, the module left the operational state",
+            ]
+        );
+        assert_eq!(
+            (run.tally.passed, run.tally.ran, run.tally.not_run),
+            (2, 3, 2)
+        );
+        assert_eq!(super::selftest_verdict(&run.tally, true).status, 1);
+    }
+
+    /// The control: with every test passing, every group runs and is
+    /// counted, nothing is reported as not run, and the verdict is PASS.
+    #[test]
+    fn selftest_runs_every_group_when_every_test_passes() {
+        let run = run_groups(true, None);
+        assert_eq!(run.asked, ["integrity", "sha-a", "sha-b", "hmac-a"]);
+        assert!(
+            run.lines
+                .iter()
+                .all(|l| !l.contains("not run") && !l.contains("FAIL")),
+            "{:?}",
+            run.lines
+        );
+        let verdict = super::selftest_verdict(&run.tally, false);
+        assert_eq!(verdict.status, 0);
+        assert_eq!(
+            verdict.text,
+            "\n5 of 5 self-tests passed\nself-test indicator: PASS\n"
+        );
+        assert_eq!(
+            super::selftest_verdict(&run.tally, true).text,
+            "5 of 5 self-tests passed\nself-test indicator: PASS\n"
+        );
+    }
+
+    /// A tally in which nothing failed but some tests did not run is a
+    /// failure: PASS claims that every self-test ran.
+    #[test]
+    fn selftest_verdict_fails_when_a_test_did_not_run() {
+        let tally = super::SelftestTally {
+            passed: 0,
+            ran: 0,
+            not_run: 3,
+            failed: Vec::new(),
+        };
+        let verdict = super::selftest_verdict(&tally, true);
+        assert_eq!(verdict.status, 1);
+        assert!(
+            verdict.text.contains("self-test indicator: FAIL\n") && !verdict.text.contains("PASS"),
+            "{}",
+            verdict.text
+        );
     }
 }

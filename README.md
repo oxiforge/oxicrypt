@@ -37,10 +37,10 @@ can call a C function. Nothing to compile, nothing to sign.
 
 | Platform | Bundle | Library inside |
 |----------|--------|----------------|
-| Linux x86_64 | `oxicrypt-ffi-<version>-linux-x86_64.tar.gz` | `liboxicrypt_ffi.so.1` |
-| Linux aarch64 | `oxicrypt-ffi-<version>-linux-aarch64.tar.gz` | `liboxicrypt_ffi.so.1` |
-| macOS Apple silicon | `oxicrypt-ffi-<version>-macos-aarch64.tar.gz` | `liboxicrypt_ffi.1.dylib` |
-| macOS Intel | `oxicrypt-ffi-<version>-macos-x86_64.tar.gz` | `liboxicrypt_ffi.1.dylib` |
+| Linux x86_64 | `oxicrypt-ffi-<version>-linux-x86_64.tar.gz` | `liboxicrypt_ffi.so.2` |
+| Linux aarch64 | `oxicrypt-ffi-<version>-linux-aarch64.tar.gz` | `liboxicrypt_ffi.so.2` |
+| macOS Apple silicon | `oxicrypt-ffi-<version>-macos-aarch64.tar.gz` | `liboxicrypt_ffi.2.dylib` |
+| macOS Intel | `oxicrypt-ffi-<version>-macos-x86_64.tar.gz` | `liboxicrypt_ffi.2.dylib` |
 | Windows x86_64 | `oxicrypt-ffi-<version>-windows-x86_64.tar.gz` | `oxicrypt_ffi.dll` (+ `oxicrypt_ffi.dll.lib` import library, `oxicrypt_ffi.lib` static) |
 | Android arm64-v8a | `oxicrypt-ffi-<version>-android-aarch64.tar.gz` | `liboxicrypt_ffi.so` |
 | Android x86_64 | `oxicrypt-ffi-<version>-android-x86_64.tar.gz` | `liboxicrypt_ffi.so` |
@@ -61,7 +61,7 @@ SHA-256 of `"abc"` from Python, with nothing installed but Python:
 
 ```python
 import ctypes
-lib = ctypes.CDLL("./liboxicrypt_ffi.so.1")   # macOS: liboxicrypt_ffi.1.dylib · Windows: oxicrypt_ffi.dll
+lib = ctypes.CDLL("./liboxicrypt_ffi.so.2")   # macOS: liboxicrypt_ffi.2.dylib · Windows: oxicrypt_ffi.dll
 lib.oxi_sha256.argtypes = [ctypes.c_char_p, ctypes.c_size_t, ctypes.POINTER(ctypes.c_uint8)]
 assert lib.oxi_init(0) == 0                   # power-up self-tests and the integrity test run here
 out = (ctypes.c_uint8 * 32)()
@@ -171,7 +171,7 @@ every platform but Android:
 tar -xzf oxicrypt-cli-<version>-<platform>.tar.gz
 cd oxicrypt-cli-<version>-<platform>
 ./oxi --integrity     # the module verifies its own image, and reports what it covered
-./oxi selftest        # every self-test, named with the NIST vector it checks (currently 89)
+./oxi selftest        # every self-test, named with the NIST vector it checks (currently 90)
 ```
 
 Signed per platform, with a provenance record inside the tarball. `oxi` also
@@ -215,11 +215,12 @@ different stages:
   machine, power-up self-tests, algorithm-profile gating — but it has not
   been submitted to a CST laboratory.
 
-- **Entropy source (SP 800-90B → ESV): work in progress.**
+- **Entropy source (SP 800-90B → ESV): work in progress.** The module
+  seeds every SP 800-90A DRBG itself: from the in-boundary SP 800-90B source
+  in `oxicrypt-entropy` on an environment its assessed-environment table
+  lists, and from the operating system's random generator everywhere else.
   `oxicrypt-entropy` makes no entropy claim and has not been run against
-  NIST's ESV demo server. It is not a dependency of `oxicrypt-module` or
-  `oxicrypt-drbg` — the DRBGs take entropy as a caller-supplied argument, so
-  nothing inside the module is seeded from it.
+  NIST's ESV demo server.
 
 If you want the approved algorithms implemented in pure Rust, that is what
 this is. *Approved*, *vetted*, *validated* and *certified* are defined in
@@ -256,7 +257,7 @@ tests, each traceable to its published source.
 ## Architecture
 
 oxicrypt is organized as a Cargo workspace with 31 crates — 18 algorithm
-crates, a module crate, an entropy-source scaffolding crate, and 11 supporting
+crates, a module crate, an SP 800-90B entropy-source crate, and 11 supporting
 crates — plus tools:
 
 ```
@@ -271,7 +272,7 @@ crates/
   oxicrypt-cmac          AES-CMAC (SP 800-38B)
   oxicrypt-aes           AES block cipher and all approved modes
   oxicrypt-aes-accel     x86_64 AES-NI block + PCLMULQDQ GCM GHASH acceleration (default-off `accel-aes` feature)
-  oxicrypt-drbg          CTR_DRBG, Hash_DRBG, HMAC_DRBG
+  oxicrypt-drbg          CTR_DRBG, Hash_DRBG, HMAC_DRBG, each seeded by the module from the in-boundary entropy source or the operating system's generator
   oxicrypt-kdf           SP 800-108 KBKDF, HKDF, PBKDF2
   oxicrypt-tls-kdf       TLS 1.2 KDF (RFC 5246) + TLS 1.3 KDF (RFC 8446 §7.1)
   oxicrypt-rsa           RSA-2048/3072/4096 sign/verify/encrypt/decrypt/keygen with CRT + Bellcore
@@ -284,7 +285,7 @@ crates/
   oxicrypt-lms           LMS signature verification, 80 parameter pairs (SP 800-208 §8.2)
   oxicrypt-xmss          XMSS signature verification (SP 800-208 §8.2)
   oxicrypt-dh            Finite-field DH-3072 key agreement and keygen (RFC 3526 Group 15)
-  oxicrypt-entropy       SP 800-90B entropy source in progress (jitter noise source, RCT/APT health tests, timer adequacy, cited spec constants; pre-validation — no entropy claims)
+  oxicrypt-entropy       SP 800-90B entropy source the DRBG seed path draws from on an assessed environment (jitter noise source, RCT/APT health tests, timer adequacy, SHA-256 conditioner; no entropy claims)
   oxicrypt-imageread     The module's system calls: self-image reads, image path, page size, loaded-image lookup, range checks and import resolution for the integrity test; the thread id for the module's state gate
   oxicrypt-timer         Read-only CPU counter reads (serialized TSC / CNTVCT) for the entropy source
   oxicrypt-platform      The module's own platform calls: operating-system random generator, process id, and the process-aware spin cell behind the DRBG seed path
@@ -595,7 +596,7 @@ cargo build --release -p oxicrypt-ffi
 
 The C interface has an ABI number, `oxi_abi_version()`, which changes only when
 the interface breaks compatibility. The shared library's `SONAME` carries it
-(`liboxicrypt_ffi.so.1` on Linux; on macOS the install name `@rpath/liboxicrypt_ffi.1.dylib`;
+(`liboxicrypt_ffi.so.2` on Linux; on macOS the install name `@rpath/liboxicrypt_ffi.2.dylib`;
 Android keeps the plain `liboxicrypt_ffi.so`, the only form an application packages),
 so a program linked against it asks the loader for that file: deploy the library
 under that name, with `liboxicrypt_ffi.so` as a link to it for the linker, as the

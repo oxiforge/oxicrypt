@@ -69,23 +69,30 @@ integrity (3)
   ok    ML-DSA-87 CAST (signature verification, FIPS 204, integrity technique)
   ok    SHA-256 CAST (NIST CAVP SHA256ShortMsg Len=8, integrity key fingerprint)
   ok    Module image integrity (ML-DSA-87 signature over the typed extent)
+entropy source (1)
+  ok    jitter source, assessed row OE-1
 sha (11)
   ok    SHA-256 KAT (NIST CAVP SHA256ShortMsg Len=8)
   ...
 aes (23)
   ok    AES-256-GCM KAT (SP 800-38D / McGrew-Viega Case 15, encrypt+decrypt)
   ...
-89 of 89 self-tests passed
+90 of 90 self-tests passed
 self-test indicator: PASS
 ```
 
 These are the tests the module runs at power-up, before it will serve
 anything — the integrity test first, then every known-answer test for the
-algorithms this binary can reach. The integrity line shows the verdict from
+algorithms this binary can reach. The `entropy source` line is the on-demand
+test of the module's seed path, run by `selftest` itself, and names the path
+in use: the in-boundary jitter source on an assessed operational
+environment, or the operating system's generator elsewhere. The integrity line shows the verdict from
 this process's start, because that test runs only at power-up; `selftest` runs
 the algorithm self-tests again so you can see them, and exits non-zero if any
 fails. A failure puts the module in the error state, where it refuses every
-service until restarted.
+service until restarted. Once a test has put the module in that state,
+`selftest` reports every later self-test as not run (the rest of its group by
+name, later groups by count), leaves them out of the count, and fails the run.
 
 `oxi` is a test driver. The module tests itself on demand by restarting:
 power-up state is one-shot per process by design, and a new process repeats

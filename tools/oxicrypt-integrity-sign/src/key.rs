@@ -165,12 +165,12 @@ impl SigningKey {
     }
 
     /// Generates a fresh key from a seed drawn from an approved DRBG seeded
-    /// from the operating system.
+    /// by the module's seed path.
     ///
     /// # Errors
     ///
-    /// A description when the operating system supplies no entropy or the
-    /// module refuses.
+    /// A description when the seed path supplies no entropy or the module
+    /// refuses.
     pub fn generate() -> Result<Self, String> {
         crate::start_module()?;
         let mut drbg = seeded_drbg()?;
@@ -498,86 +498,11 @@ fn write_new(path: &Path, bytes: &[u8], private: bool) -> Result<(), String> {
     written
 }
 
-/// An HMAC_DRBG instantiated from 48 bytes of operating-system entropy:
-/// 32 for the entropy input and 16 for the nonce, the minimums SP 800-90Ar1
-/// sets for a 256-bit security strength: §10.1 for the entropy input,
-/// §8.6.7 for the nonce.
+/// An HMAC_DRBG instantiated by the module from its seed path, which
+/// supplies the entropy input and the nonce. The module must be operational.
 fn seeded_drbg() -> Result<HmacDrbgSha256, String> {
-    let mut seed = [0u8; 48];
-    os_entropy(&mut seed)?;
-    let mut drbg = HmacDrbgSha256::new();
-    let (entropy, nonce) = seed.split_at(32);
-    let outcome = drbg
-        .instantiate(entropy, nonce, b"oxicrypt-integrity-sign")
-        .map_err(|e| format!("the DRBG did not instantiate: {e}"));
-    oxicrypt_zeroize::zeroize(&mut seed);
-    outcome?;
-    Ok(drbg)
-}
-
-/// Fills `buf` from the operating system's random device.
-///
-/// `/dev/urandom` on Unix; on Windows the system-preferred generator through
-/// `BCryptGenRandom`, the operating system's CSPRNG.
-fn os_entropy(buf: &mut [u8]) -> Result<(), String> {
-    #[cfg(unix)]
-    {
-        use std::io::Read as _;
-        std::fs::File::open("/dev/urandom")
-            .and_then(|mut f| f.read_exact(buf))
-            .map_err(|e| format!("cannot read /dev/urandom: {e}"))
-    }
-    #[cfg(windows)]
-    {
-        windows_rng::fill(buf)
-    }
-    #[cfg(not(any(unix, windows)))]
-    {
-        let _ = buf;
-        Err("this platform has no random device the signer can read".to_owned())
-    }
-}
-
-/// The Windows system CSPRNG.
-#[cfg(windows)]
-#[allow(unsafe_code)]
-mod windows_rng {
-    /// `BCRYPT_USE_SYSTEM_PREFERRED_RNG`: use the system's preferred
-    /// generator, with no algorithm handle.
-    const BCRYPT_USE_SYSTEM_PREFERRED_RNG: u32 = 0x0000_0002;
-
-    #[link(name = "bcrypt")]
-    unsafe extern "system" {
-        /// Fills `buffer` with `count` random bytes. Returns an `NTSTATUS`,
-        /// zero on success.
-        fn BCryptGenRandom(
-            algorithm: *mut core::ffi::c_void,
-            buffer: *mut u8,
-            count: u32,
-            flags: u32,
-        ) -> i32;
-    }
-
-    pub(super) fn fill(buf: &mut [u8]) -> Result<(), String> {
-        for chunk in buf.chunks_mut(u32::MAX as usize) {
-            let count = u32::try_from(chunk.len()).map_err(|_| "request too large".to_owned())?;
-            // SAFETY: `chunk` is a live, uniquely borrowed buffer of `count`
-            // bytes; a null algorithm handle is what the system-preferred
-            // flag requires.
-            let status = unsafe {
-                BCryptGenRandom(
-                    core::ptr::null_mut(),
-                    chunk.as_mut_ptr(),
-                    count,
-                    BCRYPT_USE_SYSTEM_PREFERRED_RNG,
-                )
-            };
-            if status != 0 {
-                return Err(format!("BCryptGenRandom failed with status {status:#x}"));
-            }
-        }
-        Ok(())
-    }
+    HmacDrbgSha256::instantiate_from_module(b"oxicrypt-integrity-sign")
+        .map_err(|e| format!("the DRBG did not instantiate: {e}"))
 }
 
 #[cfg(test)]
