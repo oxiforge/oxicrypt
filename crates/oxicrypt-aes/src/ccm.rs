@@ -513,7 +513,7 @@ mod tests {
         ];
         ct[0] ^= 0x01;
         let k = Aes128Key::new_internal(&key).unwrap();
-        let mut dec = [0u8; 16];
+        let mut dec = [0xA5u8; 16];
         let err = ccm_decrypt(&k, &nonce, &aad, &ct, 16, &mut dec).unwrap_err();
         assert_eq!(err, ModeError::TagMismatch);
         assert!(dec.iter().all(|&b| b == 0));
