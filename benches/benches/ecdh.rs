@@ -11,10 +11,7 @@ use oxicrypt_ecdh::compute_shared_secret_p256;
 use oxicrypt_ecdsa::EcdsaP256PrivateKey;
 
 fn make_drbg() -> HmacDrbgSha256 {
-    let mut drbg = HmacDrbgSha256::new();
-    drbg.instantiate(&[0x42u8; 32], &[0x01u8; 16], b"ecdh-bench")
-        .expect("instantiate");
-    drbg
+    HmacDrbgSha256::instantiate_from_module(b"ecdh-bench").expect("instantiate")
 }
 
 fn bench_ecdh_p256(c: &mut Criterion) {

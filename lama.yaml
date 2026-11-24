@@ -154,9 +154,8 @@ capabilities:
 
         fn main() {
             initialize_with_tests(oxicrypt_integrity::KATS, oxicrypt_drbg::KATS).unwrap();
-            let mut rng = HmacDrbgSha256::new();
-            // Both values must come from a real entropy source in production.
-            rng.instantiate(&[0xABu8; 32], &[0xCDu8; 16], b"").unwrap();
+            // The module draws the entropy input and nonce from its own source.
+            let mut rng = HmacDrbgSha256::instantiate_from_module(b"").unwrap();
             let mut output = [0u8; 32];
             rng.generate(None, &mut output).unwrap();
             assert_ne!(output, [0u8; 32]);
@@ -214,8 +213,7 @@ capabilities:
 
         fn main() {
             initialize_with_tests(oxicrypt_integrity::KATS, oxicrypt_eddsa::KATS).unwrap();
-            let mut rng = HmacDrbgSha256::new();
-            rng.instantiate(&[0xABu8; 32], &[0xCDu8; 16], b"").unwrap();
+            let mut rng = HmacDrbgSha256::instantiate_from_module(b"").unwrap();
             let signing_key = Ed25519PrivateKey::generate(&mut rng).unwrap();
             let signature = signing_key.sign(b"message to sign").unwrap();
             assert!(
@@ -245,8 +243,7 @@ capabilities:
 
         fn main() {
             initialize_with_tests(oxicrypt_integrity::KATS, oxicrypt_ecdh::KATS).unwrap();
-            let mut rng = HmacDrbgSha256::new();
-            rng.instantiate(&[0xABu8; 32], &[0xCDu8; 16], b"").unwrap();
+            let mut rng = HmacDrbgSha256::instantiate_from_module(b"").unwrap();
             // Each party keeps d and publishes Q.
             let (alice_d, alice_q) = generate_keypair_p256(&mut rng).unwrap();
             let (bob_d, bob_q) = generate_keypair_p256(&mut rng).unwrap();

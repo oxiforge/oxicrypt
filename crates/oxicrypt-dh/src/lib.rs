@@ -43,8 +43,8 @@
 //! # Key-pair generation
 //!
 //! [`generate_keypair_3072`] samples a private key
-//! `x ∈ [1, q − 1]` from HMAC-DRBG-SHA-256 (rejection sampling)
-//! and computes the public key `y = g^x mod p`.
+//! `x ∈ [1, q − 1]` from the caller's random bit generator
+//! (rejection sampling) and computes the public key `y = g^x mod p`.
 //!
 //! # Power-up self-tests
 //!
@@ -74,7 +74,8 @@
 //!
 //! The private exponentiation `y^x mod p` is computed via the
 //! Montgomery `pow_secret` ladder (4-bit fixed-window, fixed
-//! iteration count). Public-key
+//! iteration count). That this is constant time is unproven: no
+//! timing probe covers `MontCtx3072`. Public-key
 //! validation branches only on public data. Level-1 disclosure
 //! only.
 //!
@@ -96,9 +97,8 @@
     clippy::many_single_char_names
 )]
 
-use oxicrypt_drbg::hmac::HmacDrbgSha256;
 use oxicrypt_module::{
-    Error, KatEntry, SelfTestFailure, Service, require_allowed, require_operational,
+    Error, KatEntry, Rbg, SelfTestFailure, Service, require_allowed, require_operational,
     require_self_test_started,
 };
 use oxicrypt_rsa::bigint3072::U3072;
@@ -107,6 +107,12 @@ use oxicrypt_rsa::mont3072::MontCtx3072;
 /// Number of bytes in a 3072-bit DH private key, public key, or
 /// shared secret.
 pub const KEY_BYTES: usize = 384;
+
+/// Security strength, in bits, a random bit generator must report
+/// through [`Rbg::strength_bits`] before a DH-3072 key pair is
+/// generated from it: the strength SP 800-57 Part 1 Rev. 5 Table 2
+/// assigns to FFC with `L` = 3072.
+pub const RBG_STRENGTH_BITS: u32 = 128;
 
 // ------------------------------------------------------------------
 // RFC 3526 Group 15 domain parameters
@@ -215,7 +221,6 @@ fn validate_public_key(y: &U3072) -> bool {
     let p = U3072::from_be_bytes(&GROUP15_P_BYTES);
     let one = U3072::from_be_bytes(&ONE_BYTES);
 
-    // y >= 2.
     if y.ct_lt(&two) == 1 {
         return false;
     }
@@ -302,24 +307,29 @@ fn compute_shared_secret_3072_internal_unguarded(
 /// Generate a DH-3072 key pair `(x, y)` where `x ∈ [1, q − 1]`
 /// and `y = g^x mod p`.
 ///
-/// Uses rejection sampling over 384-byte DRBG output: sample
-/// `x_candidate`, mask the top bit to keep it < 2^3071, reject if
-/// `x_candidate ∉ [1, q − 1]`. Rejection has probability about
-/// `2^{-66}` per attempt (`2^3071 − q < 2^3005`), so
-/// `KEYGEN_MAX_ATTEMPTS = 128` fails with probability far below
-/// `2^{-128}`.
+/// Uses rejection sampling over 384-byte output of `drbg`, a random
+/// bit generator implementing [`Rbg`]: sample `x_candidate`, mask the
+/// top bit to keep it < 2^3071, reject if `x_candidate ∉ [1, q − 1]`.
+/// Rejection has probability about `2^{-66}` per attempt
+/// (`2^3071 − q < 2^3005`), so `KEYGEN_MAX_ATTEMPTS = 128` fails with
+/// probability far below `2^{-128}`.
 ///
-/// Returns [`Error::InvalidInput`] if the DRBG fails or if all attempts
-/// are rejected (statistically impossible with a working DRBG), and
+/// Returns [`Error::RbgTooWeak`] before any draw if the random bit
+/// generator reports less than [`RBG_STRENGTH_BITS`], [`Error::Rbg`] if
+/// it produces no output, [`Error::InvalidInput`] if all attempts are rejected
+/// (statistically impossible with a working generator), and
 /// [`Error::NotOperational`] unless
 /// [`oxicrypt_module::require_self_test_started`] admits the call: in
 /// `Operational`, or in `SelfTest` on the thread running the power-up
 /// self-tests.
 #[doc(hidden)]
-pub fn generate_keypair_3072_internal(
-    drbg: &mut HmacDrbgSha256,
+pub fn generate_keypair_3072_internal<R: Rbg>(
+    drbg: &mut R,
 ) -> Result<([u8; KEY_BYTES], [u8; KEY_BYTES]), Error> {
     require_self_test_started()?;
+    if drbg.strength_bits() < RBG_STRENGTH_BITS {
+        return Err(Error::RbgTooWeak);
+    }
     generate_keypair_3072_internal_unguarded(drbg)?.ok_or(Error::InvalidInput)
 }
 
@@ -327,8 +337,8 @@ pub fn generate_keypair_3072_internal(
 type Keypair3072 = ([u8; KEY_BYTES], [u8; KEY_BYTES]);
 
 /// Body of [`generate_keypair_3072_internal`], run once its guard has passed.
-fn generate_keypair_3072_internal_unguarded(
-    drbg: &mut HmacDrbgSha256,
+fn generate_keypair_3072_internal_unguarded<R: Rbg>(
+    drbg: &mut R,
 ) -> Result<Option<Keypair3072>, Error> {
     let q = U3072::from_be_bytes(&GROUP15_Q_BYTES);
     let one = U3072::from_be_bytes(&ONE_BYTES);
@@ -339,19 +349,13 @@ fn generate_keypair_3072_internal_unguarded(
     let mut buf = [0u8; KEY_BYTES];
 
     for _ in 0..KEYGEN_MAX_ATTEMPTS {
-        if let Err(e) = drbg.generate(None, &mut buf) {
-            return match e {
-                oxicrypt_drbg::DrbgError::Module(e) => Err(e),
-                _ => Ok(None),
-            };
-        }
+        drbg.fill(&mut buf).map_err(Error::Rbg)?;
 
         // Mask top bit so candidate < 2^3071 (q < 2^3071).
         buf[0] &= 0x7f;
 
         let x = U3072::from_be_bytes(&buf);
 
-        // Reject x == 0 or x >= q.
         if x.is_zero() == 1 {
             continue;
         }
@@ -359,7 +363,7 @@ fn generate_keypair_3072_internal_unguarded(
             continue;
         }
 
-        // y = g^x mod p. g = 2, so we use pow_secret with base = 2.
+        // y = g^x mod p, via pow_secret with base g = 2.
         // pow_secret handles to_mont/from_mont internally.
         let two = U3072::from_be_bytes(&TWO_BYTES);
         let y = ctx.pow_secret(&two, &x);
@@ -406,18 +410,21 @@ pub fn compute_shared_secret_3072(
 
 /// Generate a DH-3072 key pair `(private_key, public_key)`.
 ///
-/// The private key `x` is sampled from `[1, q − 1]` via
-/// HMAC-DRBG-SHA-256 rejection sampling. The public key is
-/// `y = 2^x mod p`.
+/// The private key `x` is sampled from `[1, q − 1]` by rejection
+/// sampling over the output of `drbg`, a random bit generator
+/// implementing [`Rbg`]. The public key is `y = 2^x mod p`.
 ///
 /// # Errors
 ///
 /// Returns [`Error::NotOperational`] if the FIPS module is not
 /// operational, [`Error::AlgorithmRestricted`] if the active
-/// profile does not allow DH-3072, or [`Error::InvalidInput`] if
-/// key generation fails (DRBG failure or exhausted attempts).
-pub fn generate_keypair_3072(
-    drbg: &mut HmacDrbgSha256,
+/// profile does not allow DH-3072, [`Error::RbgTooWeak`] before any
+/// draw if the random bit generator reports less than
+/// [`RBG_STRENGTH_BITS`], [`Error::Rbg`] if the random bit generator
+/// produces no output, or [`Error::InvalidInput`] if every sampling
+/// attempt is rejected.
+pub fn generate_keypair_3072<R: Rbg>(
+    drbg: &mut R,
 ) -> Result<([u8; KEY_BYTES], [u8; KEY_BYTES]), Error> {
     require_operational()?;
     require_allowed(Service::Dh3072)?;
@@ -619,6 +626,7 @@ pub const KATS: &[KatEntry] = &[KatEntry {
 #[allow(clippy::unwrap_used, clippy::panic, clippy::expect_used)]
 mod tests {
     use super::*;
+    use oxicrypt_drbg::HmacDrbgSha256;
     use oxicrypt_module::KatEntry;
 
     /// Stands in for the pre-operational integrity test.
@@ -766,17 +774,12 @@ mod tests {
             run: self_test,
         }]);
 
-        let mut drbg = HmacDrbgSha256::new();
-        let entropy = [0x42u8; 48];
-        let nonce = [0x01u8; 16];
-        drbg.instantiate(&entropy, &nonce, b"dh-keygen-test")
-            .expect("DRBG instantiate");
+        let mut drbg =
+            HmacDrbgSha256::instantiate_from_module(b"dh-keygen-test").expect("DRBG instantiate");
 
         let (x, y) = generate_keypair_3072(&mut drbg).expect("keygen");
 
-        // Verify: y = g^x mod p by computing shared secret with
-        // the KAT's peer key, then verifying from the other direction.
-        // Simpler check: x is in [1, q-1] and y passes validation.
+        // x is in [1, q-1] and y passes validation.
         let q = U3072::from_be_bytes(&GROUP15_Q_BYTES);
         let x_val = U3072::from_be_bytes(&x);
         assert_eq!(x_val.is_zero(), 0, "private key is zero");
@@ -790,5 +793,46 @@ mod tests {
         let two = U3072::from_be_bytes(&TWO_BYTES);
         let check = ctx.pow_secret(&two, &x_val);
         assert_eq!(check.to_be_bytes(), y, "y != g^x mod p");
+    }
+
+    /// An [`Rbg`] reporting a strength the caller chooses; `fill`
+    /// refuses, so a call that draws from it fails with [`Error::Rbg`].
+    struct ReportsStrength(u32);
+
+    impl Rbg for ReportsStrength {
+        fn fill(&mut self, _out: &mut [u8]) -> Result<(), oxicrypt_module::RbgError> {
+            Err(oxicrypt_module::RbgError::Uninstantiated)
+        }
+
+        fn strength_bits(&self) -> u32 {
+            self.0
+        }
+    }
+
+    #[test]
+    fn keygen_refuses_an_rbg_below_128_bits_before_drawing() {
+        let _ = init_with_tests(&[KatEntry {
+            name: "dh-3072",
+            run: self_test,
+        }]);
+        assert_eq!(
+            generate_keypair_3072(&mut ReportsStrength(112)),
+            Err(Error::RbgTooWeak)
+        );
+        assert_eq!(
+            generate_keypair_3072(&mut ReportsStrength(128)),
+            Err(Error::Rbg(oxicrypt_module::RbgError::Uninstantiated))
+        );
+    }
+
+    #[test]
+    fn keygen_accepts_a_256_bit_rbg() {
+        let _ = init_with_tests(&[KatEntry {
+            name: "dh-3072",
+            run: self_test,
+        }]);
+        let mut drbg = HmacDrbgSha256::instantiate_from_module(b"dh-strength").expect("DRBG");
+        assert_eq!(drbg.strength_bits(), 256);
+        assert!(generate_keypair_3072(&mut drbg).is_ok());
     }
 }

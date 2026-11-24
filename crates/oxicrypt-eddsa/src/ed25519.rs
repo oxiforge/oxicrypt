@@ -24,9 +24,8 @@
     clippy::similar_names
 )]
 
-use oxicrypt_drbg::HmacDrbgSha256;
 use oxicrypt_module::{
-    Error, SelfTestFailure, Service, require_allowed, require_operational,
+    Error, Rbg, SelfTestFailure, Service, require_allowed, require_operational,
     require_self_test_started,
 };
 use oxicrypt_sha::sha512::Sha512;
@@ -40,6 +39,11 @@ pub const SEED_LEN: usize = 32;
 pub const PUBLIC_KEY_LEN: usize = 32;
 /// Length of an Ed25519 signature.
 pub const SIGNATURE_LEN: usize = 64;
+/// Security strength, in bits, a random bit generator must report
+/// through [`Rbg::strength_bits`] before an Ed25519 seed is drawn from
+/// it: the security strength SP 800-186 states for Edwards25519, the
+/// 128-bit row of SP 800-57 Part 1 Rev. 5 Table 2.
+pub const RBG_STRENGTH_BITS: u32 = 128;
 
 /// RFC 8032 §5.1.5 clamping of `h[0..32]`:
 ///
@@ -133,7 +137,6 @@ pub fn verify_internal(
     signature: &[u8; SIGNATURE_LEN],
 ) -> Result<bool, Error> {
     require_self_test_started()?;
-    // Split the signature.
     let mut r_bytes = [0u8; 32];
     r_bytes.copy_from_slice(&signature[..32]);
     let mut s_bytes = [0u8; 32];
@@ -253,17 +256,20 @@ pub struct Ed25519PrivateKey {
 
 impl Ed25519PrivateKey {
     /// Generate a fresh Ed25519 private key by drawing a 32-byte
-    /// seed from `drbg`, deriving its public key, and running the
-    /// IG 10.3.A pairwise consistency test.
+    /// seed from `drbg`, a random bit generator implementing [`Rbg`],
+    /// deriving its public key, and running the IG 10.3.A pairwise
+    /// consistency test.
     ///
     /// # Errors
     ///
     /// Returns [`Error::NotOperational`] if the module has not
-    /// completed its power-up self-tests, or [`Error::InvalidInput`]
-    /// if the DRBG fails or the PCT sign-verify round-trip fails
-    /// (the latter would indicate a faulted sign or verify
-    /// primitive).
-    pub fn generate(drbg: &mut HmacDrbgSha256) -> Result<Self, Error> {
+    /// completed its power-up self-tests, [`Error::RbgTooWeak`] before
+    /// any draw if the random bit generator reports less than
+    /// [`RBG_STRENGTH_BITS`], [`Error::Rbg`] if the random bit generator
+    /// produces no output, or [`Error::InvalidInput`] if the PCT
+    /// sign-verify round-trip fails (which would indicate a faulted
+    /// sign or verify primitive).
+    pub fn generate<R: Rbg>(drbg: &mut R) -> Result<Self, Error> {
         require_operational()?;
         require_allowed(Service::Ed25519Keygen)?;
         Self::generate_internal(drbg)
@@ -329,12 +335,12 @@ impl Ed25519PrivateKey {
 
     // -- internal helpers, reached after a gate or guard has passed --
 
-    fn generate_internal(drbg: &mut HmacDrbgSha256) -> Result<Self, Error> {
+    fn generate_internal<R: Rbg>(drbg: &mut R) -> Result<Self, Error> {
+        if drbg.strength_bits() < RBG_STRENGTH_BITS {
+            return Err(Error::RbgTooWeak);
+        }
         let mut seed = [0u8; SEED_LEN];
-        drbg.generate(None, &mut seed).map_err(|e| match e {
-            oxicrypt_drbg::DrbgError::Module(e) => e,
-            _ => Error::InvalidInput,
-        })?;
+        drbg.fill(&mut seed).map_err(Error::Rbg)?;
         Self::from_seed_internal(&seed)
     }
 
@@ -661,8 +667,7 @@ mod tests {
     #[test]
     fn private_key_generate_produces_consistent_handle() {
         // A DRBG-backed generate() must produce a handle whose
-        // public key verifies a signature made with its own seed,
-        // with no recomputation on our side.
+        // public key verifies a signature made with its own seed.
         use oxicrypt_drbg::HmacDrbgSha256;
         let entries = &[KatEntry {
             name: "ed25519_power_up_kat",
@@ -670,16 +675,10 @@ mod tests {
         }];
         let _ = init_with_tests(entries);
 
-        let mut drbg = HmacDrbgSha256::default();
-        drbg.instantiate(
-            b"oxicrypt-eddsa-entropy-input-v01",
-            b"oxicrypt-eddsa-nonce",
-            b"oxicrypt-eddsa-personalization",
-        )
-        .unwrap();
+        let mut drbg =
+            HmacDrbgSha256::instantiate_from_module(b"oxicrypt-eddsa-personalization").unwrap();
         let key = Ed25519PrivateKey::generate(&mut drbg).unwrap();
 
-        // Round-trip via the handle.
         let sig = key.sign(b"ed25519 smoke").unwrap();
         assert!(verify_internal(&key.public_key().unwrap(), b"ed25519 smoke", &sig).unwrap());
 
@@ -696,8 +695,8 @@ mod tests {
         // Proves the PCT is load-bearing by constructing a handle
         // whose stored public key does not match the one derived
         // from its seed, and asserting that `run_pct()` refuses it.
-        // We can't reach this state through the public API, so we
-        // build it directly and call the internal gate.
+        // The public API cannot reach this state, so the handle is
+        // built directly and the internal gate called.
         let entries = &[KatEntry {
             name: "ed25519_power_up_kat",
             run: self_test,
@@ -745,5 +744,47 @@ mod tests {
         let sig = sign(&KAT_SEED, &[]).unwrap();
         assert_eq!(sig, KAT_SIGNATURE);
         assert!(verify(&KAT_PUBLIC_KEY, &[], &KAT_SIGNATURE).unwrap());
+    }
+
+    /// An [`Rbg`] reporting a strength the caller chooses; `fill`
+    /// refuses, so a call that draws from it fails with [`Error::Rbg`].
+    struct ReportsStrength(u32);
+
+    impl Rbg for ReportsStrength {
+        fn fill(&mut self, _out: &mut [u8]) -> Result<(), oxicrypt_module::RbgError> {
+            Err(oxicrypt_module::RbgError::Uninstantiated)
+        }
+
+        fn strength_bits(&self) -> u32 {
+            self.0
+        }
+    }
+
+    #[test]
+    fn generate_refuses_an_rbg_below_128_bits_before_drawing() {
+        let _ = init_with_tests(&[KatEntry {
+            name: "ed25519_power_up_kat",
+            run: self_test,
+        }]);
+        assert!(matches!(
+            Ed25519PrivateKey::generate(&mut ReportsStrength(112)),
+            Err(Error::RbgTooWeak)
+        ));
+        assert!(matches!(
+            Ed25519PrivateKey::generate(&mut ReportsStrength(128)),
+            Err(Error::Rbg(oxicrypt_module::RbgError::Uninstantiated))
+        ));
+    }
+
+    #[test]
+    fn generate_accepts_a_256_bit_rbg() {
+        let _ = init_with_tests(&[KatEntry {
+            name: "ed25519_power_up_kat",
+            run: self_test,
+        }]);
+        let mut drbg =
+            oxicrypt_drbg::CtrDrbgAes256::instantiate_from_module(b"ed25519-ctr256").unwrap();
+        assert_eq!(drbg.strength_bits(), 256);
+        assert!(Ed25519PrivateKey::generate(&mut drbg).is_ok());
     }
 }

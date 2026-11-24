@@ -10,10 +10,7 @@ use oxicrypt_drbg::HmacDrbgSha256;
 use oxicrypt_ecdsa::{EcdsaP256PrivateKey, verify};
 
 fn make_drbg() -> HmacDrbgSha256 {
-    let mut drbg = HmacDrbgSha256::new();
-    drbg.instantiate(&[0x42u8; 32], &[0x01u8; 16], b"ecdsa-bench")
-        .expect("instantiate");
-    drbg
+    HmacDrbgSha256::instantiate_from_module(b"ecdsa-bench").expect("instantiate")
 }
 
 fn bench_ecdsa_p256_sign(c: &mut Criterion) {

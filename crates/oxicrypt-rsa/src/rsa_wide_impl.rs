@@ -11,20 +11,13 @@
 //!
 //! | Item | Visibility | Purpose |
 //! |------|-----------|---------|
-//! | `CrtComponents$NLEN` | `pub(crate)` | CRT material with zeroizing Drop |
+//! | `CrtComponents$NLEN` | `pub(crate)` | CRT material with zeroizing Drop (unproven: no test observes the cleared memory) |
 //! | `CrtComponentsRaw$NLEN` | `pub(crate)` | Borrowed CRT references |
 //! | `rsa_crt_${nlen}_private_exp_internal` | `pub(crate)` | CRT sign/decrypt + Bellcore |
 //! | `pairwise_consistency_test_${nlen}_internal` | `pub(crate)` | IG 10.3.A PCT |
 //! | `RsaPrivateKey$NLEN` | `pub` | Validated private-key handle |
 //! | Verify / sign / encrypt / decrypt internals | `#[doc(hidden)]` | Primitives without the operational gate |
 //! | Public gated wrappers | `pub` | Module-gated entry points |
-//!
-//! # Architecture note
-//!
-//! The macro architecture here is designed for reuse: if a future
-//! post-quantum algorithm (e.g., ML-DSA or SLH-DSA) needs a similar
-//! parameterized sign/verify/encrypt flow over different key widths,
-//! it can follow the same single-source-of-truth pattern.
 
 #![allow(unused_macros)]
 
@@ -51,6 +44,7 @@ macro_rules! define_rsa_wide {
         em_len = $emlen:expr;
         oaep_k = $oaep_k:expr;
         oaep_max_msg = $oaep_max_msg:expr;
+        rbg_strength = $rbg_strength:path;
         // Names for generated items.
         key_struct = $key_struct:ident;
         crt_struct = $crt_struct:ident;
@@ -81,7 +75,8 @@ macro_rules! define_rsa_wide {
 
         // ────────────────────── CRT types ──────────────────────
 
-        /// CRT-form private-key material with zeroizing Drop.
+        /// CRT-form private-key material with zeroizing Drop
+        /// (unproven: no test observes the cleared memory).
         #[derive(Clone)]
         #[allow(clippy::struct_field_names)]
         pub(crate) struct $crt_struct {
@@ -683,9 +678,23 @@ macro_rules! define_rsa_wide {
             }
         }
 
-        /// Encrypt with RSAES-OAEP SHA-256, sampling the seed from a DRBG.
-        pub fn oaep_encrypt(
-            drbg: &mut oxicrypt_drbg::HmacDrbgSha256,
+        /// Encrypt with RSAES-OAEP SHA-256, sampling the seed from
+        /// `drbg`, a random bit generator implementing
+        /// [`oxicrypt_module::Rbg`].
+        ///
+        /// # Errors
+        ///
+        /// Returns [`Error::NotOperational`] or
+        /// [`Error::AlgorithmRestricted`] from the gates,
+        /// [`Error::RbgTooWeak`] before any draw if `drbg` reports less
+        /// than this modulus's requirement
+        /// ([`crate::RSA_3072_RBG_STRENGTH_BITS`] or
+        /// [`crate::RSA_4096_RBG_STRENGTH_BITS`]),
+        /// [`Error::Rbg`] if it produces no output, or
+        /// [`Error::InvalidInput`] on modulus rejection or oversize
+        /// message.
+        pub fn oaep_encrypt<R: oxicrypt_module::Rbg>(
+            drbg: &mut R,
             n_bytes: &[u8; MODULUS_BYTES],
             e: u64,
             label: &[u8],
@@ -693,11 +702,11 @@ macro_rules! define_rsa_wide {
         ) -> Result<[u8; MODULUS_BYTES], Error> {
             require_operational()?;
             require_allowed($svc_oaep)?;
+            if drbg.strength_bits() < $rbg_strength {
+                return Err(Error::RbgTooWeak);
+            }
             let mut seed = [0u8; crate::oaep::HLEN];
-            drbg.generate(None, &mut seed).map_err(|e| match e {
-                oxicrypt_drbg::DrbgError::Module(e) => e,
-                _ => Error::InvalidInput,
-            })?;
+            drbg.fill(&mut seed).map_err(Error::Rbg)?;
             oaep_encrypt_internal_unguarded(n_bytes, e, label, msg, &seed)?
                 .ok_or(Error::InvalidInput)
         }
@@ -865,19 +874,32 @@ macro_rules! define_rsa_wide {
                 }
             }
 
-            /// Sign with RSASSA-PSS SHA-256, DRBG-sampled salt.
-            pub fn sign_pss_sha256(
+            /// Sign with RSASSA-PSS SHA-256, with the salt drawn from
+            /// `drbg`, a random bit generator implementing
+            /// [`oxicrypt_module::Rbg`].
+            ///
+            /// # Errors
+            ///
+            /// Returns [`Error::NotOperational`] or
+            /// [`Error::AlgorithmRestricted`] from the gates,
+            /// [`Error::RbgTooWeak`] before any draw if `drbg` reports
+            /// less than this modulus's requirement
+            /// ([`crate::RSA_3072_RBG_STRENGTH_BITS`] or
+            /// [`crate::RSA_4096_RBG_STRENGTH_BITS`]),
+            /// [`Error::Rbg`] if it produces no output, or
+            /// [`Error::InvalidInput`] if the primitive rejects the key.
+            pub fn sign_pss_sha256<R: oxicrypt_module::Rbg>(
                 &self,
-                drbg: &mut oxicrypt_drbg::HmacDrbgSha256,
+                drbg: &mut R,
                 msg: &[u8],
             ) -> Result<[u8; SIGNATURE_BYTES], Error> {
                 require_operational()?;
                 require_allowed($svc_pss_sign)?;
+                if drbg.strength_bits() < $rbg_strength {
+                    return Err(Error::RbgTooWeak);
+                }
                 let mut salt = [0u8; crate::pss::SLEN];
-                drbg.generate(None, &mut salt).map_err(|e| match e {
-                    oxicrypt_drbg::DrbgError::Module(e) => e,
-                    _ => Error::InvalidInput,
-                })?;
+                drbg.fill(&mut salt).map_err(Error::Rbg)?;
                 if let Some(crt) = self.crt.as_ref() {
                     pss_sign_crt_internal_unguarded(
                         &self.n_bytes,
@@ -935,17 +957,31 @@ macro_rules! define_rsa_wide {
                 }
             }
 
-            /// Generate a fresh keypair from a DRBG.
+            /// Generate a fresh keypair from `drbg`, a random bit
+            /// generator implementing [`oxicrypt_module::Rbg`].
+            ///
+            /// # Errors
+            ///
+            /// Returns [`Error::NotOperational`] or
+            /// [`Error::AlgorithmRestricted`] from the gates,
+            /// [`Error::RbgTooWeak`] before any draw if `drbg` reports
+            /// less than this modulus's requirement
+            /// ([`crate::RSA_3072_RBG_STRENGTH_BITS`] or
+            /// [`crate::RSA_4096_RBG_STRENGTH_BITS`]),
+            /// [`Error::Rbg`] if it produces no output, or
+            /// [`Error::InvalidInput`] if `e` is rejected, the
+            /// prime-candidate budget is exceeded or the pairwise
+            /// consistency test fails.
             #[allow(clippy::similar_names)]
-            pub fn generate(
-                drbg: &mut oxicrypt_drbg::HmacDrbgSha256,
-                e: u64,
-            ) -> Result<Self, Error> {
+            pub fn generate<R: oxicrypt_module::Rbg>(drbg: &mut R, e: u64) -> Result<Self, Error> {
                 require_operational()?;
                 require_allowed($svc_keygen)?;
+                if drbg.strength_bits() < $rbg_strength {
+                    return Err(Error::RbgTooWeak);
+                }
                 let km = $keygen_fn(drbg, e).map_err(|e| match e {
-                    crate::keygen::KeygenError::Drbg(oxicrypt_drbg::DrbgError::Module(e))
-                    | crate::keygen::KeygenError::Module(e) => e,
+                    crate::keygen::KeygenError::Rbg(e) => Error::Rbg(e),
+                    crate::keygen::KeygenError::Module(e) => e,
                     _ => Error::InvalidInput,
                 })?;
                 let n_bytes = km.n.to_be_bytes();

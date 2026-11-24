@@ -14,8 +14,8 @@
 //!
 //! # Non-constant-time note
 //!
-//! Primality testing on candidate `p` is *not* constant time: we
-//! return as soon as the sieve or an MR round fails. See
+//! Primality testing on candidate `p` is *not* constant time: it
+//! returns as soon as the sieve or an MR round fails. See
 //! [`crate::keygen`]'s module doc for the rationale.
 
 #![allow(
@@ -36,7 +36,6 @@
 use crate::bigint1536::{BYTES as BYTES1536, LIMBS as LIMBS1536, U1536};
 use crate::bigint3072::{LIMBS as LIMBS3072, U3072};
 use crate::mont1536::MontCtx1536;
-use oxicrypt_drbg::HmacDrbgSha256;
 
 // Silence unused-import warnings for the LIMBS/BYTES constants that
 // the macro body references through the literal values passed in the
@@ -49,7 +48,8 @@ const _: () = {
 
 crate::keygen_impl::define_keygen! {
     /// RSA-3072 key material: modulus, private exponent, and CRT
-    /// components. All CSPs are zeroized on `Drop`.
+    /// components. Its `Drop` zeroizes every CSP (unproven: no test
+    /// observes the cleared memory).
     pub struct KeyMaterial3072;
     half = U1536, limbs = 24, bytes = 192;
     full = U3072, limbs = 48;
@@ -65,6 +65,7 @@ crate::keygen_impl::define_keygen! {
 #[allow(clippy::unwrap_used, clippy::panic, clippy::expect_used)]
 mod tests {
     use super::*;
+    use oxicrypt_drbg::HmacDrbgSha256;
 
     /// Stands in for the pre-operational integrity test.
     ///
@@ -82,16 +83,13 @@ mod tests {
         oxicrypt_module::initialize_with_tests(UNSIGNED_TEST_BINARY, tests)
     }
 
-    fn make_drbg(seed: &[u8]) -> HmacDrbgSha256 {
+    fn make_drbg(personalization: &[u8]) -> HmacDrbgSha256 {
         use oxicrypt_module::KatEntry;
         let _ = init_with_tests(&[KatEntry {
             name: "rsa-3072-keygen-test-noop",
             run: || Ok(()),
         }]);
-        let mut d = HmacDrbgSha256::default();
-        d.instantiate(seed, b"oxicrypt-rsa3072-keygen-test", b"")
-            .unwrap();
-        d
+        HmacDrbgSha256::instantiate_from_module(personalization).unwrap()
     }
 
     #[test]
@@ -117,7 +115,6 @@ mod tests {
     #[test]
     fn u3072_mod_u1536_small_case() {
         crate::test_support::start_module();
-        // 15 mod 7 = 1
         let mut a_limbs = [0u64; LIMBS3072];
         a_limbs[0] = 15;
         let a = U3072 { limbs: a_limbs };
@@ -141,11 +138,8 @@ mod tests {
         }]);
         let mut drbg = make_drbg(b"oxicrypt-rsa3072-keygen-smoke-entropy-0001");
         let km = generate_3072_internal(&mut drbg, 65537).expect("keygen failed");
-        // n must have its top bit set (full 3072 bits).
         assert_ne!(km.n.limbs[LIMBS3072 - 1] >> 63, 0, "n is not 3072-bit");
-        // d must be less than n.
         assert_eq!(km.d.ct_lt(&km.n), 1, "d ≥ n");
-        // p and q must be 1536-bit (top bit set).
         assert_ne!(km.p.limbs[LIMBS1536 - 1] >> 63, 0, "p is not 1536-bit");
         assert_ne!(km.q.limbs[LIMBS1536 - 1] >> 63, 0, "q is not 1536-bit");
     }

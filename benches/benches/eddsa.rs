@@ -10,10 +10,7 @@ use oxicrypt_drbg::HmacDrbgSha256;
 use oxicrypt_eddsa::Ed25519PrivateKey;
 
 fn make_drbg() -> HmacDrbgSha256 {
-    let mut drbg = HmacDrbgSha256::new();
-    drbg.instantiate(&[0x42u8; 32], &[0x01u8; 16], b"eddsa-bench")
-        .expect("instantiate");
-    drbg
+    HmacDrbgSha256::instantiate_from_module(b"eddsa-bench").expect("instantiate")
 }
 
 fn bench_ed25519_sign(c: &mut Criterion) {

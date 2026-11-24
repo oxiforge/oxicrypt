@@ -77,13 +77,15 @@
 //!   and `dP`/`dQ` are consumed by
 //!   [`mont1024::MontCtx1024::pow_secret`] under the same
 //!   constant-time contract as the direct `d`-based ladder.
-//! - **PSS salt** — ephemeral CSP; sampled from the caller's
-//!   HMAC_DRBG, consumed inside a single signing operation, and
+//! - **PSS salt and OAEP seed** — ephemeral CSPs; drawn from the
+//!   random bit generator implementing [`Rbg`] that the caller passes,
+//!   consumed inside a single signing or encryption operation, and
 //!   dropped when the stack frame unwinds.
 //!
-//! Zeroization of the long-lived private-key storage is tracked
-//! separately by the crate-wide hardening pass; all short-lived
-//! intermediates live on the stack and go away with the frame.
+//! The private-key handles overwrite `d` and the CRT components
+//! through `oxicrypt_zeroize` on `Drop` (unproven: no test observes
+//! the cleared memory). Short-lived intermediates live on the stack
+//! and go away with the frame.
 //!
 //! # Side-channel posture
 //!
@@ -167,7 +169,7 @@ use bigint2048::{BYTES as U2048_BYTES, LIMBS as LIMBS2048, U2048};
 use mont1024::MontCtx1024;
 use mont2048::MontCtx2048;
 use oxicrypt_module::{
-    Error, KatEntry, SelfTestFailure, Service, require_allowed, require_operational,
+    Error, KatEntry, Rbg, SelfTestFailure, Service, require_allowed, require_operational,
     require_self_test_started,
 };
 use oxicrypt_sha::sha256::DIGEST_SIZE as SHA256_DIGEST_SIZE;
@@ -181,6 +183,26 @@ pub const RSA_2048_MODULUS_BYTES: usize = U2048_BYTES;
 /// Fixed signature byte length for RSA-2048 (equal to the modulus
 /// length per PKCS#1 §8.2).
 pub const RSA_2048_SIGNATURE_BYTES: usize = U2048_BYTES;
+
+/// Security strength, in bits, a random bit generator must report
+/// through [`Rbg::strength_bits`] before an RSA-2048 key generation,
+/// PSS signature or OAEP encryption draws from it: the strength
+/// SP 800-57 Part 1 Rev. 5 Table 2 assigns to IFC with `k` = 2048.
+pub const RSA_2048_RBG_STRENGTH_BITS: u32 = 112;
+
+/// Security strength, in bits, a random bit generator must report
+/// before an RSA-3072 key generation, PSS signature or OAEP encryption
+/// draws from it: the strength SP 800-57 Part 1 Rev. 5 Table 2 assigns
+/// to IFC with `k` = 3072.
+pub const RSA_3072_RBG_STRENGTH_BITS: u32 = 128;
+
+/// Security strength, in bits, a random bit generator must report
+/// before an RSA-4096 key generation, PSS signature or OAEP encryption
+/// draws from it. SP 800-57 Part 1 Rev. 5 Table 2 tabulates IFC at
+/// `k` = 3072 (128 bits) and `k` = 7680 (192 bits) and has no row for
+/// 4096, so the requirement is the next tabulated row above the
+/// modulus, 192 bits.
+pub const RSA_4096_RBG_STRENGTH_BITS: u32 = 192;
 
 // ------------------------------------------------------------------
 // Core verify primitive (no operational gate)
@@ -246,7 +268,6 @@ fn rsa_pkcs1_v15_verify_2048_sha256_internal_unguarded(
     let m = ctx.pow_public_u64(&s, e);
     let em_recovered = m.to_be_bytes();
 
-    // Build the expected EM from SHA-256(msg) and compare byte-exact.
     let digest = pkcs1_v15::sha256_digest(msg)?;
     let mut em_expected = [0u8; RSA_2048_MODULUS_BYTES];
     if pkcs1_v15::encode_sha256(&digest, &mut em_expected).is_none() {
@@ -266,8 +287,8 @@ fn rsa_pkcs1_v15_verify_2048_sha256_internal_unguarded(
 /// Returns [`Error::InvalidInput`] if `n` is not a valid 2048-bit modulus accepted by
 /// [`MontCtx2048::new`], if `d >= n` (which would let the ladder
 /// silently wrap), or if the EMSA encoding step fails (it cannot
-/// fail for an RSA-2048 SHA-256 configuration, but we plumb the
-/// error anyway for symmetry with the verify path).
+/// fail for an RSA-2048 SHA-256 configuration; the error is
+/// propagated for symmetry with the verify path).
 ///
 /// Returns [`Error::NotOperational`] when the module refuses the call,
 /// which it does in every state other than `SelfTest` and `Operational`.
@@ -300,8 +321,6 @@ fn rsa_pkcs1_v15_sign_2048_sha256_internal_unguarded(
         return Ok(None);
     }
 
-    // EMSA-PKCS1-v1_5 encode the message digest into an EM buffer
-    // that's already one modulus-length wide.
     let digest = pkcs1_v15::sha256_digest(msg)?;
     let mut em = [0u8; RSA_2048_MODULUS_BYTES];
     if pkcs1_v15::encode_sha256(&digest, &mut em).is_none() {
@@ -362,7 +381,6 @@ fn rsa_pss_sign_2048_sha256_internal_unguarded(
         return Ok(None);
     }
 
-    // EMSA-PSS-ENCODE the SHA-256 digest of msg into a 256-byte EM.
     let digest = pkcs1_v15::sha256_digest(msg)?;
     let mut em = [0u8; pss::EM_LEN];
     if pss::emsa_pss_encode(&digest, salt, &mut em)?.is_none() {
@@ -446,7 +464,7 @@ fn u1024_into_u2048_low(x: &U1024) -> U2048 {
 /// `gcd(y^e − x, n)` yields `p` or `q` — an immediate full-key
 /// recovery.
 ///
-/// We mitigate by re-verifying the output before returning: compute
+/// The output is re-verified before returning: compute
 /// `x_check = y^e mod n` using the non-CRT public ladder and compare
 /// against the original `x`. A single fault on either half diverges
 /// the check; a correlated two-point fault has negligible probability
@@ -516,7 +534,6 @@ fn rsa_crt_2048_private_exp_internal(
 
     //    `diff = (y_p − y_q_mod_p) mod p`.
     let diff = if y_p.ct_lt(&y_q_mod_p) == 1 {
-        // y_p < y_q_mod_p: add p first, then subtract.
         let (sum, _) = y_p.adding(&p);
         sum.subtracting(&y_q_mod_p).0
     } else {
@@ -706,7 +723,6 @@ fn rsa_oaep_encrypt_2048_sha256_internal_unguarded(
         return Ok(None);
     };
 
-    // EME-OAEP-ENCODE into a k-byte buffer.
     let mut em = [0u8; oaep::K];
     if oaep::emsa_oaep_encode(label, msg, seed, &mut em)?.is_none() {
         return Ok(None);
@@ -934,9 +950,8 @@ fn rsa_signature_primitive_2048_crt_internal_unguarded(
     qinv_bytes: &[u8; U1024_BYTES],
     msg: &[u8; RSA_2048_MODULUS_BYTES],
 ) -> Option<[u8; RSA_2048_MODULUS_BYTES]> {
-    // RFC 8017 §5.2.1: 0 ≤ msg < n. The CRT internal function
-    // already checks x < n (line 393 of rsa_crt_2048_private_exp_internal),
-    // so we delegate directly.
+    // RFC 8017 §5.2.1: 0 ≤ msg < n. `rsa_crt_2048_private_exp_internal`
+    // checks `x < n` itself.
     let crt = CrtComponentsRaw {
         p: p_bytes,
         q: q_bytes,
@@ -955,11 +970,9 @@ fn sp800_56br2_range_check(c: &U2048, n: &U2048) -> bool {
         limbs[0] = 1;
         U2048 { limbs }
     };
-    // c must be > 1: reject c ∈ {0, 1}.
     if c.ct_lt(&one) == 1 || c.ct_eq(&one) == 1 {
         return false;
     }
-    // c must be < n − 1: compute n − 1 and check c < n − 1.
     let (n_minus_1, _) = n.subtracting(&one);
     // If n ≤ 2 the key is structurally invalid; also reject.
     if n_minus_1.ct_eq(&U2048::ZERO) == 1 || n_minus_1.ct_eq(&one) == 1 {
@@ -1090,7 +1103,6 @@ fn rsa_oaep_decrypt_2048_sha256_crt_internal_unguarded(
         dq: dq_bytes,
         qinv: qinv_bytes,
     };
-    // CRT exponent + Bellcore verify-after-decrypt on the ciphertext.
     let Some(em) = rsa_crt_2048_private_exp_internal(n_bytes, e, crt, ct) else {
         return Ok(None);
     };
@@ -1199,8 +1211,8 @@ pub fn rsa_pss_verify_2048_sha256(
 
 /// Encrypt `msg` under the 2048-bit public key `(n_bytes, e)` using
 /// RSAES-OAEP with SHA-256 for both the label hash and the MGF1 hash.
-/// The caller supplies an HMAC-DRBG-SHA-256 from which a fresh
-/// `hLen = 32`-byte OAEP seed is drawn per call.
+/// The caller supplies a random bit generator implementing [`Rbg`],
+/// from which a fresh `hLen = 32`-byte OAEP seed is drawn per call.
 ///
 /// `msg.len()` must be at most [`oaep::MAX_MSG_LEN`] = 190 bytes;
 /// longer messages are rejected with [`Error::InvalidInput`]. The
@@ -1210,10 +1222,13 @@ pub fn rsa_pss_verify_2048_sha256(
 /// # Errors
 ///
 /// Returns [`Error::NotOperational`] if the FIPS module has not
-/// completed power-up self-tests. Returns [`Error::InvalidInput`] on
-/// modulus rejection, DRBG failure, or oversize message.
-pub fn rsa_oaep_encrypt_2048_sha256(
-    drbg: &mut oxicrypt_drbg::HmacDrbgSha256,
+/// completed power-up self-tests. Returns [`Error::RbgTooWeak`] before
+/// any draw if the random bit generator reports less than
+/// [`RSA_2048_RBG_STRENGTH_BITS`], [`Error::Rbg`] if it produces no
+/// output, and [`Error::InvalidInput`] on modulus rejection or
+/// oversize message.
+pub fn rsa_oaep_encrypt_2048_sha256<R: Rbg>(
+    drbg: &mut R,
     n_bytes: &[u8; RSA_2048_MODULUS_BYTES],
     e: u64,
     label: &[u8],
@@ -1221,11 +1236,11 @@ pub fn rsa_oaep_encrypt_2048_sha256(
 ) -> Result<[u8; RSA_2048_MODULUS_BYTES], Error> {
     require_operational()?;
     require_allowed(Service::RsaOaep2048)?;
+    if drbg.strength_bits() < RSA_2048_RBG_STRENGTH_BITS {
+        return Err(Error::RbgTooWeak);
+    }
     let mut seed = [0u8; oaep::HLEN];
-    drbg.generate(None, &mut seed).map_err(|e| match e {
-        oxicrypt_drbg::DrbgError::Module(e) => e,
-        _ => Error::InvalidInput,
-    })?;
+    drbg.fill(&mut seed).map_err(Error::Rbg)?;
     rsa_oaep_encrypt_2048_sha256_internal_unguarded(n_bytes, e, label, msg, &seed)?
         .ok_or(Error::InvalidInput)
 }
@@ -1239,10 +1254,10 @@ pub fn rsa_oaep_encrypt_2048_sha256(
 /// signing a fixed probe message with `(n, d)` produces a signature
 /// that verifies under `(n, e)`.
 ///
-/// Used both by the power-up KAT (where the KAT tuple is already
-/// pinned but we still re-run the test as a structural health
-/// check) and by [`RsaPrivateKey2048::from_components`] after the
-/// operational gate has released.
+/// Used both by the power-up KAT (which re-runs it on the pinned KAT
+/// tuple as a structural health check) and by
+/// [`RsaPrivateKey2048::from_components`] after the operational gate has
+/// released.
 ///
 /// Returns [`Error::NotOperational`] unless
 /// [`oxicrypt_module::require_self_test_started`] admits the call: in
@@ -1265,8 +1280,8 @@ fn pairwise_consistency_test_2048_internal_unguarded(
     d_bytes: &[u8; RSA_2048_MODULUS_BYTES],
 ) -> Result<bool, Error> {
     // The probe message is arbitrary but fixed; IG 10.3.A only
-    // requires that the PCT cover the sign→verify roundtrip. We pick
-    // a short ASCII string that is obviously not a secret.
+    // requires that the PCT cover the sign→verify roundtrip. It is a
+    // short ASCII string that is obviously not a secret.
     const PROBE: &[u8] = b"fips-rsa PCT probe / RSA-2048 / PKCS#1 v1.5 / SHA-256";
     let Some(sig) = rsa_pkcs1_v15_sign_2048_sha256_internal_unguarded(n_bytes, d_bytes, PROBE)?
     else {
@@ -1473,7 +1488,6 @@ impl RsaPrivateKey2048 {
         require_operational()?;
         require_allowed(Service::RsaPkcs1v15Sign2048)?;
         if let Some(crt) = self.crt.as_ref() {
-            // CRT + Bellcore path.
             rsa_pkcs1_v15_sign_2048_sha256_crt_internal_unguarded(
                 &self.n_bytes,
                 self.e,
@@ -1500,7 +1514,7 @@ impl RsaPrivateKey2048 {
     /// The caller supplies the salt, so a test can pin the signature.
     /// [`Self::sign_pss_sha256`] is the DRBG-backed variant that
     /// samples a fresh `hLen`-byte salt. FIPS 186-5 §5.4 permits any
-    /// `sLen ∈ [0, hLen]`; we fix it at `hLen` to keep the KAT
+    /// `sLen ∈ [0, hLen]`; it is fixed at `hLen` to keep the KAT
     /// deterministic and match the IG 10.3.A recommendation.
     ///
     /// # Errors
@@ -1535,34 +1549,35 @@ impl RsaPrivateKey2048 {
     }
 
     /// Sign `msg` with RSASSA-PSS SHA-256, sampling a fresh `hLen`-byte
-    /// salt from the caller-supplied DRBG. This is the DRBG-backed
-    /// PSS form that FIPS 186-5 §5.4 recommends: the salt is fresh
-    /// per-signature so that signing the same message twice produces
-    /// two different signatures, avoiding multi-target attacks.
+    /// salt from the caller-supplied random bit generator implementing
+    /// [`Rbg`]. This is the randomized PSS form that FIPS 186-5 §5.4
+    /// recommends: the salt is fresh per-signature so that signing the
+    /// same message twice produces two different signatures, avoiding
+    /// multi-target attacks.
     ///
-    /// The DRBG must be instantiated before calling. It is advanced by
-    /// exactly one `generate` call of [`pss::SLEN`] = 32 bytes per
-    /// invocation — callers running long signing campaigns should
-    /// re-seed according to their SP 800-90A reseed policy.
+    /// The generator is advanced by exactly one `fill` call of
+    /// [`pss::SLEN`] = 32 bytes per invocation.
     ///
     /// # Errors
     ///
     /// Returns [`Error::NotOperational`] if the FIPS module is no
-    /// longer operational, or [`Error::InvalidInput`] if the DRBG
-    /// reports a failure or the internal primitive rejects the pinned
-    /// key material.
-    pub fn sign_pss_sha256(
+    /// longer operational, [`Error::RbgTooWeak`] before any draw if the
+    /// random bit generator reports less than
+    /// [`RSA_2048_RBG_STRENGTH_BITS`], [`Error::Rbg`] if the random bit
+    /// generator produces no output, or [`Error::InvalidInput`] if the
+    /// internal primitive rejects the pinned key material.
+    pub fn sign_pss_sha256<R: Rbg>(
         &self,
-        drbg: &mut oxicrypt_drbg::HmacDrbgSha256,
+        drbg: &mut R,
         msg: &[u8],
     ) -> Result<[u8; RSA_2048_SIGNATURE_BYTES], Error> {
         require_operational()?;
         require_allowed(Service::RsaPssSign2048)?;
+        if drbg.strength_bits() < RSA_2048_RBG_STRENGTH_BITS {
+            return Err(Error::RbgTooWeak);
+        }
         let mut salt = [0u8; pss::SLEN];
-        drbg.generate(None, &mut salt).map_err(|e| match e {
-            oxicrypt_drbg::DrbgError::Module(e) => e,
-            _ => Error::InvalidInput,
-        })?;
+        drbg.fill(&mut salt).map_err(Error::Rbg)?;
         rsa_pss_sign_2048_sha256_internal_unguarded(&self.n_bytes, &self.d_bytes, msg, &salt)?
             .ok_or(Error::InvalidInput)
     }
@@ -1637,7 +1652,8 @@ impl RsaPrivateKey2048 {
     }
 
     /// Generate a fresh RSA-2048 keypair using the caller-supplied
-    /// HMAC_DRBG-SHA-256 for all randomness, per FIPS 186-5 §A.1.1 /
+    /// random bit generator implementing [`Rbg`] for all randomness,
+    /// per FIPS 186-5 §A.1.1 /
     /// §B.3.1. `e` must be an odd prime in `[65537, 2^64)` (in
     /// practice, pass `65537`).
     ///
@@ -1649,21 +1665,26 @@ impl RsaPrivateKey2048 {
     /// # Errors
     ///
     /// Returns [`Error::NotOperational`] if the FIPS module is not
-    /// yet operational. Returns [`Error::InvalidInput`] on any of:
+    /// yet operational, [`Error::RbgTooWeak`] before any draw if the
+    /// random bit generator reports less than
+    /// [`RSA_2048_RBG_STRENGTH_BITS`], and [`Error::Rbg`] if the random
+    /// bit generator produces no output. Returns [`Error::InvalidInput`]
+    /// on any of:
     ///
     ///   * `e` fails the structural check (`e < 65537` or `e` even);
-    ///   * the DRBG rejects a request (e.g. not instantiated or
-    ///     reseed required);
     ///   * the prime-candidate retry budget is exceeded;
     ///   * the resulting keypair fails the pairwise consistency
     ///     test (which indicates internal corruption).
     #[allow(clippy::similar_names)]
-    pub fn generate(drbg: &mut oxicrypt_drbg::HmacDrbgSha256, e: u64) -> Result<Self, Error> {
+    pub fn generate<R: Rbg>(drbg: &mut R, e: u64) -> Result<Self, Error> {
         require_operational()?;
         require_allowed(Service::RsaKeygen2048)?;
+        if drbg.strength_bits() < RSA_2048_RBG_STRENGTH_BITS {
+            return Err(Error::RbgTooWeak);
+        }
         let km = keygen::generate_2048_internal(drbg, e).map_err(|e| match e {
-            keygen::KeygenError::Drbg(oxicrypt_drbg::DrbgError::Module(e))
-            | keygen::KeygenError::Module(e) => e,
+            keygen::KeygenError::Rbg(e) => Error::Rbg(e),
+            keygen::KeygenError::Module(e) => e,
             _ => Error::InvalidInput,
         })?;
         let n_bytes = km.n.to_be_bytes();
@@ -1879,9 +1900,8 @@ pub const KATS: &[KatEntry] = &[KatEntry {
     run: self_test,
 }];
 
-// Silence an otherwise-unused re-export: downstream users of the
-// crate may want the hash length constant without pulling in
-// `fips-sha` directly.
+// Re-exports the SHA-256 digest length, so a downstream user need not
+// depend on `oxicrypt-sha` directly for it.
 #[doc(hidden)]
 pub const __SHA256_DIGEST_SIZE: usize = SHA256_DIGEST_SIZE;
 
@@ -2205,18 +2225,11 @@ mod tests {
             run: self_test,
         }]);
 
-        let mut drbg = oxicrypt_drbg::HmacDrbgSha256::default();
-        drbg.instantiate(
-            b"oxicrypt-e2e-entropy-input-00001",
-            b"oxicrypt-e2e-nonce",
-            b"",
-        )
-        .expect("drbg instantiates");
+        let mut drbg =
+            oxicrypt_drbg::HmacDrbgSha256::instantiate_from_module(b"").expect("drbg instantiates");
 
         let sk = RsaPrivateKey2048::generate(&mut drbg, 65537).expect("keygen + PCT succeeds");
 
-        // Two signatures over the same message must differ because
-        // the salt is sampled fresh per call, then both must verify.
         let msg = b"oxicrypt: generate + PSS sign e2e";
         let sig1 = sk
             .sign_pss_sha256(&mut drbg, msg)
@@ -2243,16 +2256,10 @@ mod tests {
             name: "rsa-2048-crt-equiv",
             run: self_test,
         }]);
-        let mut drbg = oxicrypt_drbg::HmacDrbgSha256::default();
-        drbg.instantiate(
-            b"oxicrypt-crt-equiv-entropy-inp-v1",
-            b"oxicrypt-crt-nonce",
-            b"",
-        )
-        .unwrap();
+        let mut drbg = oxicrypt_drbg::HmacDrbgSha256::instantiate_from_module(b"").unwrap();
 
-        // Pull raw keygen material so we can exercise both paths on
-        // the same (n, e, d) with and without CRT plumbing.
+        // Raw keygen material, so both paths run on the same (n, e, d)
+        // with and without CRT plumbing.
         let km = keygen::generate_2048_internal(&mut drbg, 65537).unwrap();
         let n_bytes = km.n.to_be_bytes();
         let d_bytes = km.d.to_be_bytes();
@@ -2280,7 +2287,6 @@ mod tests {
             "CRT and non-CRT sign must agree byte-for-byte"
         );
 
-        // And both signatures must verify via the public path.
         assert!(rsa_pkcs1_v15_verify_2048_sha256_internal(&n_bytes, 65537, msg, &sig_crt).unwrap());
     }
 
@@ -2296,13 +2302,7 @@ mod tests {
             name: "rsa-2048-bellcore",
             run: self_test,
         }]);
-        let mut drbg = oxicrypt_drbg::HmacDrbgSha256::default();
-        drbg.instantiate(
-            b"oxicrypt-bellcore-entropy-inp-v1",
-            b"oxicrypt-bellcore-nonce",
-            b"",
-        )
-        .unwrap();
+        let mut drbg = oxicrypt_drbg::HmacDrbgSha256::instantiate_from_module(b"").unwrap();
         let km = keygen::generate_2048_internal(&mut drbg, 65537).unwrap();
         let n_bytes = km.n.to_be_bytes();
         let p_bytes = km.p.to_be_bytes();
@@ -2338,13 +2338,7 @@ mod tests {
             name: "rsa-2048-crt-pss",
             run: self_test,
         }]);
-        let mut drbg = oxicrypt_drbg::HmacDrbgSha256::default();
-        drbg.instantiate(
-            b"oxicrypt-crt-pss-entropy-input-1",
-            b"oxicrypt-crt-pss-nonce",
-            b"",
-        )
-        .unwrap();
+        let mut drbg = oxicrypt_drbg::HmacDrbgSha256::instantiate_from_module(b"").unwrap();
         let sk = RsaPrivateKey2048::generate(&mut drbg, 65537).unwrap();
         let salt = [0x42u8; pss::SLEN];
         let sig = sk
@@ -2362,13 +2356,7 @@ mod tests {
             name: "rsa-2048-reject-e",
             run: self_test,
         }]);
-        let mut drbg = oxicrypt_drbg::HmacDrbgSha256::default();
-        drbg.instantiate(
-            b"oxicrypt-reject-e-entropy-input1",
-            b"oxicrypt-reject-e-nonce",
-            b"",
-        )
-        .unwrap();
+        let mut drbg = oxicrypt_drbg::HmacDrbgSha256::instantiate_from_module(b"").unwrap();
         match RsaPrivateKey2048::generate(&mut drbg, 4) {
             Err(Error::InvalidInput) => {}
             Err(e) => panic!("unexpected error: {e:?}"),
@@ -2416,13 +2404,7 @@ mod tests {
             name: "rsa-2048-oaep-crt",
             run: self_test,
         }]);
-        let mut drbg = oxicrypt_drbg::HmacDrbgSha256::default();
-        drbg.instantiate(
-            b"oxicrypt-oaep-crt-entropy-input1",
-            b"oxicrypt-oaep-crt-nonce",
-            b"",
-        )
-        .unwrap();
+        let mut drbg = oxicrypt_drbg::HmacDrbgSha256::instantiate_from_module(b"").unwrap();
         let sk = RsaPrivateKey2048::generate(&mut drbg, 65537).unwrap();
 
         let seed = [0xc3u8; oaep::HLEN];
@@ -2453,13 +2435,7 @@ mod tests {
             name: "rsa-2048-oaep-agree",
             run: self_test,
         }]);
-        let mut drbg = oxicrypt_drbg::HmacDrbgSha256::default();
-        drbg.instantiate(
-            b"oxicrypt-oaep-agree-entropy-in-1",
-            b"oxicrypt-oaep-agree-nonce",
-            b"",
-        )
-        .unwrap();
+        let mut drbg = oxicrypt_drbg::HmacDrbgSha256::instantiate_from_module(b"").unwrap();
         let sk_crt = RsaPrivateKey2048::generate(&mut drbg, 65537).unwrap();
         let sk_nocrt = RsaPrivateKey2048::from_components(
             sk_crt.modulus_bytes().unwrap(),
@@ -2504,16 +2480,9 @@ mod tests {
             name: "rsa-2048-oaep-bellcore",
             run: self_test,
         }]);
-        let mut drbg = oxicrypt_drbg::HmacDrbgSha256::default();
-        drbg.instantiate(
-            b"oxicrypt-oaep-bellcore-entropy-1",
-            b"oxicrypt-oaep-bellcore-nonce",
-            b"",
-        )
-        .unwrap();
+        let mut drbg = oxicrypt_drbg::HmacDrbgSha256::instantiate_from_module(b"").unwrap();
         let sk = RsaPrivateKey2048::generate(&mut drbg, 65537).unwrap();
 
-        // Build a legitimate ciphertext first.
         let seed = [0x11u8; oaep::HLEN];
         let label: &[u8] = b"";
         let msg: &[u8] = b"bellcore-on-decrypt probe";
@@ -2616,19 +2585,12 @@ mod tests {
             name: "rsa-2048-oaep-drbg",
             run: self_test,
         }]);
-        let mut drbg = oxicrypt_drbg::HmacDrbgSha256::default();
-        drbg.instantiate(
-            b"oxicrypt-oaep-drbg-entropy-inp-1",
-            b"oxicrypt-oaep-drbg-nonce",
-            b"",
-        )
-        .unwrap();
+        let mut drbg = oxicrypt_drbg::HmacDrbgSha256::instantiate_from_module(b"").unwrap();
         let msg: &[u8] = b"randomised OAEP";
         let ct1 = rsa_oaep_encrypt_2048_sha256(&mut drbg, &KAT_N_BYTES, KAT_E, b"", msg).unwrap();
         let ct2 = rsa_oaep_encrypt_2048_sha256(&mut drbg, &KAT_N_BYTES, KAT_E, b"", msg).unwrap();
         assert_ne!(ct1, ct2);
 
-        // Both still decrypt to the same plaintext.
         let sk = RsaPrivateKey2048::from_components(&KAT_N_BYTES, KAT_E, &KAT_D_BYTES).unwrap();
         let mut out1 = [0u8; oaep::MAX_MSG_LEN];
         let mut out2 = [0u8; oaep::MAX_MSG_LEN];
@@ -2641,22 +2603,14 @@ mod tests {
     }
 
     /// Encrypting an oversize message must be rejected by the
-    /// public entry point without touching the DRBG past the single
-    /// seed draw. (We don't observe the DRBG state here, but we do
-    /// observe the error.)
+    /// public entry point.
     #[test]
     fn oaep_encrypt_rejects_oversize_message() {
         let _ = init_with_tests(&[KatEntry {
             name: "rsa-2048-oaep-oversize",
             run: self_test,
         }]);
-        let mut drbg = oxicrypt_drbg::HmacDrbgSha256::default();
-        drbg.instantiate(
-            b"oxicrypt-oaep-oversize-entropy-1",
-            b"oxicrypt-oaep-oversize-nonce",
-            b"",
-        )
-        .unwrap();
+        let mut drbg = oxicrypt_drbg::HmacDrbgSha256::instantiate_from_module(b"").unwrap();
         let too_big = [0u8; oaep::MAX_MSG_LEN + 1];
         match rsa_oaep_encrypt_2048_sha256(&mut drbg, &KAT_N_BYTES, KAT_E, b"", &too_big) {
             Err(Error::InvalidInput) => {}
@@ -2664,11 +2618,45 @@ mod tests {
             Ok(_) => panic!("oversize OAEP plaintext must be rejected"),
         }
     }
+
+    #[test]
+    fn rbg_below_112_bits_is_refused_by_every_drawing_entry_before_drawing() {
+        use crate::test_support::ReportsStrength;
+        let _ = init_with_tests(&[KatEntry {
+            name: "rsa-2048-rbg-strength",
+            run: self_test,
+        }]);
+        let sk = RsaPrivateKey2048::from_components(&KAT_N_BYTES, KAT_E, &KAT_D_BYTES)
+            .expect("pinned keypair passes PCT");
+        let drew = Error::Rbg(oxicrypt_module::RbgError::Uninstantiated);
+        for (bits, expected) in [(111, Error::RbgTooWeak), (112, drew)] {
+            assert_eq!(
+                RsaPrivateKey2048::generate(&mut ReportsStrength(bits), 65537).err(),
+                Some(expected)
+            );
+            assert_eq!(
+                sk.sign_pss_sha256(&mut ReportsStrength(bits), b"rsa2048 refusal"),
+                Err(expected)
+            );
+            assert_eq!(
+                rsa_oaep_encrypt_2048_sha256(
+                    &mut ReportsStrength(bits),
+                    &KAT_N_BYTES,
+                    KAT_E,
+                    b"",
+                    b"rsa2048 refusal",
+                ),
+                Err(expected)
+            );
+        }
+    }
 }
 
 #[cfg(test)]
 pub(crate) mod test_support {
-    use oxicrypt_module::{KatEntry, initialize_with_tests, require_self_test_started};
+    use oxicrypt_module::{
+        KatEntry, Rbg, RbgError, initialize_with_tests, require_self_test_started,
+    };
 
     /// Stands in for the pre-operational integrity test, which cannot pass
     /// in an unsigned test binary.
@@ -2683,5 +2671,20 @@ pub(crate) mod test_support {
     pub(crate) fn start_module() {
         let _ = initialize_with_tests(UNSIGNED_TEST_BINARY, &[]);
         assert_eq!(require_self_test_started(), Ok(()));
+    }
+
+    /// An [`Rbg`] reporting a strength the caller chooses; `fill`
+    /// refuses, so a call that draws from it fails with
+    /// [`Error::Rbg`](crate::Error::Rbg).
+    pub(crate) struct ReportsStrength(pub(crate) u32);
+
+    impl Rbg for ReportsStrength {
+        fn fill(&mut self, _out: &mut [u8]) -> Result<(), RbgError> {
+            Err(RbgError::Uninstantiated)
+        }
+
+        fn strength_bits(&self) -> u32 {
+            self.0
+        }
     }
 }

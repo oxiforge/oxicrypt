@@ -1,15 +1,15 @@
 //! Declarative macro for RSA key generation at arbitrary operand widths.
 //!
 //! [`define_keygen`] generates the full keygen pipeline — Miller-Rabin
-//! primality testing, trial-division sieve, DRBG-backed candidate
-//! sampling, modular inverse of the small public exponent, CRT
+//! primality testing, trial-division sieve, candidate sampling from a
+//! random bit generator, modular inverse of the small public exponent, CRT
 //! decomposition, and the top-level generate function — parameterized
 //! on the half-width (prime) and full-width (modulus) bigint types.
 //!
 //! The macro is invoked once for each target key size (RSA-3072 in
 //! [`crate::keygen3072`], RSA-4096 in [`crate::keygen4096`]).  The
-//! existing RSA-2048 keygen in [`crate::keygen`] predates the macro
-//! and is left as-is; it may be migrated in a future cleanup pass.
+//! RSA-2048 keygen in [`crate::keygen`] is a separate, hand-written
+//! implementation.
 //!
 //! Shared constants (`SMALL_PRIMES`, `MAX_CANDIDATE_ATTEMPTS`) and
 //! the `KeygenError` type live in [`crate::keygen`] and are
@@ -25,17 +25,16 @@
 /// |------|-----------|-------------|
 /// | `miller_rabin` | private | Miller-Rabin primality testing at half-width |
 /// | `has_small_factor` | private | Trial division by primes < 2048 |
-/// | `sample_candidate` | private | DRBG-backed odd candidate with top 2 bits set |
+/// | `sample_candidate` | private | Odd candidate with top 2 bits set, drawn from an [`oxicrypt_module::Rbg`] |
 /// | `gen_probable_prime` | private | Prime-generation loop (FIPS 186-5 §A.1.1) |
 /// | `$reduce` | `pub(crate)` | Bitwise shift-and-subtract full→half reduction |
 /// | `modinv_small_e` | private | `e⁻¹ mod φ(n)` via divide-once-then-u64-EGCD |
-/// | `$km` | `pub` | `KeyMaterial` struct with zeroizing `Drop` |
+/// | `$km` | `pub` | `KeyMaterial` struct with zeroizing `Drop` (unproven: no test observes the cleared memory) |
 /// | `$gen` | `pub` | Top-level keygen entry point |
 ///
 /// # Prerequisites at the call site
 ///
 /// - `crate::keygen::{KeygenError, SMALL_PRIMES, MAX_CANDIDATE_ATTEMPTS}`
-/// - `oxicrypt_drbg::HmacDrbgSha256`
 /// - The half/full bigint types with keygen helpers (ONE, `subtracting_u64`,
 ///   `rem_u64`, `shr1`, `is_odd`, `is_one`, `widening_mul`, `ct_lt`,
 ///   `ct_sub_if_ge`)
@@ -60,10 +59,10 @@ macro_rules! define_keygen {
         /// on "definitely composite".
         ///
         /// Precondition: `n` is odd and `n > 3`.
-        fn miller_rabin(
+        fn miller_rabin<R: oxicrypt_module::Rbg>(
             n: &$half,
             rounds: u32,
-            drbg: &mut HmacDrbgSha256,
+            drbg: &mut R,
         ) -> Result<bool, crate::keygen::KeygenError> {
             let (n_minus_1, _) = n.subtracting_u64(1);
             let mut d = n_minus_1;
@@ -85,7 +84,7 @@ macro_rules! define_keygen {
                 // Sample a uniform witness `a ∈ [2, n − 2]`.
                 let a = loop {
                     let mut buf = [0u8; $hbytes];
-                    drbg.generate(None, &mut buf)?;
+                    drbg.fill(&mut buf)?;
                     let cand = $half::from_be_bytes(&buf);
                     if cand.ct_lt(&n_minus_1_ct) == 1
                         && cand != $half::ZERO
@@ -133,14 +132,14 @@ macro_rules! define_keygen {
 
         // ---- Candidate sampling ----
 
-        /// Sample a half-width candidate from the DRBG: force top
-        /// two bits set (so `p · q` spans the full nlen) and low
-        /// bit set (odd).
-        fn sample_candidate(
-            drbg: &mut HmacDrbgSha256,
+        /// Sample a half-width candidate from the random bit
+        /// generator: force top two bits set (so `p · q` spans the
+        /// full nlen) and low bit set (odd).
+        fn sample_candidate<R: oxicrypt_module::Rbg>(
+            drbg: &mut R,
         ) -> Result<$half, crate::keygen::KeygenError> {
             let mut buf = [0u8; $hbytes];
-            drbg.generate(None, &mut buf)?;
+            drbg.fill(&mut buf)?;
             buf[0] |= 0b1100_0000;
             buf[$hbytes - 1] |= 0b0000_0001;
             Ok($half::from_be_bytes(&buf))
@@ -148,11 +147,11 @@ macro_rules! define_keygen {
 
         // ---- Prime generation loop ----
 
-        /// Generate a half-width probable prime from the DRBG,
-        /// rejecting any candidate `p` for which `gcd(p − 1, e) ≠ 1`.
-        /// FIPS 186-5 §A.1.1 steps 5.1–5.7.
-        fn gen_probable_prime(
-            drbg: &mut HmacDrbgSha256,
+        /// Generate a half-width probable prime from the random bit
+        /// generator, rejecting any candidate `p` for which
+        /// `gcd(p − 1, e) ≠ 1`. FIPS 186-5 §A.1.1 steps 5.1–5.7.
+        fn gen_probable_prime<R: oxicrypt_module::Rbg>(
+            drbg: &mut R,
             e: u64,
         ) -> Result<$half, crate::keygen::KeygenError> {
             for _ in 0..crate::keygen::MAX_CANDIDATE_ATTEMPTS {
@@ -176,15 +175,15 @@ macro_rules! define_keygen {
         /// Bitwise shift-and-subtract reduction of a full-width
         /// value modulo a half-width modulus.
         ///
-        /// Called with public data (`d mod (p−1)` and `d mod (q−1)`)
-        /// so constant-time behavior is not required.
+        /// Not constant time. Keygen calls it on secret inputs
+        /// (`d mod (p−1)` and `d mod (q−1)`); the CRT path calls it on
+        /// the public input representative.
         pub(crate) fn $reduce(a: &$full, m: &$half) -> $half {
             debug_assert!(
                 m.limbs[$hlimbs - 1] >> 63 == 1,
                 "m must have top bit set"
             );
             let mut acc = $half::ZERO;
-            // Iterate over all bits of the full-width input.
             for bit in (0..($flimbs * 64_usize)).rev() {
                 let carry_out = acc.limbs[$hlimbs - 1] >> 63;
                 let mut new_limbs = [0u64; $hlimbs];
@@ -382,7 +381,8 @@ macro_rules! define_keygen {
 
         // ---- Top-level generate function ----
 
-        /// Generate fresh RSA key material using `drbg` for all
+        /// Generate fresh RSA key material using `drbg`, a random bit
+        /// generator implementing [`oxicrypt_module::Rbg`], for all
         /// randomness. `e` must be an odd prime in `[65537, 2^64)`.
         ///
         /// Skips the operational and profile gates; the approved service
@@ -393,9 +393,10 @@ macro_rules! define_keygen {
         /// Returns [`crate::keygen::KeygenError::Module`] unless
         /// [`oxicrypt_module::require_self_test_started`] admits the call: in
         /// `Operational`, or in `SelfTest` on the thread running the power-up
-        /// self-tests.
-        pub fn $gen(
-            drbg: &mut HmacDrbgSha256,
+        /// self-tests, and [`crate::keygen::KeygenError::Rbg`] when the
+        /// random bit generator produces no output.
+        pub fn $gen<R: oxicrypt_module::Rbg>(
+            drbg: &mut R,
             e: u64,
         ) -> Result<$km, crate::keygen::KeygenError> {
             oxicrypt_module::require_self_test_started()?;
@@ -406,10 +407,8 @@ macro_rules! define_keygen {
             let p = gen_probable_prime(drbg, e)?;
             let q = loop {
                 let q_try = gen_probable_prime(drbg, e)?;
-                // FIPS 186-5 §A.1.1 step 5.4 — |p − q| distance.
-                // We enforce p ≠ q; the full 2^(nlen/2−100) bound
-                // is overwhelmingly satisfied in practice for primes
-                // with the top two bits set.
+                // FIPS 186-5 §A.1.1 step 2(d): |p − q| > 2^(nlen/2 − 100).
+                // Only `p ≠ q` is checked here, not that bound.
                 if q_try != p {
                     break q_try;
                 }
@@ -423,7 +422,9 @@ macro_rules! define_keygen {
             let (q_minus_1, _) = q.subtracting_u64(1);
             let phi_n = p_minus_1.widening_mul(&q_minus_1);
 
-            // d = e⁻¹ mod φ(n).
+            // d = e⁻¹ mod φ(n). FIPS 186-5 §A.1.1 step 3 requires the
+            // inverse modulo LCM(p − 1, q − 1) with d below that LCM; this
+            // code does not compute the LCM form.
             let d = modinv_small_e(e, &phi_n)
                 .ok_or(crate::keygen::KeygenError::InvalidExponent)?;
 

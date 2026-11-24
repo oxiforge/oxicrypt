@@ -5,8 +5,9 @@
 //!   * [`derive_public_key`] — given a 32-byte private scalar `d`,
 //!     compute the uncompressed SEC1 public key `[04 || X || Y]`.
 //!     This is not a full FIPS keygen (which layers rejection
-//!     sampling on top of an approved DRBG); it's the deterministic
-//!     core that a DRBG-backed keygen will call once the DRBG lands.
+//!     sampling on top of an approved DRBG, as
+//!     [`EcdsaP256PrivateKey::generate`] does); it is the
+//!     deterministic scalar-to-point core.
 //!   * [`sign_with_k`] — deterministic sign primitive taking an
 //!     externally provided per-message secret `k`. This is the shape
 //!     needed by KATs and by a FIPS 186-5 sign routine built on top
@@ -32,9 +33,8 @@
     clippy::many_single_char_names
 )]
 
-use oxicrypt_drbg::HmacDrbgSha256;
 use oxicrypt_module::{
-    Error, SelfTestFailure, Service, require_allowed, require_operational,
+    Error, Rbg, SelfTestFailure, Service, require_allowed, require_operational,
     require_self_test_started,
 };
 use oxicrypt_sha::sha256::Sha256;
@@ -95,8 +95,8 @@ fn derive_public_key_internal_unguarded(
 ///
 /// `k` **must** be a fresh secret for every signature — reusing or
 /// leaking `k` leaks `d`. That discipline is the caller's
-/// responsibility in this layer; a DRBG-backed wrapper in a later
-/// commit will own it.
+/// responsibility in this layer; [`EcdsaP256PrivateKey::sign_sha256`]
+/// draws a fresh `k` from a random bit generator.
 ///
 /// Returns [`Error::NotOperational`] when the module refuses the call,
 /// which it does in every state other than `SelfTest` and `Operational`.
@@ -182,7 +182,8 @@ fn verify_internal_unguarded(
     sig: &[u8; SIGNATURE_LEN],
 ) -> Result<bool, Error> {
     // Every temporary lives in `t`, whose `Drop` zeroizes it on each return
-    // path, so no intermediate of a verification outlives it.
+    // path, so no intermediate of a verification outlives it (unproven: no
+    // test observes the cleared memory).
     let mut t = VerifyTemporaries::new();
 
     // 1. Decode public key.
@@ -234,7 +235,8 @@ fn verify_internal_unguarded(
 }
 
 /// The temporaries of [`verify_internal_unguarded`], zeroized when they go
-/// out of scope so that none outlives the verification on any path.
+/// out of scope so that none outlives the verification on any path
+/// (unproven: no test observes the cleared memory).
 struct VerifyTemporaries {
     r_bytes: [u8; 32],
     s_bytes: [u8; 32],
@@ -439,17 +441,21 @@ pub struct EcdsaP256PrivateKey {
 impl EcdsaP256PrivateKey {
     /// Import a private key from its 32-byte scalar representation,
     /// derive the public key, and run the IG 10.3.A pairwise
-    /// consistency test. Returns `Error::InvalidInput` if `d` is out
-    /// of range, if public-key derivation fails, or if the PCT
-    /// sign-verify round-trip fails.
+    /// consistency test, whose nonce is drawn from `drbg`, a random
+    /// bit generator implementing [`Rbg`]. Returns
+    /// `Error::InvalidInput` if `d` is out of range, if public-key
+    /// derivation fails, or if the PCT sign-verify round-trip fails.
     ///
     /// # Errors
     ///
     /// Returns [`Error::NotOperational`] if the module has not
-    /// completed its power-up self-tests, or [`Error::InvalidInput`]
-    /// on any of the construction / PCT failure modes above.
-    pub fn from_bytes(
-        drbg: &mut HmacDrbgSha256,
+    /// completed its power-up self-tests, [`Error::RbgTooWeak`] before
+    /// any draw if the random bit generator reports less than
+    /// [`crate::p256_keygen::RBG_STRENGTH_BITS`], [`Error::Rbg`] if the random
+    /// bit generator produces no output, or [`Error::InvalidInput`] on
+    /// any of the construction / PCT failure modes above.
+    pub fn from_bytes<R: Rbg>(
+        drbg: &mut R,
         d_bytes: &[u8; PRIVATE_KEY_LEN],
     ) -> Result<Self, Error> {
         require_operational()?;
@@ -458,36 +464,43 @@ impl EcdsaP256PrivateKey {
     }
 
     /// Generate a fresh P-256 private key via the FIPS 186-5 §A.2.2
-    /// rejection sampler on `drbg`, derive its public key, and run
-    /// the IG 10.3.A pairwise consistency test.
+    /// rejection sampler on `drbg`, a random bit generator
+    /// implementing [`Rbg`], derive its public key, and run the
+    /// IG 10.3.A pairwise consistency test.
     ///
     /// # Errors
     ///
     /// Returns [`Error::NotOperational`] if the module has not
-    /// completed its power-up self-tests, or [`Error::InvalidInput`]
-    /// if the DRBG fails or the PCT fails (the latter would
-    /// indicate a faulted sign or verify primitive).
-    pub fn generate(drbg: &mut HmacDrbgSha256) -> Result<Self, Error> {
+    /// completed its power-up self-tests, [`Error::RbgTooWeak`] before
+    /// any draw if the random bit generator reports less than
+    /// [`crate::p256_keygen::RBG_STRENGTH_BITS`], [`Error::Rbg`] if the random
+    /// bit generator produces no output, or [`Error::InvalidInput`] if
+    /// the PCT fails (which would indicate a faulted sign or verify
+    /// primitive).
+    pub fn generate<R: Rbg>(drbg: &mut R) -> Result<Self, Error> {
         require_operational()?;
         require_allowed(Service::EcdsaP256Keygen)?;
         Self::generate_internal(drbg)
     }
 
     /// Sign `msg` with SHA-256 under this private key, sampling a
-    /// fresh per-signature nonce `k` from `drbg` via the
-    /// FIPS 186-5 §A.2.2 rejection sampler. If the sampled `k`
-    /// produces `r == 0` or `s == 0` (mathematically possible but
-    /// astronomically unlikely), the call retries with a fresh draw
-    /// up to a small cap.
+    /// fresh per-signature nonce `k` from `drbg`, a random bit
+    /// generator implementing [`Rbg`], via the FIPS 186-5 §A.2.2
+    /// rejection sampler. If the sampled `k` produces `r == 0` or
+    /// `s == 0` (mathematically possible but astronomically
+    /// unlikely), the call retries with a fresh draw up to a small cap.
     ///
     /// # Errors
     ///
     /// Returns [`Error::NotOperational`] if the module has not
-    /// completed its power-up self-tests, or [`Error::InvalidInput`]
-    /// if the DRBG fails or fails to produce a working `k`.
-    pub fn sign_sha256(
+    /// completed its power-up self-tests, [`Error::RbgTooWeak`] before
+    /// any draw if the random bit generator reports less than
+    /// [`crate::p256_keygen::RBG_STRENGTH_BITS`], [`Error::Rbg`] if the random
+    /// bit generator produces no output, or [`Error::InvalidInput`] if
+    /// it fails to produce a working `k`.
+    pub fn sign_sha256<R: Rbg>(
         &self,
-        drbg: &mut HmacDrbgSha256,
+        drbg: &mut R,
         msg: &[u8],
     ) -> Result<[u8; SIGNATURE_LEN], Error> {
         require_operational()?;
@@ -510,9 +523,9 @@ impl EcdsaP256PrivateKey {
 
     /// Return a reference to the private scalar bytes. Intended for
     /// callers that need to hand `d` to another approved service
-    /// (e.g., ECDH via `fips-ecdh`). Zeroization of the returned
-    /// buffer is the caller's responsibility until the crate-wide
-    /// hardening pass lands.
+    /// (e.g., ECDH via `oxicrypt-ecdh`). The reference borrows the
+    /// handle's own storage; zeroization of any copy the caller makes
+    /// is the caller's responsibility.
     ///
     /// # Errors
     ///
@@ -528,8 +541,8 @@ impl EcdsaP256PrivateKey {
 
     // -- internal helpers, reached after a gate or guard has passed --
 
-    fn from_bytes_internal(
-        drbg: &mut HmacDrbgSha256,
+    fn from_bytes_internal<R: Rbg>(
+        drbg: &mut R,
         d_bytes: &[u8; PRIVATE_KEY_LEN],
     ) -> Result<Self, Error> {
         // Reject obviously-invalid scalars before PCT: rejection
@@ -542,7 +555,7 @@ impl EcdsaP256PrivateKey {
         Ok(handle)
     }
 
-    fn generate_internal(drbg: &mut HmacDrbgSha256) -> Result<Self, Error> {
+    fn generate_internal<R: Rbg>(drbg: &mut R) -> Result<Self, Error> {
         let (d, q) = generate_p256_internal(drbg)?;
         let handle = EcdsaP256PrivateKey { d, q };
         handle.run_pct(drbg)?;
@@ -552,7 +565,7 @@ impl EcdsaP256PrivateKey {
     /// Run the IG 10.3.A pairwise consistency test: sign a fixed
     /// probe with a DRBG-sampled `k`, verify under our own public
     /// key, reject the handle on any failure.
-    fn run_pct(&self, drbg: &mut HmacDrbgSha256) -> Result<(), Error> {
+    fn run_pct<R: Rbg>(&self, drbg: &mut R) -> Result<(), Error> {
         // Cap the retry loop the same way `sign_sha256_internal`
         // does — a fresh DRBG draw on a sign failure, not a loop
         // that depends on secret data.
@@ -576,9 +589,9 @@ impl EcdsaP256PrivateKey {
         Err(Error::InvalidInput)
     }
 
-    fn sign_sha256_internal(
+    fn sign_sha256_internal<R: Rbg>(
         &self,
-        drbg: &mut HmacDrbgSha256,
+        drbg: &mut R,
         msg: &[u8],
     ) -> Result<[u8; SIGNATURE_LEN], Error> {
         for _ in 0..MAX_SIGN_RETRIES {
@@ -800,7 +813,7 @@ mod tests {
     fn verify_rejects_pk_with_wrong_header_byte() {
         start_module();
         let mut bad_pk = KAT_PUBLIC_KEY;
-        bad_pk[0] = 0x02; // compressed; we only accept 0x04 here
+        bad_pk[0] = 0x02; // compressed; only 0x04 is accepted
         assert!(!verify_internal(&bad_pk, KAT_MSG, &KAT_SIGNATURE).unwrap());
     }
 
@@ -834,32 +847,97 @@ mod tests {
     // DRBG-backed keygen + PCT + random-k sign
     // --------------------------------------------------------------
 
-    fn pct_drbg(personalization: &[u8]) -> HmacDrbgSha256 {
-        // HMAC_DRBG seeds from `entropy || nonce || personalization`, so
-        // where the seed splits between entropy and nonce does not change
-        // the output that `r7_keygen_pinned_regression` pins.
-        let (entropy, nonce) =
-            b"oxicrypt-r7-ecdsa-entropy-inputoxicrypt-r7-ecdsa-nonce".split_at(32);
-        let mut drbg = HmacDrbgSha256::default();
-        drbg.instantiate(entropy, nonce, personalization)
+    fn pct_drbg(personalization: &[u8]) -> oxicrypt_drbg::HmacDrbgSha256 {
+        oxicrypt_drbg::HmacDrbgSha256::instantiate_from_module(personalization)
+            .expect("drbg instantiates")
+    }
+
+    /// Two consecutive 32-byte generate calls, with no additional
+    /// input, of HMAC_DRBG-SHA-256 (SP 800-90A Rev. 1 §10.1.2): the
+    /// scalar `d` keygen draws, then the nonce `k` its pairwise
+    /// consistency test draws. The instance is instantiated from the
+    /// ASCII bytes of `oxicrypt-r7-ecdsa-entropy-input` (31 bytes)
+    /// joined to `oxicrypt-r7-ecdsa-nonce` (23 bytes), split into a
+    /// 32-byte entropy input (the first 32 bytes of the joined string)
+    /// and a 22-byte nonce (the remaining bytes), with personalization
+    /// string `r7-keygen-pinned`. The split leaves the seed material,
+    /// `entropy || nonce || personalization`, equal to the three
+    /// strings concatenated in that order, so any SP 800-90A
+    /// HMAC_DRBG-SHA-256 implementation seeded with that string and
+    /// asked for two 32-byte outputs regenerates the 64 bytes.
+    static PINNED_KEYGEN_STREAM: [u8; 64] = [
+        0x7a, 0xcd, 0x58, 0x6a, 0x22, 0x6d, 0x77, 0x61, 0xac, 0x38, 0xad, 0x16, 0x0b, 0xce, 0x29,
+        0xfd, 0xe8, 0xb0, 0xdd, 0xf5, 0x99, 0x47, 0xb6, 0x97, 0x92, 0xe8, 0xf6, 0xd9, 0x1f, 0x74,
+        0xee, 0xe0, 0xc7, 0xba, 0x2c, 0x73, 0x93, 0x95, 0x4a, 0x04, 0xdb, 0x10, 0x00, 0xcd, 0x67,
+        0xf2, 0xe3, 0xa8, 0x9d, 0xe3, 0x2e, 0x9e, 0x85, 0x4e, 0x6a, 0xff, 0xa6, 0x50, 0xbc, 0x2a,
+        0x9f, 0xac, 0xd7, 0x63,
+    ];
+
+    #[test]
+    fn rbg_at_128_bits_meets_the_p256_strength() {
+        let _ = init_with_tests(&[KatEntry {
+            name: "ecdsa-p256-sha256",
+            run: self_test,
+        }]);
+        let mut drbg = oxicrypt_drbg::CtrDrbgAes128::instantiate_from_module(b"p256-ctr128")
             .expect("drbg instantiates");
-        drbg
+        let sk = EcdsaP256PrivateKey::generate(&mut drbg).expect("generate ok");
+        let sig = sk.sign_sha256(&mut drbg, b"p256 ctr128").expect("sign ok");
+        assert!(verify(&sk.public_key().unwrap(), b"p256 ctr128", &sig).expect("verify ok"));
+    }
+
+    /// An [`Rbg`] reporting a strength the caller chooses; `fill`
+    /// refuses, so a call that draws from it fails with [`Error::Rbg`].
+    struct ReportsStrength(u32);
+
+    impl Rbg for ReportsStrength {
+        fn fill(&mut self, _out: &mut [u8]) -> Result<(), oxicrypt_module::RbgError> {
+            Err(oxicrypt_module::RbgError::Uninstantiated)
+        }
+
+        fn strength_bits(&self) -> u32 {
+            self.0
+        }
+    }
+
+    #[test]
+    fn rbg_below_128_bits_is_refused_by_every_drawing_entry_before_drawing() {
+        let _ = init_with_tests(&[KatEntry {
+            name: "ecdsa-p256-sha256",
+            run: self_test,
+        }]);
+        let mut drbg = oxicrypt_drbg::CtrDrbgAes128::instantiate_from_module(b"p256-refusal")
+            .expect("drbg instantiates");
+        let sk = EcdsaP256PrivateKey::generate(&mut drbg).expect("generate ok");
+        let drew = Error::Rbg(oxicrypt_module::RbgError::Uninstantiated);
+        for (bits, expected) in [(127, Error::RbgTooWeak), (128, drew)] {
+            assert_eq!(
+                EcdsaP256PrivateKey::generate(&mut ReportsStrength(bits)).err(),
+                Some(expected)
+            );
+            assert_eq!(
+                EcdsaP256PrivateKey::from_bytes(&mut ReportsStrength(bits), &KAT_D).err(),
+                Some(expected)
+            );
+            assert_eq!(
+                sk.sign_sha256(&mut ReportsStrength(bits), b"p256 refusal"),
+                Err(expected)
+            );
+        }
     }
 
     #[test]
     fn r7_keygen_pinned_regression() {
-        // Pin the DRBG seed and assert that `generate` + PCT
+        // Pin the random bit stream and assert that `generate` + PCT
         // produces a byte-stable `(d, Q)`. This guards against any
-        // future refactor silently changing the order of DRBG
+        // future refactor silently changing the order of random bit
         // consumption inside the keygen / PCT / first-sign path.
         //
-        // The two constants below are the pin. Without them this test
-        // asserted only properties that hold for ANY valid keypair from
-        // ANY seed, so it could not see the reordering it exists to
-        // catch — confirmed by mutating the seed, which changed the
-        // keypair completely and left the test green (#214). If this
-        // breaks intentionally, re-capture the bytes, as the RSA keygen
-        // pin documents.
+        // The two constants below are the pin. Without them the test
+        // asserts only properties that hold for ANY valid keypair from
+        // ANY seed, so it cannot see the reordering it exists to catch.
+        // If this breaks intentionally, re-capture the bytes, as the RSA
+        // keygen pin documents.
         const EXPECTED_D: [u8; PRIVATE_KEY_LEN] = [
             0x7a, 0xcd, 0x58, 0x6a, 0x22, 0x6d, 0x77, 0x61, 0xac, 0x38, 0xad, 0x16, 0x0b, 0xce,
             0x29, 0xfd, 0xe8, 0xb0, 0xdd, 0xf5, 0x99, 0x47, 0xb6, 0x97, 0x92, 0xe8, 0xf6, 0xd9,
@@ -877,7 +955,7 @@ mod tests {
             name: "ecdsa-p256-sha256",
             run: self_test,
         }]);
-        let mut drbg = pct_drbg(b"r7-keygen-pinned");
+        let mut drbg = oxicrypt_drbg::testing::FixedStream::new(&PINNED_KEYGEN_STREAM, 256);
         let sk = EcdsaP256PrivateKey::generate(&mut drbg).expect("generate ok");
 
         assert_eq!(*sk.private_scalar().unwrap(), EXPECTED_D, "keygen d drift");
@@ -940,7 +1018,6 @@ mod tests {
         let sk = EcdsaP256PrivateKey::from_bytes(&mut drbg, &KAT_D).expect("from_bytes + PCT");
         assert_eq!(sk.public_key().unwrap(), KAT_PUBLIC_KEY);
 
-        // Sign something new via the DRBG-backed wrapper and verify.
         let sig = sk
             .sign_sha256(&mut drbg, b"probe-message")
             .expect("sign ok");
@@ -988,8 +1065,8 @@ mod tests {
         // inconsistent `(d, Q')` handle and run the PCT directly:
         // the sign-then-verify round-trip must fail because the
         // forged public key is not `d · G`. This is the IG 10.3.A
-        // fault-injection proof that the PCT actually tests what
-        // we claim it tests.
+        // fault-injection proof that the PCT tests what its
+        // documentation states.
         let _ = init_with_tests(&[KatEntry {
             name: "ecdsa-p256-sha256",
             run: self_test,
@@ -997,14 +1074,14 @@ mod tests {
         let mut drbg = pct_drbg(b"pct-tampered");
         let honest = EcdsaP256PrivateKey::generate(&mut drbg).expect("honest generate ok");
 
-        // Build a second, independent key pair whose public part
-        // we will graft onto the first scalar.
+        // A second, independent key pair whose public part is
+        // grafted onto the first scalar.
         let decoy = EcdsaP256PrivateKey::generate(&mut drbg).expect("decoy generate ok");
 
         // Forged handle: `honest`'s private scalar, `decoy`'s
-        // public key. Construction goes through the raw struct so
-        // we bypass the constructor PCT; we then run `run_pct`
-        // explicitly and require failure.
+        // public key. Construction goes through the raw struct to
+        // bypass the constructor PCT; `run_pct` then runs explicitly
+        // and must fail.
         let forged = EcdsaP256PrivateKey {
             d: *honest.private_scalar().unwrap(),
             q: decoy.public_key().unwrap(),

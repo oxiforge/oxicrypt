@@ -1,13 +1,10 @@
 //! P-384 ECDSA thin wrappers — FIPS 186-5, CNSA 1.0.
 //!
 //! These entry points delegate to the full P-384 ECDSA
-//! implementation in [`crate::p384_ecdsa`]. They exist so that
-//! callers that were written against the original stub API can
-//! migrate at their own pace; new code should use
+//! implementation in [`crate::p384_ecdsa`]; new code should use
 //! [`crate::p384_ecdsa`] directly.
 
-use oxicrypt_drbg::HmacDrbgSha256;
-use oxicrypt_module::Error;
+use oxicrypt_module::{Error, Rbg};
 
 use crate::p384_ecdsa;
 
@@ -47,15 +44,17 @@ pub fn verify(
     p384_ecdsa::verify(public_key, msg, signature)
 }
 
-/// Generate an ECDSA P-384 key pair using a DRBG-backed rejection
-/// sampler.
+/// Generate an ECDSA P-384 key pair using a rejection sampler over
+/// `drbg`, a random bit generator implementing [`Rbg`].
 ///
 /// Thin wrapper around [`p384_ecdsa::EcdsaP384PrivateKey::generate`].
 ///
 /// # Errors
 ///
-/// Returns an error when the DRBG fails or the pairwise
+/// Returns [`Error::RbgTooWeak`] before any draw when the random bit
+/// generator reports less than [`crate::p384_keygen::RBG_STRENGTH_BITS`],
+/// and an error when the random bit generator fails or the pairwise
 /// consistency test (IG 10.3.A) rejects the new key pair.
-pub fn keygen(drbg: &mut HmacDrbgSha256) -> Result<p384_ecdsa::EcdsaP384PrivateKey, Error> {
+pub fn keygen<R: Rbg>(drbg: &mut R) -> Result<p384_ecdsa::EcdsaP384PrivateKey, Error> {
     p384_ecdsa::EcdsaP384PrivateKey::generate(drbg)
 }

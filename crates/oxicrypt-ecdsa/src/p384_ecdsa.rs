@@ -22,9 +22,8 @@
     clippy::many_single_char_names
 )]
 
-use oxicrypt_drbg::HmacDrbgSha256;
 use oxicrypt_module::{
-    Error, SelfTestFailure, Service, require_allowed, require_operational,
+    Error, Rbg, SelfTestFailure, Service, require_allowed, require_operational,
     require_self_test_started,
 };
 use oxicrypt_sha::sha384::Sha384;
@@ -285,9 +284,19 @@ pub struct EcdsaP384PrivateKey {
 
 impl EcdsaP384PrivateKey {
     /// Import a private key from its 48-byte scalar representation,
-    /// derive the public key, and run the IG 10.3.A PCT.
-    pub fn from_bytes(
-        drbg: &mut HmacDrbgSha256,
+    /// derive the public key, and run the IG 10.3.A PCT, whose nonce
+    /// is drawn from `drbg`, a random bit generator implementing
+    /// [`Rbg`].
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::NotOperational`] if the module is not
+    /// operational, [`Error::RbgTooWeak`] before any draw if `drbg`
+    /// reports less than [`crate::p384_keygen::RBG_STRENGTH_BITS`],
+    /// [`Error::Rbg`] if it produces no output, or
+    /// [`Error::InvalidInput`] if `d` is out of range or the PCT fails.
+    pub fn from_bytes<R: Rbg>(
+        drbg: &mut R,
         d_bytes: &[u8; PRIVATE_KEY_LEN],
     ) -> Result<Self, Error> {
         require_operational()?;
@@ -295,17 +304,35 @@ impl EcdsaP384PrivateKey {
         Self::from_bytes_internal(drbg, d_bytes)
     }
 
-    /// Generate a fresh P-384 private key via FIPS 186-5 §A.2.2.
-    pub fn generate(drbg: &mut HmacDrbgSha256) -> Result<Self, Error> {
+    /// Generate a fresh P-384 private key via FIPS 186-5 §A.2.2 from
+    /// `drbg`, a random bit generator implementing [`Rbg`].
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::NotOperational`] if the module is not
+    /// operational, [`Error::RbgTooWeak`] before any draw if `drbg`
+    /// reports less than [`crate::p384_keygen::RBG_STRENGTH_BITS`],
+    /// [`Error::Rbg`] if it produces no output, or
+    /// [`Error::InvalidInput`] if the PCT fails.
+    pub fn generate<R: Rbg>(drbg: &mut R) -> Result<Self, Error> {
         require_operational()?;
         require_allowed(Service::EcdsaP384Keygen)?;
         Self::generate_internal(drbg)
     }
 
-    /// Sign `msg` with SHA-384, sampling a fresh nonce from `drbg`.
-    pub fn sign_sha384(
+    /// Sign `msg` with SHA-384, sampling a fresh nonce from `drbg`, a
+    /// random bit generator implementing [`Rbg`].
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::NotOperational`] if the module is not
+    /// operational, [`Error::RbgTooWeak`] before any draw if `drbg`
+    /// reports less than [`crate::p384_keygen::RBG_STRENGTH_BITS`],
+    /// [`Error::Rbg`] if it produces no output, or
+    /// [`Error::InvalidInput`] if it fails to produce a working `k`.
+    pub fn sign_sha384<R: Rbg>(
         &self,
-        drbg: &mut HmacDrbgSha256,
+        drbg: &mut R,
         msg: &[u8],
     ) -> Result<[u8; SIGNATURE_LEN], Error> {
         require_operational()?;
@@ -342,8 +369,8 @@ impl EcdsaP384PrivateKey {
 
     // -- internal helpers --
 
-    fn from_bytes_internal(
-        drbg: &mut HmacDrbgSha256,
+    fn from_bytes_internal<R: Rbg>(
+        drbg: &mut R,
         d_bytes: &[u8; PRIVATE_KEY_LEN],
     ) -> Result<Self, Error> {
         let pk = derive_public_key_internal(d_bytes)?;
@@ -352,14 +379,14 @@ impl EcdsaP384PrivateKey {
         Ok(handle)
     }
 
-    fn generate_internal(drbg: &mut HmacDrbgSha256) -> Result<Self, Error> {
+    fn generate_internal<R: Rbg>(drbg: &mut R) -> Result<Self, Error> {
         let (d, q) = generate_p384_internal(drbg)?;
         let handle = EcdsaP384PrivateKey { d, q };
         handle.run_pct(drbg)?;
         Ok(handle)
     }
 
-    fn run_pct(&self, drbg: &mut HmacDrbgSha256) -> Result<(), Error> {
+    fn run_pct<R: Rbg>(&self, drbg: &mut R) -> Result<(), Error> {
         for _ in 0..MAX_SIGN_RETRIES {
             let k = sample_scalar_internal(drbg)?;
             match sign_with_k_internal(&self.d, PCT_PROBE_MSG, &k) {
@@ -378,9 +405,9 @@ impl EcdsaP384PrivateKey {
         Err(Error::InvalidInput)
     }
 
-    fn sign_sha384_internal(
+    fn sign_sha384_internal<R: Rbg>(
         &self,
-        drbg: &mut HmacDrbgSha256,
+        drbg: &mut R,
         msg: &[u8],
     ) -> Result<[u8; SIGNATURE_LEN], Error> {
         for _ in 0..MAX_SIGN_RETRIES {
@@ -558,15 +585,9 @@ mod tests {
         assert!(verify(&KAT_PUBLIC_KEY, KAT_MSG, &KAT_SIGNATURE).expect("verify ok"));
     }
 
-    fn pct_drbg(personalization: &[u8]) -> HmacDrbgSha256 {
-        let mut drbg = HmacDrbgSha256::default();
-        drbg.instantiate(
-            b"oxicrypt-p384-entropy-input-0001",
-            b"oxicrypt-p384-nonce",
-            personalization,
-        )
-        .expect("drbg instantiates");
-        drbg
+    fn pct_drbg(personalization: &[u8]) -> oxicrypt_drbg::HmacDrbgSha256 {
+        oxicrypt_drbg::HmacDrbgSha256::instantiate_from_module(personalization)
+            .expect("drbg instantiates")
     }
 
     #[test]
@@ -580,5 +601,57 @@ mod tests {
         let msg = b"oxicrypt P-384: random-k sign and verify";
         let sig = sk.sign_sha384(&mut drbg, msg).expect("sign ok");
         assert!(verify(&sk.public_key().unwrap(), msg, &sig).expect("verify ok"));
+    }
+
+    /// An [`Rbg`] reporting a strength the caller chooses; `fill`
+    /// refuses, so a call that draws from it fails with [`Error::Rbg`].
+    struct ReportsStrength(u32);
+
+    impl Rbg for ReportsStrength {
+        fn fill(&mut self, _out: &mut [u8]) -> Result<(), oxicrypt_module::RbgError> {
+            Err(oxicrypt_module::RbgError::Uninstantiated)
+        }
+
+        fn strength_bits(&self) -> u32 {
+            self.0
+        }
+    }
+
+    #[test]
+    fn rbg_below_p384_strength_is_refused_before_drawing() {
+        let _ = init_with_tests(&[KatEntry {
+            name: "ecdsa-p384-sha384",
+            run: self_test,
+        }]);
+        let sk = EcdsaP384PrivateKey::generate(&mut pct_drbg(b"p384-strong")).expect("generate ok");
+        let drew = Error::Rbg(oxicrypt_module::RbgError::Uninstantiated);
+        for (bits, expected) in [(191, Error::RbgTooWeak), (192, drew)] {
+            assert_eq!(
+                EcdsaP384PrivateKey::generate(&mut ReportsStrength(bits)).err(),
+                Some(expected)
+            );
+            assert_eq!(
+                EcdsaP384PrivateKey::from_bytes(&mut ReportsStrength(bits), &KAT_D).err(),
+                Some(expected)
+            );
+            assert_eq!(
+                sk.sign_sha384(&mut ReportsStrength(bits), b"p384 refusal"),
+                Err(expected)
+            );
+        }
+    }
+
+    #[test]
+    fn rbg_at_256_bits_passes_the_p384_strength_check() {
+        let _ = init_with_tests(&[KatEntry {
+            name: "ecdsa-p384-sha384",
+            run: self_test,
+        }]);
+        let mut drbg = oxicrypt_drbg::CtrDrbgAes256::instantiate_from_module(b"p384-ctr256")
+            .expect("drbg instantiates");
+        assert_eq!(drbg.strength_bits(), 256);
+        let sk = EcdsaP384PrivateKey::generate(&mut drbg).expect("generate ok");
+        let sig = sk.sign_sha384(&mut drbg, b"p384 ctr256").expect("sign ok");
+        assert!(verify(&sk.public_key().unwrap(), b"p384 ctr256", &sig).expect("verify ok"));
     }
 }

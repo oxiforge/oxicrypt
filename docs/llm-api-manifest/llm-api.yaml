@@ -6581,13 +6581,13 @@ functions:
     module: oxicrypt-ecdsa
     description: Generate an ECDSA P-256 key pair with DRBG-backed rejection sampling (FIPS 186-5 §A.2.2) and a pairwise consistency test.
     signature: >-
-      pub fn generate(drbg: &mut HmacDrbgSha256)
+      pub fn generate<R: Rbg>(drbg: &mut R)
       -> Result<Self, Error>
     parameters:
       - name: drbg
-        type: "&mut HmacDrbgSha256"
+        type: "&mut R"
         direction: in-out
-        description: Instantiated HMAC-DRBG for keygen randomness; must already be instantiated with sufficient entropy.
+        description: Any random bit generator implementing oxicrypt_module::Rbg (R: Rbg), such as a module-seeded DRBG; it must already be instantiated with sufficient entropy.
     returns:
       type: "Result<EcdsaP256PrivateKey, Error>"
       description: New key handle with (d, Q) pair.
@@ -6596,6 +6596,8 @@ functions:
           condition: Module not initialized.
         - name: ConditionalTestFailed
           condition: Pairwise consistency test (sign-then-verify) failed.
+        - name: Rbg
+          condition: The generator produced no output.
     preconditions:
       - description: Module must be Operational.
       - description: DRBG must be instantiated.
@@ -6612,7 +6614,7 @@ functions:
     module: oxicrypt-ecdsa
     description: Sign a message with ECDSA P-256 and SHA-256.
     signature: >-
-      pub fn sign_sha256(&self, drbg: &mut HmacDrbgSha256, msg: &[u8])
+      pub fn sign_sha256<R: Rbg>(&self, drbg: &mut R, msg: &[u8])
       -> Result<[u8; 64], Error>
     parameters:
       - name: self
@@ -6620,9 +6622,9 @@ functions:
         direction: in
         description: Private key handle.
       - name: drbg
-        type: "&mut HmacDrbgSha256"
+        type: "&mut R"
         direction: in-out
-        description: Instantiated DRBG for per-signature k sampling.
+        description: Any random bit generator implementing oxicrypt_module::Rbg (R: Rbg), such as a module-seeded DRBG, used for per-signature k sampling.
       - name: msg
         type: "&[u8]"
         direction: in
@@ -6633,6 +6635,8 @@ functions:
       error_variants:
         - name: NotOperational
           condition: Module not initialized.
+        - name: Rbg
+          condition: The generator produced no output.
     preconditions:
       - description: Module must be Operational.
       - description: DRBG must be instantiated.
@@ -6823,13 +6827,13 @@ functions:
     module: oxicrypt-ecdh
     description: Generate a fresh ECDH P-256 key pair (d, Q) via the FIPS 186-5 §A.2.2 rejection sampler driven by the supplied DRBG, then run the IG 10.3.A pairwise consistency test before returning.
     signature: >-
-      pub fn generate_keypair_p256(drbg: &mut HmacDrbgSha256)
+      pub fn generate_keypair_p256<R: Rbg>(drbg: &mut R)
       -> Result<([u8; 32], [u8; 65]), Error>
     parameters:
       - name: drbg
-        type: "&mut HmacDrbgSha256"
+        type: "&mut R"
         direction: inout
-        description: Live, instantiated HMAC-DRBG-SHA-256 for scalar sampling; must be Operational and may be reused for subsequent calls.
+        description: Any random bit generator implementing oxicrypt_module::Rbg (R: Rbg), such as a module-seeded DRBG, used for scalar sampling; it may be reused for subsequent calls.
     returns:
       type: "Result<([u8; 32], [u8; 65]), Error>"
       description: "On success returns (d, Q): d the 32-byte private scalar in [1, n-1], Q the 65-byte SEC1 uncompressed public key of d*G."
@@ -6842,6 +6846,8 @@ functions:
           condition: >-
             DRBG fault, rejection-sampling exhaustion, or IG 10.3.A
             PCT mismatch. In practice only a broken DRBG.
+        - name: Rbg
+          condition: The generator produced no output.
     preconditions:
       - description: Module must be Operational.
       - description: DRBG handle must be live and instantiated.
@@ -6858,13 +6864,13 @@ functions:
     module: oxicrypt-ecdh
     description: Generate a fresh ECDH P-384 key pair via the FIPS 186-5 §A.2.2 rejection sampler, with the IG 10.3.A PCT against the RFC 5903 §8.2 responder keypair.
     signature: >-
-      pub fn generate_keypair_p384(drbg: &mut HmacDrbgSha256)
+      pub fn generate_keypair_p384<R: Rbg>(drbg: &mut R)
       -> Result<([u8; 48], [u8; 97]), Error>
     parameters:
       - name: drbg
-        type: "&mut HmacDrbgSha256"
+        type: "&mut R"
         direction: inout
-        description: Live, instantiated HMAC-DRBG-SHA-256.
+        description: Any random bit generator implementing oxicrypt_module::Rbg (R: Rbg), such as a module-seeded DRBG.
     returns:
       type: "Result<([u8; 48], [u8; 97]), Error>"
       description: "On success returns (d, Q): d the 48-byte private scalar in [1, n-1], Q the 97-byte SEC1 uncompressed public key of d*G."
@@ -6875,6 +6881,8 @@ functions:
           condition: ECDH-P-384 blocked by active profile.
         - name: InvalidInput
           condition: DRBG fault, sampling exhaustion, or PCT mismatch.
+        - name: Rbg
+          condition: The generator produced no output.
     preconditions:
       - description: Module must be Operational.
       - description: DRBG handle must be live and instantiated.
@@ -6948,13 +6956,13 @@ functions:
     module: oxicrypt-dh
     description: Generate a DH-3072 key pair for RFC 3526 Group 15; private key x sampled from HMAC-DRBG-SHA-256 by rejection sampling (x in [1, q-1]), public key y = 2^x mod p.
     signature: >-
-      pub fn generate_keypair_3072(drbg: &mut HmacDrbgSha256)
+      pub fn generate_keypair_3072<R: Rbg>(drbg: &mut R)
       -> Result<([u8; 384], [u8; 384]), Error>
     parameters:
       - name: drbg
-        type: "&mut HmacDrbgSha256"
+        type: "&mut R"
         direction: inout
-        description: Instantiated HMAC-DRBG-SHA-256; must have been instantiated with sufficient entropy before calling.
+        description: Any random bit generator implementing oxicrypt_module::Rbg (R: Rbg), such as a module-seeded DRBG; it must have been instantiated with sufficient entropy before calling.
     returns:
       type: "Result<([u8; 384], [u8; 384]), Error>"
       description: Tuple of (private_key, public_key), both 384-byte big-endian arrays.
@@ -6963,6 +6971,8 @@ functions:
           condition: Module not initialized.
         - name: InvalidInput
           condition: Keygen failed (DRBG exhaustion or repeated failures).
+        - name: Rbg
+          condition: The generator produced no output.
         - name: AlgorithmRestricted
           condition: DH-3072 blocked by active profile.
     preconditions:

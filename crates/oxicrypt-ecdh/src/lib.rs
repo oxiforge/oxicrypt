@@ -81,13 +81,12 @@
     clippy::many_single_char_names
 )]
 
-use oxicrypt_drbg::HmacDrbgSha256;
 use oxicrypt_ecdsa::p256_point::Point;
 use oxicrypt_ecdsa::p256_scalar::Scalar;
 use oxicrypt_ecdsa::p384_point::Point384;
 use oxicrypt_ecdsa::p384_scalar::Scalar384;
 use oxicrypt_module::{
-    Error, KatEntry, SelfTestFailure, Service, require_allowed, require_operational,
+    Error, KatEntry, Rbg, SelfTestFailure, Service, require_allowed, require_operational,
     require_self_test_started,
 };
 
@@ -97,6 +96,11 @@ pub const PRIVATE_KEY_LEN: usize = 32;
 pub const PUBLIC_KEY_LEN: usize = 65;
 /// Length of the raw ECDH shared secret `Z` in bytes.
 pub const SHARED_SECRET_LEN: usize = 32;
+/// Security strength, in bits, a random bit generator must report
+/// through [`Rbg::strength_bits`] before a P-256 key pair is generated
+/// from it: the strength SP 800-57 Part 1 Rev. 5 Table 2 assigns to ECC
+/// with `f` = 256.
+pub const RBG_STRENGTH_BITS: u32 = 128;
 
 // ------------------------------------------------------------------
 // Core primitive (no operational gate)
@@ -131,8 +135,8 @@ fn compute_shared_secret_p256_internal_unguarded(
 ) -> Option<[u8; SHARED_SECRET_LEN]> {
     // Caller private key must be a canonical non-zero scalar in
     // [1, n-1]. The ECDH primitive itself doesn't require d != 0,
-    // but Z = 0 * Q = O and we would immediately reject that below;
-    // failing here lets us return early with a clearer reason.
+    // but Z = 0 * Q = O would be rejected below anyway; failing here
+    // returns early with a clearer reason.
     let d = Scalar::from_bytes(d_bytes)?;
     if d.is_zero() == 1 {
         return None;
@@ -141,15 +145,15 @@ fn compute_shared_secret_p256_internal_unguarded(
     // Peer public key: full SP 800-56Ar3 §5.6.2.3.3 validation.
     let q = Point::from_sec1_uncompressed_validated(peer_pk)?;
 
-    // Z_point = d * Q. Our scalar-mul ladder is constant time in `d`.
+    // Z_point = d * Q. The scalar-mul ladder is constant time in `d`.
     let z_point = q.mul(&d);
 
     // SP 800-56Ar3 §5.7.1.2 step 2: if the result is the identity,
     // output "error". For P-256 (cofactor 1, prime order), this
-    // only happens when d ≡ 0 mod n, which we rejected above, or
-    // when Q has order dividing d — impossible on a prime-order
-    // curve with d in [1, n-1]. We still check it explicitly so
-    // the code is correct for any future curve that lands here.
+    // only happens when d ≡ 0 mod n, rejected above, or when Q has
+    // order dividing d — impossible on a prime-order curve with d in
+    // [1, n-1]. The explicit check keeps the code correct without
+    // relying on the curve having cofactor 1.
     let (zx, _zy) = z_point.to_affine()?;
     Some(zx.to_bytes())
 }
@@ -187,6 +191,11 @@ pub const P384_PRIVATE_KEY_LEN: usize = 48;
 pub const P384_PUBLIC_KEY_LEN: usize = 97;
 /// Length of the raw P-384 ECDH shared secret `Z` in bytes.
 pub const P384_SHARED_SECRET_LEN: usize = 48;
+/// Security strength, in bits, a random bit generator must report
+/// through [`Rbg::strength_bits`] before a P-384 key pair is generated
+/// from it: the strength SP 800-57 Part 1 Rev. 5 Table 2 assigns to ECC
+/// with `f` = 384.
+pub const P384_RBG_STRENGTH_BITS: u32 = 192;
 
 // ------------------------------------------------------------------
 // P-384 core primitive (no operational gate)
@@ -348,12 +357,12 @@ const KAT_P384_Z: [u8; 48] = [
 // public-key derivation to `oxicrypt_ecdsa::p{256,384}_keygen` —
 // the same FIPS 186-5 §A.2.2 rejection sampler that backs ECDSA
 // keygen on the matching curve, so a CST-lab reviewer audits one
-// constant-time sampler covering both families. Each `_internal`
+// sampler covering both families. Each `_internal`
 // then runs the IG 10.3.A pairwise consistency test as a
 // two-direction ECDH roundtrip against the RFC 5903 §8.1 / §8.2
 // responder keypair: a faulted scalar-mul during keygen produces
 // a `Q_new` that fails the equality `d_new · Q_KAT == d_KAT · Q_new`
-// and the function returns `None`. The gated public wrappers add
+// and the function returns `Error::InvalidInput`. The gated public wrappers add
 // the FIPS-module operational-state gate and profile-allow-list
 // gate before delegating to the `_internal` primitive.
 // ------------------------------------------------------------------
@@ -370,17 +379,24 @@ const KAT_P384_Z: [u8; 48] = [
 /// `Z_a = ECDH(d_new, Q_KAT_R)` and `Z_b = ECDH(d_KAT_R, Q_new)`
 /// must agree, otherwise keygen aborts.
 ///
-/// Returns [`Error::InvalidInput`] on DRBG failure, scalar-sampling exhaustion, or
-/// PCT mismatch. Skips the operational and profile gates so power-up
+/// `drbg` is a random bit generator implementing [`Rbg`].
+///
+/// Returns [`Error::RbgTooWeak`] before any draw when the random bit
+/// generator reports less than [`RBG_STRENGTH_BITS`], [`Error::Rbg`]
+/// when it produces no output, and [`Error::InvalidInput`] on
+/// scalar-sampling exhaustion or PCT mismatch. Skips the operational and profile gates so power-up
 /// callers and the gated public wrapper can both reach it.
 ///
 /// Returns [`Error::NotOperational`] when the module refuses the call,
 /// which it does in every state other than `SelfTest` and `Operational`.
 #[doc(hidden)]
-pub fn generate_keypair_p256_internal(
-    drbg: &mut HmacDrbgSha256,
+pub fn generate_keypair_p256_internal<R: Rbg>(
+    drbg: &mut R,
 ) -> Result<([u8; PRIVATE_KEY_LEN], [u8; PUBLIC_KEY_LEN]), Error> {
     require_self_test_started()?;
+    if drbg.strength_bits() < RBG_STRENGTH_BITS {
+        return Err(Error::RbgTooWeak);
+    }
     let (d, q) = oxicrypt_ecdsa::p256_keygen::generate_p256_internal(drbg)?;
     // IG 10.3.A pairwise consistency: a faulted scalar-mul during
     // keygen produces `Q ≠ d · G` and the two-direction ECDH
@@ -407,17 +423,21 @@ pub fn generate_keypair_p256_internal(
 }
 
 /// Generate a fresh ECDH P-256 key pair, gated on the FIPS module
-/// operational state and active algorithm profile.
+/// operational state and active algorithm profile. `drbg` is a random
+/// bit generator implementing [`Rbg`].
 ///
 /// # Errors
 ///
 /// Returns [`Error::NotOperational`] if the containing FIPS module
 /// has not finished its power-up self-tests,
 /// [`Error::AlgorithmRestricted`] if the active profile does not
-/// allow ECDH-P-256, or [`Error::InvalidInput`] if keygen fails
-/// (DRBG failure, sampling exhaustion, or IG 10.3.A PCT mismatch).
-pub fn generate_keypair_p256(
-    drbg: &mut HmacDrbgSha256,
+/// allow ECDH-P-256, [`Error::RbgTooWeak`] before any draw if the
+/// random bit generator reports less than [`RBG_STRENGTH_BITS`],
+/// [`Error::Rbg`] if the random bit generator produces no output, or
+/// [`Error::InvalidInput`] if keygen fails
+/// (sampling exhaustion or IG 10.3.A PCT mismatch).
+pub fn generate_keypair_p256<R: Rbg>(
+    drbg: &mut R,
 ) -> Result<([u8; PRIVATE_KEY_LEN], [u8; PUBLIC_KEY_LEN]), Error> {
     require_operational()?;
     require_allowed(Service::EcdhP256)?;
@@ -437,10 +457,13 @@ pub fn generate_keypair_p256(
 /// `Operational`, or in `SelfTest` on the thread running the power-up
 /// self-tests.
 #[doc(hidden)]
-pub fn generate_keypair_p384_internal(
-    drbg: &mut HmacDrbgSha256,
+pub fn generate_keypair_p384_internal<R: Rbg>(
+    drbg: &mut R,
 ) -> Result<([u8; P384_PRIVATE_KEY_LEN], [u8; P384_PUBLIC_KEY_LEN]), Error> {
     require_self_test_started()?;
+    if drbg.strength_bits() < P384_RBG_STRENGTH_BITS {
+        return Err(Error::RbgTooWeak);
+    }
     let (d, q) = oxicrypt_ecdsa::p384_keygen::generate_p384_internal(drbg)?;
     // See P-256 counterpart for the IG 10.3.A PCT scratch-zeroize
     // rationale; same pattern, 48-byte shared secrets.
@@ -460,9 +483,11 @@ pub fn generate_keypair_p384_internal(
 ///
 /// # Errors
 ///
-/// Same shape as [`generate_keypair_p256`].
-pub fn generate_keypair_p384(
-    drbg: &mut HmacDrbgSha256,
+/// Same shape as [`generate_keypair_p256`], with
+/// [`P384_RBG_STRENGTH_BITS`] as the strength the random bit generator
+/// must report.
+pub fn generate_keypair_p384<R: Rbg>(
+    drbg: &mut R,
 ) -> Result<([u8; P384_PRIVATE_KEY_LEN], [u8; P384_PUBLIC_KEY_LEN]), Error> {
     require_operational()?;
     require_allowed(Service::EcdhP384)?;
@@ -779,8 +804,8 @@ mod tests {
     // ── DRBG-driven keygen tests (P-256) ─────────────────────────
 
     fn instantiated_drbg() -> oxicrypt_drbg::HmacDrbgSha256 {
-        // The DRBG `instantiate` method gates on FIPS module
-        // operational state. Each test that builds a DRBG first
+        // A module-seeded DRBG requires the module to be
+        // operational. Each test that builds a DRBG first
         // ensures the module is past power-up self-test by
         // registering at least the ECDH KATs. `initialize_with_tests`
         // is idempotent so multiple test invocations are safe.
@@ -794,12 +819,8 @@ mod tests {
                 run: self_test_p384,
             },
         ]);
-        let mut drbg = oxicrypt_drbg::HmacDrbgSha256::new();
-        let entropy = [0x42u8; 32];
-        let nonce = [0x01u8; 16];
-        drbg.instantiate(&entropy, &nonce, b"ecdh-keygen-test")
-            .expect("DRBG instantiate");
-        drbg
+        oxicrypt_drbg::HmacDrbgSha256::instantiate_from_module(b"ecdh-keygen-test")
+            .expect("DRBG instantiate")
     }
 
     #[test]
@@ -882,6 +903,60 @@ mod tests {
         ]);
         let mut drbg = instantiated_drbg();
         let (d, q) = generate_keypair_p384(&mut drbg).expect("module operational");
+        assert_ne!(d, [0u8; P384_PRIVATE_KEY_LEN]);
+        assert_eq!(q[0], 0x04);
+    }
+
+    /// An [`Rbg`] reporting a strength the caller chooses; `fill`
+    /// refuses, so a call that draws from it fails with [`Error::Rbg`].
+    struct ReportsStrength(u32);
+
+    impl Rbg for ReportsStrength {
+        fn fill(&mut self, _out: &mut [u8]) -> Result<(), oxicrypt_module::RbgError> {
+            Err(oxicrypt_module::RbgError::Uninstantiated)
+        }
+
+        fn strength_bits(&self) -> u32 {
+            self.0
+        }
+    }
+
+    #[test]
+    fn keygen_refuses_an_rbg_below_each_curve_strength_before_drawing() {
+        let _ = instantiated_drbg();
+        let drew = Error::Rbg(oxicrypt_module::RbgError::Uninstantiated);
+        for (bits, expected) in [(127, Error::RbgTooWeak), (128, drew)] {
+            assert_eq!(
+                generate_keypair_p256(&mut ReportsStrength(bits)),
+                Err(expected)
+            );
+        }
+        for (bits, expected) in [(191, Error::RbgTooWeak), (192, drew)] {
+            assert_eq!(
+                generate_keypair_p384(&mut ReportsStrength(bits)),
+                Err(expected)
+            );
+        }
+    }
+
+    #[test]
+    fn keygen_p256_accepts_a_128_bit_rbg_that_p384_refuses() {
+        let _ = instantiated_drbg();
+        let mut weak = oxicrypt_drbg::CtrDrbgAes128::instantiate_from_module(b"ecdh-p384-weak")
+            .expect("DRBG instantiate");
+        assert_eq!(weak.strength_bits(), 128);
+        assert_eq!(generate_keypair_p384(&mut weak), Err(Error::RbgTooWeak));
+        let (d, _) = generate_keypair_p256(&mut weak).expect("128 bits meet P-256");
+        assert_ne!(d, [0u8; PRIVATE_KEY_LEN]);
+    }
+
+    #[test]
+    fn keygen_p384_accepts_a_256_bit_rbg() {
+        let _ = instantiated_drbg();
+        let mut strong = oxicrypt_drbg::CtrDrbgAes256::instantiate_from_module(b"ecdh-p384-ctr256")
+            .expect("DRBG instantiate");
+        assert_eq!(strong.strength_bits(), 256);
+        let (d, q) = generate_keypair_p384(&mut strong).expect("keygen");
         assert_ne!(d, [0u8; P384_PRIVATE_KEY_LEN]);
         assert_eq!(q[0], 0x04);
     }

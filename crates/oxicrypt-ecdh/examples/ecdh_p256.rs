@@ -19,8 +19,7 @@ fn main() {
     oxicrypt_module::initialize_with_tests(UNSIGNED_TEST_BINARY, &[]).expect("module init");
 
     // Both parties need ECDSA keypairs for the P-256 curve.
-    let mut drbg = oxicrypt_drbg::HmacDrbgSha256::default();
-    drbg.instantiate(&[0xEE; 32], &[0xFF; 16], b"ecdh-example")
+    let mut drbg = oxicrypt_drbg::HmacDrbgSha256::instantiate_from_module(b"ecdh-example")
         .expect("drbg instantiate");
 
     let alice = oxicrypt_ecdsa::EcdsaP256PrivateKey::generate(&mut drbg).expect("alice keygen");
@@ -35,8 +34,6 @@ fn main() {
         hex(&bob.public_key().expect("public key")[..24])
     );
 
-    // Each side computes the shared secret from their private scalar
-    // and the other party's public key.
     let secret_ab = oxicrypt_ecdh::compute_shared_secret_p256(
         alice.private_scalar().expect("private scalar"),
         &bob.public_key().expect("public key"),

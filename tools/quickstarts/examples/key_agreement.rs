@@ -5,8 +5,7 @@ use oxicrypt_module::initialize_with_tests;
 
 fn main() {
     initialize_with_tests(oxicrypt_integrity::KATS, oxicrypt_ecdh::KATS).unwrap();
-    let mut rng = HmacDrbgSha256::new();
-    rng.instantiate(&[0xABu8; 32], &[0xCDu8; 16], b"").unwrap();
+    let mut rng = HmacDrbgSha256::instantiate_from_module(b"").unwrap();
     // Each party keeps d and publishes Q.
     let (alice_d, alice_q) = generate_keypair_p256(&mut rng).unwrap();
     let (bob_d, bob_q) = generate_keypair_p256(&mut rng).unwrap();

@@ -10914,6 +10914,21 @@ mod kat_tests {
             "oxicrypt_test_vectors",
             "vector data that algorithm crates' KATs read; it implements no algorithm",
         ),
+        (
+            "oxicrypt_entropy",
+            "the SP 800-90B entropy source behind the DRBG seed path; its start-up health \
+             tests and conditioner known-answer test run when the seed path first starts the \
+             source (SP 800-90B section 4.3), a failure is a module failure, and its \
+             conditioning function's algorithm test is oxicrypt_sha's",
+        ),
+        (
+            "oxicrypt_timer",
+            "reads the CPU counter for the entropy source; it implements no algorithm",
+        ),
+        (
+            "oxicrypt_platform",
+            "the module's own platform calls for the seed path; it implements no algorithm",
+        ),
     ];
 
     /// Each algorithm crate's own `KATS` slice, keyed by the crate's path

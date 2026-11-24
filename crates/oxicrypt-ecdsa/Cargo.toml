@@ -21,6 +21,9 @@ oxicrypt-sha = { workspace = true }
 oxicrypt-drbg = { workspace = true }
 oxicrypt-zeroize = { workspace = true }
 
+[dev-dependencies]
+oxicrypt-drbg = { path = "../oxicrypt-drbg", features = ["fault-injection"] }
+
 [package.metadata.lama]
 # Registry discovery (LAMA SPEC.md, "Package registry discovery"). Must be a
 # per-crate table: cargo strips [workspace] when it packages a member, so a

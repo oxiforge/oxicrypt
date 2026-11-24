@@ -5,8 +5,7 @@ use oxicrypt_module::initialize_with_tests;
 
 fn main() {
     initialize_with_tests(oxicrypt_integrity::KATS, oxicrypt_eddsa::KATS).unwrap();
-    let mut rng = HmacDrbgSha256::new();
-    rng.instantiate(&[0xABu8; 32], &[0xCDu8; 16], b"").unwrap();
+    let mut rng = HmacDrbgSha256::instantiate_from_module(b"").unwrap();
     let signing_key = Ed25519PrivateKey::generate(&mut rng).unwrap();
     let signature = signing_key.sign(b"message to sign").unwrap();
     assert!(

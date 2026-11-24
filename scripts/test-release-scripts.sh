@@ -986,6 +986,31 @@ expect "device check: an x86_64 bundle passes" 0 "verdict ok: the tampered contr
     device_check x86 "$T/android/oxicrypt-ffi-v9.9.9-android-x86_64.tar.gz"
 unset ADB_ABI STUB_READELF_MACHINE
 
+# --- list-caller-entropy-sites.sh -------------------------------------------
+# A fixture crate with one caller-entropy call outside and one inside a
+# #[cfg(test)] module, whose body also holds a brace in a string literal.
+
+SITES="$(mktemp -d -p "$T")"
+mkdir -p "$SITES/fixture/src"
+printf '[package]\nname = "fixture"\n' > "$SITES/fixture/Cargo.toml"
+cat > "$SITES/fixture/src/lib.rs" <<'EOF'
+pub fn seed(drbg: &mut Drbg) {
+    drbg.instantiate(&[0; 32], &[0; 16], b"outside");
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn seeds() {
+        let _ = "}";
+        drbg.instantiate(&[1; 32], &[1; 16], b"inside");
+    }
+}
+EOF
+check "caller-entropy sites: lists a production call and skips a cfg(test) block" \
+    [ "$("$HERE/list-caller-entropy-sites.sh" "$SITES")" \
+        = 'fixture/src/lib.rs:2: drbg.instantiate(&[0; 32], &[0; 16], b"outside");' ]
+
 # --- an inherited GIT_DIR ----------------------------------------------------
 # Runs this suite once more the way a git hook would start it, with GIT_DIR
 # naming a sentinel repository, and requires the sentinel's refs and

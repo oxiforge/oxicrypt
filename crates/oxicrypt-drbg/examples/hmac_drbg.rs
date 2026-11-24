@@ -18,20 +18,15 @@ const UNSIGNED_TEST_BINARY: &[oxicrypt_module::KatEntry] = &[oxicrypt_module::Ka
 fn main() {
     oxicrypt_module::initialize_with_tests(UNSIGNED_TEST_BINARY, &[]).expect("module init");
 
-    // In production, entropy comes from the OS. For this example
-    // we use a fixed seed so the output is reproducible.
-    let entropy = [0xAA; 32];
-    let nonce = [0xBB; 16];
-
-    let mut drbg = oxicrypt_drbg::HmacDrbgSha256::default();
-    drbg.instantiate(&entropy, &nonce, b"example-personalization")
-        .expect("drbg instantiate - module gating failed");
+    // The module draws the entropy input and nonce from its own entropy
+    // source, so the output differs on every run.
+    let mut drbg =
+        oxicrypt_drbg::HmacDrbgSha256::instantiate_from_module(b"example-personalization")
+            .expect("drbg instantiate");
 
     let mut output = [0u8; 32];
     drbg.generate(None, &mut output).expect("drbg generate");
 
-    println!("Entropy: {}", hex(&entropy));
-    println!("Nonce:   {}", hex(&nonce));
     println!("Output:  {}", hex(&output));
 }
 

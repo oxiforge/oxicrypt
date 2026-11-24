@@ -68,9 +68,9 @@
 // exercise. `--guard-sweep scripts/fixtures/guard-sweep 12` must fail and
 // name all twelve.
 //
-// The baseline file lists items that were already undocumented when this check
-// was introduced. An item on it does not fail the check; a line that no longer
-// names an uncovered item does, so the list can only shrink.
+// The baseline file lists uncovered items the check tolerates. An item on it
+// does not fail the check; a line that no longer names an uncovered item does,
+// so the list can only shrink.
 
 import { existsSync, readdirSync, readFileSync, statSync } from "fs";
 import { basename, dirname, join } from "path";
@@ -899,7 +899,9 @@ function guardSweep(dir: string): [number, string[]] {
     if (def) {
       const src = codeOnly(readFileSync(def, "utf8"));
       const esc = metavar.replace(/\$/g, "\\$");
-      const m = new RegExp(`\\bpub\\s+fn\\s+${esc}\\s*\\(`).exec(src);
+      // An optional generic parameter list may sit between the name and
+      // the parameter list.
+      const m = new RegExp(`\\bpub\\s+fn\\s+${esc}\\s*(?:<[^>]*>)?\\s*\\(`).exec(src);
       if (m) {
         found = true;
         let i = src.indexOf("(", m.index);

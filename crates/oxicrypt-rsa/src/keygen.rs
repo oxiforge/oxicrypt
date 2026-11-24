@@ -1,7 +1,8 @@
 //! RSA-2048 key generation per FIPS 186-5 §A.1.1 / §B.3.1.
 //!
 //! Generates probable primes via:
-//!   1. Draw 128 random bytes from the caller-supplied HMAC_DRBG.
+//!   1. Draw 128 random bytes from the caller-supplied random bit
+//!      generator.
 //!   2. Force the top two bits and the bottom bit so the candidate is
 //!      odd and `2^1023 ≤ p < 2^1024` (IG D.G rejects candidates that
 //!      don't meet the full bit length — no "short" primes).
@@ -9,24 +10,29 @@
 //!      obvious composites before the expensive MR rounds.
 //!   4. Miller-Rabin with 5 rounds of random-witness testing per
 //!      FIPS 186-5 Table B.1 row (nlen = 2048, error probability
-//!      2^−100). Witnesses come from the same DRBG.
+//!      2^−100). Witnesses come from the same generator.
 //!   5. Confirm `gcd(p − 1, e) = 1` (FIPS 186-5 §A.1.1 step 5.5).
 //!
 //! After `p` and `q` are both generated, compute `n = p · q`,
-//! `λ(n) = lcm(p − 1, q − 1) = (p − 1)(q − 1) / gcd(p − 1, q − 1)`,
-//! and the private exponent `d = e^(−1) mod λ(n)` using a binary
-//! extended GCD. Return `(n, d)` — the existing
-//! [`crate::RsaPrivateKey2048::from_components`] pathway then runs
-//! the IG 10.3.A pairwise consistency test before the key is usable.
+//! `φ(n) = (p − 1)(q − 1)`, the private exponent `d = e^(−1) mod φ(n)`
+//! by a divide-once-then-u64 extended Euclidean step, and the CRT
+//! components `(dP, dQ, qInv)`. The result is a [`KeyMaterial`];
+//! [`crate::RsaPrivateKey2048::generate`] then runs the IG 10.3.A
+//! pairwise consistency test before the key is usable.
 //!
 //! # Non-constant-time note
 //!
-//! Primality testing on candidate `p` is *not* constant time: we
-//! return as soon as the sieve or an MR round fails. That is
+//! Primality testing on candidate `p` is *not* constant time: it
+//! returns as soon as the sieve or an MR round fails. That is
 //! acceptable here because the candidate has not yet been accepted —
 //! no attacker can correlate a rejection with any bit of a *final*
 //! key, and the final key is protected by the constant-time
 //! Montgomery ladder in [`crate::mont2048::MontCtx2048::pow_secret`].
+//! The derivation of `d`, `dP`, `dQ` and `qInv` from the accepted
+//! primes is also not constant time: the inverse runs over φ(n), the
+//! CRT reductions branch on the running remainder, and `qInv` uses a
+//! square-and-multiply with the exponent `p − 2`. Each site says so
+//! where it occurs.
 
 #![allow(
     clippy::indexing_slicing,
@@ -46,15 +52,14 @@
 use crate::bigint1024::{self, BYTES as BYTES1024, LIMBS as LIMBS1024, U1024};
 use crate::bigint2048::{LIMBS as LIMBS2048, U2048};
 use crate::mont1024::MontCtx1024;
-use oxicrypt_drbg::{DrbgError, HmacDrbgSha256};
-use oxicrypt_module::require_self_test_started;
+use oxicrypt_module::{Rbg, RbgError, require_self_test_started};
 
 /// Errors that can arise during key generation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum KeygenError {
-    /// The DRBG rejected a request — typically because the caller
-    /// asked for too many bytes or the DRBG wasn't instantiated.
-    Drbg(DrbgError),
+    /// The random bit generator produced no output; the [`RbgError`]
+    /// states why.
+    Rbg(RbgError),
     /// The public exponent was out of range or even. FIPS 186-5
     /// §A.1.1 requires `65537 ≤ e < 2^256` and `e` odd.
     InvalidExponent,
@@ -71,7 +76,7 @@ pub enum KeygenError {
 impl core::fmt::Display for KeygenError {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
-            Self::Drbg(e) => write!(f, "DRBG error during keygen: {e}"),
+            Self::Rbg(e) => write!(f, "random bit generator error during keygen: {e}"),
             Self::InvalidExponent => write!(
                 f,
                 "public exponent must be odd and in range 65537 <= e < 2^256 \
@@ -93,9 +98,9 @@ impl From<oxicrypt_module::Error> for KeygenError {
     }
 }
 
-impl From<DrbgError> for KeygenError {
-    fn from(e: DrbgError) -> KeygenError {
-        KeygenError::Drbg(e)
+impl From<RbgError> for KeygenError {
+    fn from(e: RbgError) -> KeygenError {
+        KeygenError::Rbg(e)
     }
 }
 
@@ -107,8 +112,6 @@ pub(crate) const MAX_CANDIDATE_ATTEMPTS: u32 = 20_000;
 
 /// Small odd primes < 2048, used by the trial-division sieve. This
 /// list rejects ~85 % of uniformly random odd candidates cheaply.
-/// Generated once by a separate tool; re-deriving from a Python
-/// sieve gives the same values.
 pub(crate) const SMALL_PRIMES: &[u16] = &[
     3, 5, 7, 11, 13, 17, 19, 23, 29, 31, 37, 41, 43, 47, 53, 59, 61, 67, 71, 73, 79, 83, 89, 97,
     101, 103, 107, 109, 113, 127, 131, 137, 139, 149, 151, 157, 163, 167, 173, 179, 181, 191, 193,
@@ -135,11 +138,11 @@ pub(crate) const SMALL_PRIMES: &[u16] = &[
 const MR_ROUNDS: u32 = 5;
 
 /// Run Miller-Rabin with `rounds` random witnesses against candidate
-/// `n`. Caller supplies the DRBG for witness sampling. Returns `true`
-/// on "probably prime", `false` on "definitely composite".
+/// `n`. Caller supplies the random bit generator for witness sampling.
+/// Returns `true` on "probably prime", `false` on "definitely composite".
 ///
 /// Precondition: `n` is odd and `n > 3`.
-fn miller_rabin(n: &U1024, rounds: u32, drbg: &mut HmacDrbgSha256) -> Result<bool, KeygenError> {
+fn miller_rabin<R: Rbg>(n: &U1024, rounds: u32, drbg: &mut R) -> Result<bool, KeygenError> {
     // Write n − 1 = 2^s · d.
     let (n_minus_1, _) = n.subtracting_u64(1);
     let mut d = n_minus_1;
@@ -155,7 +158,6 @@ fn miller_rabin(n: &U1024, rounds: u32, drbg: &mut HmacDrbgSha256) -> Result<boo
         None => return Ok(false),
     };
 
-    // n − 1 as a plain U1024 for the "x == n − 1" comparison.
     let n_minus_1_ct = n_minus_1;
     let one = {
         let mut l = [0u64; LIMBS1024];
@@ -164,18 +166,17 @@ fn miller_rabin(n: &U1024, rounds: u32, drbg: &mut HmacDrbgSha256) -> Result<boo
     };
 
     'witness: for _ in 0..rounds {
-        // Sample a uniform witness `a ∈ [2, n − 2]`. A random 1024-bit
-        // draw will almost always already be in range; if not we
-        // re-draw. The rejection rate is negligible (roughly
-        // 1 − (n−3)/2^1024 < 2^−1022).
+        // Sample a uniform witness `a ∈ [2, n − 2]`. An out-of-range
+        // 1024-bit draw is re-drawn; for a keygen candidate, whose top
+        // two bits are set so `n ≥ 3·2^1022`, a draw is rejected with
+        // probability of about 1/4 at most.
         let a = loop {
             let mut buf = [0u8; BYTES1024];
-            drbg.generate(None, &mut buf)?;
+            drbg.fill(&mut buf)?;
             let cand = U1024::from_be_bytes(&buf);
             // Need 2 ≤ a ≤ n − 2, i.e. a > 1 and a < n − 1.
             if cand.ct_lt(&n_minus_1_ct) == 1 {
-                // cand < n − 1. Also need cand > 1 (ct_lt with ONE inverted):
-                // equivalently: NOT (cand <= 1).
+                // cand < n − 1; also need cand > 1.
                 if cand != U1024::ZERO && cand != one {
                     break cand;
                 }
@@ -219,12 +220,13 @@ fn has_small_factor(p: &U1024) -> bool {
     false
 }
 
-/// Sample a 1024-bit candidate from the DRBG and canonicalize: force
-/// the top two bits set (so `p · q ≥ 2^2047`, giving a full 2048-bit
-/// modulus) and force the low bit set (so the candidate is odd).
-fn sample_candidate(drbg: &mut HmacDrbgSha256) -> Result<U1024, KeygenError> {
+/// Sample a 1024-bit candidate from the random bit generator and
+/// canonicalize: force the top two bits set (so `p · q ≥ 2^2047`,
+/// giving a full 2048-bit modulus) and force the low bit set (so the
+/// candidate is odd).
+fn sample_candidate<R: Rbg>(drbg: &mut R) -> Result<U1024, KeygenError> {
     let mut buf = [0u8; BYTES1024];
-    drbg.generate(None, &mut buf)?;
+    drbg.fill(&mut buf)?;
     // Top byte: set bits 7 and 6 so the top two bits of the 1024-bit
     // value are 1. This guarantees p ≥ 3·2^1022 so that p·q ≥ 9·2^2044
     // > 2^2047, ensuring the RSA modulus really is 2048 bits.
@@ -234,30 +236,24 @@ fn sample_candidate(drbg: &mut HmacDrbgSha256) -> Result<U1024, KeygenError> {
     Ok(U1024::from_be_bytes(&buf))
 }
 
-/// Generate a 1024-bit probable prime from the DRBG, rejecting any
-/// candidate `p` for which `gcd(p − 1, e) ≠ 1`. This is FIPS 186-5
-/// §A.1.1 steps 5.1–5.7 collapsed into a single loop for a 1024-bit
-/// factor of a 2048-bit RSA modulus.
-fn gen_probable_prime_1024(drbg: &mut HmacDrbgSha256, e: u64) -> Result<U1024, KeygenError> {
+/// Generate a 1024-bit probable prime from the random bit generator,
+/// rejecting any candidate `p` for which `gcd(p − 1, e) ≠ 1`. This is
+/// FIPS 186-5 §A.1.1 steps 5.1–5.7 collapsed into a single loop for a
+/// 1024-bit factor of a 2048-bit RSA modulus.
+fn gen_probable_prime_1024<R: Rbg>(drbg: &mut R, e: u64) -> Result<U1024, KeygenError> {
     for _ in 0..MAX_CANDIDATE_ATTEMPTS {
         let p = sample_candidate(drbg)?;
-        // Cheap sieve first.
         if has_small_factor(&p) {
             continue;
         }
         // FIPS 186-5 §A.1.1 step 5.5: gcd(p − 1, e) = 1.
-        // Since e is odd and < 2^64, compute (p − 1) mod e; if the
-        // result is 0, gcd shares e ≥ 3 and we reject. This is
-        // strictly less restrictive than gcd = 1 — for e = 65537
-        // (the only exponent the rest of the crate will call with in
-        // practice, since 65537 is prime) it is equivalent to gcd = 1.
-        // For a non-prime `e` we'd need a real gcd; we don't support
-        // non-prime e.
+        // For a prime `e` that holds iff `(p − 1) mod e ≠ 0`, which is
+        // the test applied here. A composite `e` would need a full gcd,
+        // so only a prime `e` is supported.
         let (p_minus_1, _) = p.subtracting_u64(1);
         if p_minus_1.rem_u64(e) == 0 {
             continue;
         }
-        // Miller-Rabin.
         if miller_rabin(&p, MR_ROUNDS, drbg)? {
             return Ok(p);
         }
@@ -278,8 +274,10 @@ fn mul_1024(a: &U1024, b: &U1024) -> U2048 {
 /// the case when the shift carried a bit out the top, since the
 /// pre-shift accumulator is always in `[0, m)`).
 ///
-/// Called once per keygen with public data (`d` mod `(p-1)` and
-/// `(q-1)`), so constant-time behavior is not required.
+/// Not constant time: the conditional subtract branches on the
+/// running remainder. Keygen calls it on secret inputs (`d` mod
+/// `p − 1` and `q − 1`); the CRT path calls it on the public input
+/// representative.
 pub(crate) fn u2048_mod_u1024(a: &U2048, m: &U1024) -> U1024 {
     debug_assert!(m.limbs[LIMBS1024 - 1] >> 63 == 1, "m must have top bit set");
     let mut acc = U1024::ZERO;
@@ -296,10 +294,10 @@ pub(crate) fn u2048_mod_u1024(a: &U2048, m: &U1024) -> U1024 {
         let a_bit = (a_limb >> (bit % 64)) & 1;
         new_limbs[0] |= a_bit;
         let shifted = U1024 { limbs: new_limbs };
-        // When carry_out == 1 we must subtract m: the real value is
+        // When carry_out == 1, m is subtracted: the real value is
         // `2^1024 + shifted`, which as a 1024-bit wrapping subtract
-        // yields the correct `shifted + 2^1024 - m`. Otherwise we
-        // subtract only if `shifted >= m`.
+        // yields the correct `shifted + 2^1024 - m`. Otherwise m is
+        // subtracted only if `shifted >= m`.
         let must_sub = carry_out == 1 || shifted.ct_lt(m) == 0;
         acc = if must_sub {
             shifted.subtracting(m).0
@@ -319,7 +317,7 @@ pub(crate) fn u2048_mod_u1024(a: &U2048, m: &U1024) -> U1024 {
 pub struct KeyMaterial {
     /// RSA-2048 modulus `n = p · q`.
     pub n: U2048,
-    /// Private exponent `d = e^(−1) mod λ(n)`.
+    /// Private exponent `d = e^(−1) mod φ(n)`.
     pub d: U2048,
     /// First prime factor, 1024 bits.
     pub p: U1024,
@@ -353,9 +351,9 @@ impl Drop for KeyMaterial {
     }
 }
 
-/// Generate fresh RSA-2048 key material using `drbg` for all
-/// randomness. `e` must be an odd prime in `[65537, 2^64)` — in
-/// practice this crate is only ever called with `e = 65537`.
+/// Generate fresh RSA-2048 key material using `drbg`, a random bit
+/// generator implementing [`Rbg`], for all randomness. `e` must be an
+/// odd prime in `[65537, 2^64)`.
 ///
 /// Skips the operational and profile gates; the approved service is
 /// [`crate::RsaPrivateKey2048::generate`].
@@ -365,11 +363,9 @@ impl Drop for KeyMaterial {
 /// Returns [`KeygenError::Module`] unless
 /// [`oxicrypt_module::require_self_test_started`] admits the call: in
 /// `Operational`, or in `SelfTest` on the thread running the power-up
-/// self-tests.
-pub fn generate_2048_internal(
-    drbg: &mut HmacDrbgSha256,
-    e: u64,
-) -> Result<KeyMaterial, KeygenError> {
+/// self-tests, and [`KeygenError::Rbg`] when the random bit generator
+/// produces no output.
+pub fn generate_2048_internal<R: Rbg>(drbg: &mut R, e: u64) -> Result<KeyMaterial, KeygenError> {
     require_self_test_started()?;
     if e < 65537 || e & 1 == 0 {
         return Err(KeygenError::InvalidExponent);
@@ -378,10 +374,9 @@ pub fn generate_2048_internal(
     let p = gen_probable_prime_1024(drbg, e)?;
     let q = loop {
         let q_try = gen_probable_prime_1024(drbg, e)?;
-        // FIPS 186-5 §A.1.1 step 5.4: |p − q| > 2^(nlen/2 − 100) =
-        // 2^412. Checking |p − q|'s high ~612 bits is harder than we
-        // need; we just require p ≠ q in the high half, which
-        // practically never fires but gives a safe hard check.
+        // FIPS 186-5 §A.1.1 step 2(d): |p − q| > 2^(nlen/2 − 100), which
+        // is 2^924 for a 2048-bit modulus. Only `p ≠ q` is checked here,
+        // not that bound.
         if q_try != p {
             break q_try;
         }
@@ -390,18 +385,16 @@ pub fn generate_2048_internal(
     // n = p · q as a 2048-bit product.
     let n = mul_1024(&p, &q);
 
-    // λ(n) = (p − 1)(q − 1) / gcd(p − 1, q − 1). For a valid RSA key
-    // `(p−1)` and `(q−1)` are both even but their only common factor
-    // beyond 2 is random, so we compute both even numbers, halve one
-    // of them, then use lcm = (p−1) * ((q−1)/2) / gcd((p−1), (q−1)/2).
-    // Easier: use φ(n) = (p−1)(q−1) directly — FIPS 186-5 §A.1.1
-    // permits either φ(n) or λ(n) to be the modulus for the inverse.
-    // We pick φ(n) because it avoids a second big-int gcd.
+    // φ(n) = (p−1)(q−1) is the modulus for the inverse. FIPS 186-5
+    // §A.1.1 step 3 requires d = e^(−1) mod LCM(p−1, q−1) with
+    // 2^(nlen/2) < d < LCM(p−1, q−1); the inverse modulo φ(n) is a valid
+    // RSA private exponent but is not guaranteed to meet that bound, and
+    // this code does not compute the LCM form.
     let (p_minus_1, _) = p.subtracting_u64(1);
     let (q_minus_1, _) = q.subtracting_u64(1);
     let phi_n = mul_1024(&p_minus_1, &q_minus_1);
 
-    // d = e^(−1) mod φ(n). `e` is u64-small so we use the
+    // d = e^(−1) mod φ(n). `e` fits in a u64, so this uses the
     // divide-once-then-finish-in-u64 extended Euclidean path in
     // [`modinv_small_e`]. φ(n) is even, which rules out a binary
     // EGCD over odd moduli.
@@ -412,11 +405,10 @@ pub fn generate_2048_internal(
     //   dQ = d mod (q − 1)
     //   qInv = q^(−1) mod p
     //
-    // (p − 1) and (q − 1) are even, so we reduce `d` directly rather
-    // than trying to invert `e` mod an even modulus. `qInv` uses
-    // `modinv_odd` against `p` (which is an odd prime). `q` may be
-    // greater than `p`; reduce it first with at most one subtraction
-    // since both live in `[2^1023, 2^1024)`.
+    // (p − 1) and (q − 1) are even, so `d` is reduced directly rather
+    // than `e` inverted mod an even modulus. `q` may be greater than
+    // `p`; it is reduced first with at most one subtraction since both
+    // live in `[2^1023, 2^1024)`.
     let dp = u2048_mod_u1024(&d, &p_minus_1);
     let dq = u2048_mod_u1024(&d, &q_minus_1);
 
@@ -426,13 +418,11 @@ pub fn generate_2048_internal(
         q.subtracting(&p).0
     };
     // Compute q^(−1) mod p via Fermat's little theorem: for prime p,
-    // `q^(p − 2) ≡ q^(−1) (mod p)`. We use this in preference to the
-    // binary EGCD in [`bigint1024::modinv_odd`] because that routine's
-    // intermediate coefficients can exceed `m` for top-bit-set moduli
-    // (RSA primes are 1024-bit with bit 1023 set), which the original
-    // EGCD bound does not account for. Exponentiation via
-    // [`MontCtx1024::pow_public_u1024`] is both correct and already
-    // covered by existing mont1024 tests.
+    // `q^(p − 2) ≡ q^(−1) (mod p)`. The binary EGCD in
+    // [`bigint1024::modinv_odd`] is not used because its intermediate
+    // coefficients can exceed `m` for top-bit-set moduli such as RSA
+    // primes. [`MontCtx1024::pow_public_u1024`] is not constant time in
+    // its exponent, and here the exponent `p − 2` is secret.
     let ctx_p_for_inv = MontCtx1024::new(p).ok_or(KeygenError::InvalidExponent)?;
     let (p_minus_2, _) = p.subtracting_u64(2);
     let qinv = ctx_p_for_inv.pow_public_u1024(&q_mod_p, &p_minus_2);
@@ -454,12 +444,12 @@ pub fn generate_2048_internal(
 // Computes `e^(−1) mod m`. The strategy exploits the fact that `e`
 // fits in a u64: after one big-int division `(q, r) = divmod(m, e)`
 // the remainder `r < e < 2^64` is small, and the whole rest of the
-// Euclidean chain runs in i128 arithmetic. We back-substitute once
-// at the end to recover the coefficient of `e` in a Bezout identity
+// Euclidean chain runs in i128 arithmetic. One back-substitution at
+// the end recovers the coefficient of `e` in a Bezout identity
 // `d · e + k · m = 1`.
 //
-// This path is exercised once per keygen on public data (`e` and
-// `φ(n)`) so it does not need to be constant time.
+// Not constant time. Keygen calls it once with `m = φ(n)`, which is
+// secret.
 
 fn modinv_small_e(e: u64, m: &U2048) -> Option<U2048> {
     if e == 0 || m.is_zero() == 1 {
@@ -507,7 +497,7 @@ fn modinv_small_e(e: u64, m: &U2048) -> Option<U2048> {
     //
     // |old_s|, |old_t| < e < 2^64, and q0 < m/e < 2^2048, so
     // old_t·q0 < e · m/e = m < 2^2048 in magnitude. Everything fits
-    // in U2048, we just have to handle signs.
+    // in U2048 once the signs are handled.
     //
     // Compute absolute-value product (|old_t| · q0) and track the
     // final sign manually.
@@ -528,10 +518,10 @@ fn modinv_small_e(e: u64, m: &U2048) -> Option<U2048> {
 
     // Compute (old_s - old_t * q0) reduced into [0, m).
     //
-    // Case A: old_t ≥ 0 ⇒ we subtract tq from old_s, potentially
+    // Case A: old_t ≥ 0 ⇒ subtract tq from old_s, potentially
     // borrowing copies of m.
     //   result = (old_s − tq) mod m.
-    // Case B: old_t < 0 ⇒ we add tq to old_s:
+    // Case B: old_t < 0 ⇒ add tq to old_s:
     //   result = (old_s + tq) mod m.
     //
     // And old_s itself can be negative; absorb its sign as a final
@@ -553,40 +543,8 @@ fn modinv_small_e(e: u64, m: &U2048) -> Option<U2048> {
         diff
     };
 
-    // Reduce `step` into [0, m). `step` is a signed value in the
-    // range (−m, m), represented as U2048. Add m until the signed
-    // interpretation is ≥ 0, then reduce mod m by at most one more
-    // subtraction.
-    //
-    // The sign of `step` can be recovered by comparing against m:
-    // if step < m (unsigned) OR step ≥ (−m as u2048) = 2^2048 − m
-    // then the signed value is in the canonical range.
-    //
-    // Easier: add m twice, then reduce mod m via ct_sub_if_ge applied
-    // up to two times. The result is guaranteed < 2·m because
-    // |original signed value| < m, so after adding m we have a value
-    // in (0, 2·m), and after subtracting m at most once more we land
-    // in [0, m).
-    //
-    // But if the original was already positive and small, adding m
-    // twice and subtracting twice still lands in [0, m). So the
-    // blanket "add m twice then reduce twice" works in all cases —
-    // with the one caveat that `step + m + m` must not overflow the
-    // U2048 width. Since |step| < m < 2^2048 and 3·m ≤ 3·2^2048, this
-    // could overflow. We instead handle it in two halves:
-    //   step' = step + m   (wrapping)
-    //   step' now represents (step + m) mod 2^2048.
-    //   If the original `step` was interpreted as negative, step' is
-    //   the true answer in [0, m] (modulo one reduction).
-    //   If the original `step` was positive, step' = step + m mod
-    //   2^2048 which is step + m (no overflow because both < 2^2048
-    //   and their sum could overflow only if 2·m > 2^2048).
-    //
-    // Simpler, more robust: treat `step` as a signed U2048 value and
-    // reduce by inspecting the top bit AFTER the add/sub.
-
-    // At this point, `step` is a two's-complement U2048 in (−m, m).
-    // We reduce into [0, m):
+    // `step` is a two's-complement U2048 in (−m, m). It is reduced
+    // into [0, m):
     //   - If step's signed value is < 0, add m.
     //   - Then, if the result is ≥ m, subtract m.
     let is_negative = is_u2048_negative(&step);
@@ -651,13 +609,8 @@ fn is_u2048_negative(x: &U2048) -> bool {
     (x.limbs[LIMBS2048 - 1] >> 63) & 1 == 1
 }
 
-// --------------------------------------------------------------------
-// U1024 helpers that keygen needs but bigint1024 didn't expose.
-
-// (None currently; both `subtracting_u64` and `is_zero` exist.)
-
-// Keep the unused-import linter happy by referencing bigint1024 module
-// even though we only use its types.
+// Keeps the unused-import lint quiet by referencing the bigint1024
+// module, of which only the types are used.
 #[allow(dead_code)]
 const _: () = {
     let _ = bigint1024::LIMBS;
@@ -667,6 +620,7 @@ const _: () = {
 #[allow(clippy::unwrap_used, clippy::panic, clippy::expect_used)]
 mod tests {
     use super::*;
+    use oxicrypt_drbg::HmacDrbgSha256;
 
     /// Stands in for the pre-operational integrity test.
     ///
@@ -684,19 +638,16 @@ mod tests {
         oxicrypt_module::initialize_with_tests(UNSIGNED_TEST_BINARY, tests)
     }
 
-    fn make_drbg(seed: &[u8]) -> HmacDrbgSha256 {
-        // Bring the module to Operational so the gated
-        // `instantiate()` (and any gated key construction it
+    fn make_drbg(personalization: &[u8]) -> HmacDrbgSha256 {
+        // Bring the module to Operational so the module-seeded
+        // instantiate (and any gated key construction it
         // triggers) succeeds.
         use oxicrypt_module::KatEntry;
         let _ = init_with_tests(&[KatEntry {
             name: "rsa-keygen-test-noop",
             run: || Ok(()),
         }]);
-        let mut d = HmacDrbgSha256::default();
-        d.instantiate(seed, b"oxicrypt-rsa-keygen-test", b"")
-            .unwrap();
-        d
+        HmacDrbgSha256::instantiate_from_module(personalization).unwrap()
     }
 
     #[test]
@@ -712,9 +663,8 @@ mod tests {
     #[test]
     fn small_primes_does_not_panic_on_large_candidate() {
         crate::test_support::start_module();
-        // Run `has_small_factor` on a large odd 1024-bit number to
-        // make sure we don't panic on the full operand width. The
-        // specific number is 2^1024 − 105.
+        // `has_small_factor` on a large odd 1024-bit number must not
+        // panic on the full operand width. The number is 2^1024 − 105.
         let mut limbs = [0u64; LIMBS1024];
         limbs.fill(!0u64);
         limbs[0] = !0u64 ^ 0x68;
@@ -725,10 +675,9 @@ mod tests {
     #[test]
     fn miller_rabin_does_not_panic_on_synthetic_input() {
         crate::test_support::start_module();
-        // Exercise the MR control flow on a synthetic 1024-bit odd
-        // value that we know is composite. We don't care about the
-        // accept/reject result — the real end-to-end correctness
-        // check is `generate_2048_smoke` below.
+        // Exercises the MR control flow on a synthetic composite
+        // 1024-bit odd value. The accept/reject result is not checked;
+        // end-to-end correctness is `generate_2048_smoke`'s job.
         let mut limbs = [0u64; LIMBS1024];
         limbs[0] = 7;
         limbs[LIMBS1024 - 1] = 1 << 63;
@@ -738,9 +687,8 @@ mod tests {
     }
 
     // A full keygen is very slow in debug (can be 10+ seconds because
-    // of the O(n^2) CIOS + O(1024) MR exponentiations). We still run
-    // a single deterministic keygen in tests so the path is exercised
-    // end-to-end.
+    // of the O(n^2) CIOS + O(1024) MR exponentiations). One keygen
+    // still runs in tests so the path is exercised end-to-end.
     #[test]
     fn generate_2048_smoke() {
         // PCT inside from_components gates on the module being
@@ -753,16 +701,11 @@ mod tests {
         }]);
         let mut drbg = make_drbg(b"oxicrypt-rsa-keygen-smoke-entropy-0001");
         let km = generate_2048_internal(&mut drbg, 65537).expect("keygen failed");
-        // n must have its top bit set (full 2048 bits).
         assert_ne!(km.n.limbs[LIMBS2048 - 1] >> 63, 0, "n is not 2048-bit");
-        // d must be less than n.
         assert_eq!(km.d.ct_lt(&km.n), 1, "d ≥ n");
 
-        // Sanity: e · d ≡ 1 (mod something divides φ(n)). We only
-        // know φ(n) implicitly, but we can check via the pairwise
-        // consistency test at the crate level (from_components). So
-        // just hand off to from_components — if it accepts, the key
-        // is self-consistent.
+        // `from_components` runs the pairwise consistency test; its
+        // acceptance shows the key is self-consistent.
         let n_bytes = km.n.to_be_bytes();
         let d_bytes = km.d.to_be_bytes();
         let key = crate::RsaPrivateKey2048::from_components(&n_bytes, 65537, &d_bytes);
@@ -841,7 +784,6 @@ mod tests {
         assert_eq!(km.n.to_be_bytes(), EXPECTED_N, "keygen n drift");
         assert_eq!(km.d.to_be_bytes(), EXPECTED_D, "keygen d drift");
 
-        // And confirm the pinned key survives the PCT.
         let key =
             crate::RsaPrivateKey2048::from_components(&EXPECTED_N, 65537, &EXPECTED_D).unwrap();
         let _ = key;
