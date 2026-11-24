@@ -101,8 +101,8 @@ jobs:
   #
   # `slice` rather than `hash`, and NOT `count` — which nextest deprecates as
   # "neither the even nature of sliced partitioning nor the stability of hashed
-  # sharding". Slicing round-robins the test list, which distributes the ten
-  # tests above about as evenly as anything can without being load-aware; hashed
+  # sharding". Slicing round-robins the test list, which distributes the slow
+  # tests about as evenly as anything can without being load-aware; hashed
   # sharding is stable when tests are added but balances worse, and balance is
   # what is being bought here. A shard is floored by the single longest test in
   # it, so raising the shard count past four buys progressively less.
@@ -124,7 +124,7 @@ jobs:
       # parallelism workspace-wide. nextest skips doctests, so the
       # separate doctests job below keeps doctest coverage identical.
       - uses: taiki-e/install-action@nextest
-      # SP 800-90B estimator parity IS validated here (#153). The EA v1.1.8
+      # SP 800-90B estimator parity is validated here. The EA v1.1.8
       # reference datasets are the 11 `.bin` files tracked in the public NIST
       # repository, so provisioning them is a checkout rather than a secret or a
       # build: no C++ toolchain is involved, because the reference VALUES are
@@ -263,7 +263,11 @@ jobs:
 
   # Doctests are not partitioned: nextest does not run them at all, so they need
   # their own job rather than a fifth copy inside each shard. They need neither
-  # the EA datasets nor the policy flag — no doctest reads either.
+  # the EA datasets nor the policy flag — no doctest reads either. Each package
+  # runs on its own so a `compile_fail` doctest resolves features for that
+  # package alone: a workspace-wide run unifies features across packages, and a
+  # doctest that must fail to compile can then build when another package
+  # enables a feature it relies on being absent.
   doctests:
     name: cargo test --doc
     runs-on: ubuntu-latest
@@ -272,10 +276,23 @@ jobs:
       - name: Install stable toolchain
         run: rustup toolchain install stable --profile minimal
       - uses: Swatinem/rust-cache@v2
-      - run: cargo test --workspace --doc
+      - name: Doctests, one package at a time
+        run: |
+          set -euo pipefail
+          # Only packages with a library target carry doctests; a cdylib-only
+          # or bin-only package makes `cargo test --doc` an error.
+          pkgs="$(cargo metadata --no-deps --format-version 1 \
+            | jq -r '.packages[] | select(any(.targets[]; .kind | index("lib") or index("rlib"))) | .name')"
+          if [ -z "$pkgs" ]; then
+            echo "doctests: cargo metadata listed no library package" >&2
+            exit 1
+          fi
+          for pkg in $pkgs; do
+            cargo test -p "$pkg" --doc
+          done
       # The gate's own warning goes to stderr, which nextest discards on a
       # passing test — so without this the caveat would be invisible in every
-      # green run, which is the failure mode #137 exists to kill. It lives here
+      # green run, which is the failure mode the gate exists to prevent. It lives here
       # rather than in the shards so it is recorded once per run, not four times.
       - name: Record the coverage caveat
         if: always()
@@ -358,6 +375,7 @@ jobs:
       - name: Install stable toolchain
         run: rustup toolchain install stable --profile minimal
       - uses: Swatinem/rust-cache@v2
+      - uses: taiki-e/install-action@nextest
       # A throwaway key pair for this job alone, kept outside the checkout
       # and never committed. The library is built with its verifying key
       # embedded and the artifacts are signed with its signing key.
@@ -379,6 +397,30 @@ jobs:
       - name: Refusal test against unsigned artifacts
         if: ${{ !cancelled() && steps.build.outcome == 'success' }}
         run: make -C crates/oxicrypt-ffi/tests/c-integration SIGNING_KEY="$INTEGRITY_SIGNING_KEY" test-unsigned
+      # The shipped shape is still exercised by the plain test-cdylib step.
+      - name: C tests against the fault-injection library
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        run: make -C crates/oxicrypt-ffi/tests/c-integration SIGNING_KEY="$INTEGRITY_SIGNING_KEY" test-fault
+      # The Rust tests behind the same feature: the header-against-exports
+      # check, the DRBG handle wipe on free and the allocation-failure code.
+      - name: cargo nextest run -p oxicrypt-ffi --features fault-injection
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        run: cargo nextest run -p oxicrypt-ffi --features fault-injection
+      # The DRBG crate's seed-path tests, including the integration test
+      # binaries that require the feature, built with it enabled on this
+      # crate directly rather than through another crate's features.
+      - name: cargo nextest run -p oxicrypt-drbg --features fault-injection
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        run: cargo nextest run -p oxicrypt-drbg --features fault-injection
+        env:
+          # The seed-table test reads the Security Policy when it is present;
+          # the runner has no copy, as for the workspace job above.
+          OXICRYPT_SECURITY_POLICY_OPTIONAL: "1"
+          # The C fault tests in this job pass only on the assessed seed path
+          # (they expect the on-demand failure code and the poisoned-child
+          # exit), so the seed-path lifecycle test fails here instead of
+          # skipping when the timer check selects the other path.
+          OXI_REQUIRE_ASSESSED_PATH: "1"
       # Requires the unsigned copy refused (integrity status 3), the signed copy operational (1), and a copy with one byte flipped inside the signed region refused (2).
       - name: Unsigned, signed and tampered library through oxi_init
         if: ${{ !cancelled() && steps.build.outcome == 'success' }}
@@ -389,6 +431,19 @@ jobs:
             target/release/c-integration/unsigned/liboxicrypt_ffi.so \
             target/release/c-integration/signed/liboxicrypt_ffi.so \
             target/release/oxicrypt-integrity-sign
+
+  # The lock-protected static cell behind the DRBG seed path is checked for
+  # undefined behaviour under Miri; the tests build the cell with a reduced
+  # spin bound.
+  miri:
+    name: "Miri: SpinCell soundness"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install nightly toolchain with Miri
+        run: rustup toolchain install nightly --profile minimal --component miri
+      - run: cargo +nightly miri setup
+      - run: cargo +nightly miri test -p oxicrypt-platform --features fault-injection --lib spincell_
 
   # The release-build guard, on a second machine.
   #
@@ -404,8 +459,7 @@ jobs:
   #
   # The bar is deliberately near the floor: `min_distinct_deltas` is 4, with a
   # hard floor of 4 that config cannot lower, so this fails on a COLLAPSE rather
-  # than on a merely coarse clock. A virtualized counter clears it — that was
-  # measured before this job was added.
+  # than on a merely coarse clock. A virtualized counter clears it.
   #
   # Known conflation, recorded rather than papered over: a host whose timer is
   # judged inadequate panics through the same arm as a genuine collapse, so an
@@ -431,7 +485,7 @@ jobs:
           echo "$guard_out" | grep -Eq "test result: ok\. [1-9][0-9]* passed" \
             || { echo "release_guard matched no passing tests" >&2; exit 1; }
 
-  # LAMA manifest conformance (#175), with the guard sweep. The pre-push
+  # LAMA manifest conformance, with the guard sweep. The pre-push
   # hook runs the same script locally, but skips it when bun is absent and
   # no manifest changed, so this job, which runs on every pull request and
   # every push to main, is the gate of record for the guard sweep.

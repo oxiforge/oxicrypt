@@ -11,6 +11,8 @@ needs libdl.so
 
 # The module's integrity test and image reader: locating the module's own
 # image and reading it back from memory.
+# The DRBG seed path is a second user of getpid and syscall: getrandom goes
+# through syscall, and the process id is recorded beside the seed.
 dladdr@LIBC
 getauxval@LIBC
 getpid@LIBC
@@ -33,6 +35,7 @@ fprintf@LIBC
 fwrite@LIBC
 
 # The Rust standard library.
+# The errno read is also how the DRBG seed path sees a failed getrandom.
 __errno@LIBC
 calloc@LIBC
 close@LIBC

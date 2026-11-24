@@ -6,7 +6,7 @@
 #
 #   1. Adoption. A C shop migrating off an existing cryptographic module links
 #      a `.a` and includes a header. Requiring them to install a Rust toolchain
-#      and build a 35-crate workspace first is a barrier unrelated to the work
+#      and build the whole workspace first is a barrier unrelated to the work
 #      they are doing.
 #
 #   2. CMVP validates a BUILD, not source. A user who compiles the module
@@ -529,6 +529,30 @@ jobs:
           mkdir -p unsigned
           cp "$OUT/${{ matrix.cdylib }}" unsigned/
           if [ -n '${{ matrix.cli }}' ]; then cp "$OUT/${{ matrix.cli }}" unsigned/; fi
+
+      # The test drives both seed-source implementations through the test seam
+      # on a target the environment table does not list. `cargo test` exits 0
+      # when its name filter matches no test, so the step counts the matches
+      # first and fails unless each of the two seed-source tests is listed
+      # exactly once.
+      - name: "Seed path: both seed sources run on this target"
+        if: matrix.format == 'macho' || matrix.format == 'pe'
+        shell: bash
+        run: |
+          set -euo pipefail
+          filter=seed_source_
+          listed="$(cargo test -p oxicrypt-drbg --lib --target '${{ matrix.target }}' "$filter" -- --list)"
+          listed="$(printf '%s\n' "$listed" | tr -d '\r')"
+          echo "tests matching $filter: $(printf '%s\n' "$listed" | grep -c ': test$' || true)"
+          for name in seed_source_assessed_jitter_fills seed_source_operating_system_fills; do
+            count="$(printf '%s\n' "$listed" | grep -cE "(^|::)$name: test\$" || true)"
+            echo "$name: $count"
+            if [ "$count" -ne 1 ]; then
+              echo "::error::the filter $filter lists $name $count times, not once"
+              exit 1
+            fi
+          done
+          cargo test -p oxicrypt-drbg --lib --target '${{ matrix.target }}' "$filter"
 
       - name: Assert the link — chained fixups and floor (Mach-O), 16 KiB pages (Android)
         if: matrix.format == 'macho' || matrix.format == 'android'

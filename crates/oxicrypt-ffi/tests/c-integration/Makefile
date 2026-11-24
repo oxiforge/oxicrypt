@@ -7,7 +7,10 @@
 #   make test-unsigned  — run the refusal test against an unsigned copy of the
 #                         cdylib and an unsigned static executable, and check
 #                         that it fails against the signed copy
-#   make all            — all three
+#   make test-fault     — build the cdylib with the fault-injection feature
+#                         into $(CARGO_TARGET_DIR)/fault, sign a copy, and run
+#                         the tests that simulate failures against it
+#   make all            — all four
 #   make clean          — remove everything these targets built
 #
 # Prerequisites: a key pair, and the libraries built with its public half
@@ -29,8 +32,12 @@
 # library it is each test executable, because the archive is linked into
 # it. The targets below sign copies under $(OUT_DIR) and never modify the
 # cargo outputs in place.
+#
+# test-fault builds its own library with the public half of the same key,
+# $(VERIFY_KEY), into a separate target directory, so the release build
+# above is untouched. The fault-injection library exports the oxi_test_*
+# functions of include/oxicrypt-test.h; no release artifact contains them.
 
-# Workspace target dir — assume default; override via env if needed.
 CARGO_TARGET_DIR ?= $(shell cd ../../../.. && pwd)/target
 LIB_DIR := $(CARGO_TARGET_DIR)/release
 OUT_DIR := $(LIB_DIR)/c-integration
@@ -59,6 +66,24 @@ TESTS := test_init test_aes_gcm test_aes_modes test_handles \
 # Passes only against an artifact that was NOT signed.
 REFUSAL_TEST := test_integrity_unsigned
 
+# Run against the fault-injection library only.
+FAULT_TESTS := test_oxi_drbg_handle test_drbg_buffer_contract \
+               test_typed_handle_fork_refusal_ecdsa test_typed_handle_fork_refusal_ecdh \
+               test_typed_handle_fork_refusal_rsa test_typed_handle_fork_refusal_dh \
+               test_drbg_free_zeroizes test_new_rbg_alloc_failure \
+               test_output_inhibited_after_failure \
+               test_typed_from_module_replace test_typed_uninstantiated_codes \
+               test_inherited_handle_reinstantiate test_drbg_fork_two_threads \
+               test_entropy_on_demand_codes test_drbg_generate_additional_bounds
+# Must reach the output check through the test hold, never through a delay.
+HANDSHAKE_TEST := test_output_inhibited_after_failure
+# Prints enumerated=<n>, compared with the DRBG functions oxicrypt.h declares.
+CONTRACT_TEST := test_drbg_buffer_contract
+DRBG_SYMBOL_PATTERN := '^int oxi_[a-z0-9_]*drbg[a-z0-9_]*\('
+FAULT_LIB_DIR := $(CARGO_TARGET_DIR)/fault/release
+FAULT_SO := $(OUT_DIR)/fault/signed/liboxicrypt_ffi.so
+FAULT_BINS := $(addprefix $(OUT_DIR)/fault/bin/,$(FAULT_TESTS))
+
 # The dynamically linked tests ask the loader for the library's SONAME,
 # liboxicrypt_ffi.so.<ABI>. Each copy is made under that name, read from the
 # built library when the copy is made, with the plain name a link to it; a
@@ -71,7 +96,7 @@ CDYLIB_BINS := $(addprefix $(OUT_DIR)/cdylib/,$(TESTS) $(REFUSAL_TEST))
 STATICLIB_BINS := $(addprefix $(OUT_DIR)/staticlib/,$(TESTS))
 UNSIGNED_STATIC_BIN := $(OUT_DIR)/staticlib-unsigned/$(REFUSAL_TEST)
 
-.PHONY: all test-cdylib test-staticlib test-unsigned clean help
+.PHONY: all test-cdylib test-staticlib test-unsigned test-fault fault-lib clean help
 
 help:
 	@echo "C integration tests for oxicrypt-ffi"
@@ -80,12 +105,14 @@ help:
 	@echo "  make test-staticlib — $(words $(TESTS)) signed executables linked against liboxicrypt_ffi.a"
 	@echo "  make test-unsigned  — $(REFUSAL_TEST) against an unsigned .so and an unsigned"
 	@echo "                        static executable, and its control against the signed .so"
-	@echo "  make all            — all three ($(words $(TESTS)) tests × 2 link modes, plus 3 refusal runs)"
+	@echo "  make test-fault     — $(words $(FAULT_TESTS)) tests against a signed fault-injection liboxicrypt_ffi.so"
+	@echo "  make all            — all four ($(words $(TESTS)) tests × 2 link modes, 3 refusal runs,"
+	@echo "                        $(words $(FAULT_TESTS)) fault-injection tests)"
 	@echo "  make clean          — remove $(OUT_DIR)"
 	@echo ""
 	@echo "  CARGO_TARGET_DIR ?= $(CARGO_TARGET_DIR)"
 
-all: test-cdylib test-staticlib test-unsigned
+all: test-cdylib test-staticlib test-unsigned test-fault
 
 # Runs every test even after a failure, so one run reports all of them.
 test-cdylib: $(addprefix $(OUT_DIR)/cdylib/,$(TESTS)) $(SIGNED_SO)
@@ -120,6 +147,57 @@ test-unsigned: $(OUT_DIR)/cdylib/$(REFUSAL_TEST) $(SIGNED_SO) $(UNSIGNED_SO) $(U
 	@INTEGRITY_FINGERPRINT=$(FINGERPRINT) LD_LIBRARY_PATH=$(dir $(UNSIGNED_SO)) $(OUT_DIR)/cdylib/$(REFUSAL_TEST)
 	@echo "Running $(REFUSAL_TEST) (staticlib, unsigned)..."
 	@INTEGRITY_FINGERPRINT=$(FINGERPRINT) $(UNSIGNED_STATIC_BIN)
+
+# Runs every fault-injection test even after a failure. The contract test
+# also fails when the number of DRBG functions it enumerates differs from
+# the number oxicrypt.h declares.
+test-fault: $(FAULT_BINS) $(FAULT_SO)
+	@# A sleep or a slow-write delay can end before the call reaches the output check, so the handshake test must not use one.
+	@if grep -nE 'sleep\(|nanosleep|usleep|slow-write' $(HANDSHAKE_TEST).c; then \
+	  echo "FAILED: $(HANDSHAKE_TEST).c waits on a delay; use oxi_test_park_before_output and oxi_test_is_parked"; \
+	  exit 1; \
+	fi
+	@if ! grep -qE '^[[:space:]]*while \(!oxi_test_is_parked\(\)' $(HANDSHAKE_TEST).c; then \
+	  echo "FAILED: $(HANDSHAKE_TEST).c does not wait on oxi_test_is_parked"; \
+	  exit 1; \
+	fi
+	@failed=0; \
+	for t in $(FAULT_TESTS); do \
+	  echo "Running $$t (cdylib, signed, fault injection)..."; \
+	  out=$$(OXI_FAULT= LD_LIBRARY_PATH=$(dir $(FAULT_SO)) $(OUT_DIR)/fault/bin/$$t); rc=$$?; \
+	  [ -n "$$out" ] && echo "$$out"; \
+	  if [ $$rc -ne 0 ]; then echo "FAILED: $$t (exit $$rc)"; failed=$$((failed + 1)); continue; fi; \
+	  if [ $$t = $(CONTRACT_TEST) ]; then \
+	    got=$$(echo "$$out" | sed -n 's/.*enumerated=\([0-9][0-9]*\).*/\1/p'); \
+	    want=$$(grep -cE $(DRBG_SYMBOL_PATTERN) $(INCLUDE_DIR)/oxicrypt.h); \
+	    if [ "$$got" != "$$want" ]; then \
+	      echo "FAILED: $$t enumerated $${got:-none} of the $$want DRBG functions in oxicrypt.h"; \
+	      failed=$$((failed + 1)); \
+	    else \
+	      echo "$$t: enumerated $$got, oxicrypt.h declares $$want"; \
+	    fi; \
+	  fi; \
+	done; \
+	echo "fault: $$(( $(words $(FAULT_TESTS)) - failed )) passed, $$failed failed"; \
+	[ $$failed -eq 0 ]
+
+# Cargo decides whether the library is current, so this always runs it.
+fault-lib:
+	OXICRYPT_INTEGRITY_VERIFY_KEY=$(abspath $(VERIFY_KEY)) \
+	  cargo build --release -p oxicrypt-ffi --features fault-injection \
+	  --target-dir $(CARGO_TARGET_DIR)/fault
+
+$(FAULT_SO): fault-lib $(SIGN)
+	@mkdir -p $(dir $@)
+	name=$$($(LIB_FILE_NAME) $(FAULT_LIB_DIR)/liboxicrypt_ffi.so) || exit 1; \
+	cp $(FAULT_LIB_DIR)/liboxicrypt_ffi.so $(dir $@)$$name.tmp && \
+	$(SIGN_CMD) $(dir $@)$$name.tmp && \
+	mv $(dir $@)$$name.tmp $(dir $@)$$name && \
+	ln -sfn $$name $@
+
+$(OUT_DIR)/fault/bin/%: %.c fault-lib
+	@mkdir -p $(dir $@)
+	$(CC) $(CFLAGS) -o $@ $< -L$(FAULT_LIB_DIR) -loxicrypt_ffi $(LDLIBS)
 
 $(SIGNED_SO): $(LIB_DIR)/liboxicrypt_ffi.so $(SIGN)
 	@mkdir -p $(dir $@)

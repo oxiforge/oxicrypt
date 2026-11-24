@@ -37,6 +37,10 @@ kernel32.dll!GetModuleHandleExW
 kernel32.dll!ReadProcessMemory
 kernel32.dll!VirtualQuery
 
+# The DRBG seed path on an environment the table does not list: the operating
+# system's random generator.
+bcryptprimitives.dll!ProcessPrng
+
 # The Rust standard library: memory, threads and their parking, files,
 # console output, environment, errors, and panic backtraces (dbghelp loaded
 # on demand behind a named mutex, and the unwind functions).
@@ -53,6 +57,7 @@ kernel32.dll!FormatMessageW
 kernel32.dll!GetConsoleMode
 kernel32.dll!GetConsoleOutputCP
 kernel32.dll!GetCurrentDirectoryW
+# GetCurrentProcessId is also the process id the DRBG seed path records.
 kernel32.dll!GetCurrentProcessId
 kernel32.dll!GetCurrentThreadId
 kernel32.dll!GetEnvironmentVariableW

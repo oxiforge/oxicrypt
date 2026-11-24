@@ -32,9 +32,13 @@
 //! # Safety
 //!
 //! All functions in this crate that take pointers are `unsafe`
-//! because they accept raw pointers from C callers. Every function
-//! performs null checks and length validation before dereferencing
-//! any pointer.
+//! because they accept raw pointers from C callers. A caller must
+//! pass each pointer either null or valid for reads, or writes, of
+//! the length it supplies beside it. A null pointer with a non-zero
+//! length is refused with `NullPointer = 10`; a null pointer with
+//! length 0 is an empty input where the function's documentation says
+//! so. A length outside the documented bounds is refused with the code
+//! the function's own documentation names.
 //!
 //! # Initialisation
 //!
@@ -114,8 +118,10 @@ pub use rbg::{
 };
 #[cfg(feature = "fault-injection")]
 pub use test_api::{
-    oxi_test_corrupt_next_key, oxi_test_fail_next_alloc, oxi_test_hold_busy,
-    oxi_test_last_freed_bytes_zero, oxi_test_poison_entropy, oxi_test_set_seed_stream,
+    oxi_test_corrupt_next_key, oxi_test_fail_next_alloc, oxi_test_fail_next_on_demand,
+    oxi_test_hold_busy, oxi_test_is_parked, oxi_test_last_freed_bytes_zero,
+    oxi_test_park_before_output, oxi_test_poison_entropy, oxi_test_release_parked,
+    oxi_test_set_seed_stream,
 };
 
 use crate::error::{OxiResult as R, status_kdf, status_module};
@@ -146,6 +152,11 @@ unsafe fn slice_from_raw<'a>(ptr: *const u8, len: usize) -> Result<&'a [u8], c_i
     if ptr.is_null() && len > 0 {
         return Err(R::NullPointer as c_int);
     }
+    // A slice cannot span more than `isize::MAX` bytes; refusing the length
+    // here keeps `from_raw_parts` within its contract for every caller.
+    if len > isize::MAX.unsigned_abs() {
+        return Err(R::InvalidInput as c_int);
+    }
     if len == 0 {
         return Ok(&[]);
     }
@@ -163,6 +174,9 @@ unsafe fn slice_from_raw_mut<'a>(ptr: *mut u8, len: usize) -> Result<&'a mut [u8
     if ptr.is_null() && len > 0 {
         return Err(R::NullPointer as c_int);
     }
+    if len > isize::MAX.unsigned_abs() {
+        return Err(R::InvalidInput as c_int);
+    }
     if len == 0 {
         // Return a valid empty slice even for null ptr with len=0.
         return Ok(&mut []);
@@ -178,14 +192,33 @@ const STAGE_CAP_SHA384: usize = 255 * 48 + 1;
 /// One byte over the longest HKDF-Expand output with a 64-byte hash.
 const STAGE_CAP_SHA512: usize = 255 * 64 + 1;
 
+/// Overwrites the caller's `len` bytes at `out` with zeros. A function that
+/// fails calls it on a caller buffer, so no partial or earlier result
+/// survives the failure. Zeroing writes no output, so it does not go
+/// through [`write_out`]'s re-check and runs in every module state.
+///
+/// # Safety
+///
+/// `out` must be valid for writes of `len` bytes. It may be NULL only when
+/// `len` is 0.
+unsafe fn zero_out(out: *mut u8, len: usize) {
+    if len > 0 && !out.is_null() {
+        // SAFETY: `out` is non-NULL and valid for writes of `len` bytes by
+        // contract.
+        unsafe { core::ptr::write_bytes(out, 0, len) };
+    }
+}
+
 /// Runs `fill` on a module-owned buffer of `len` bytes, then writes the
 /// buffer to the caller's `out` through [`write_out`] and wipes it.
 ///
-/// `fill` returns a status code. Any code but `Ok` is returned unchanged
-/// and nothing is written to `out`. A request above `cap` is staged at
-/// `cap` bytes: `cap` is more than the longest output `fill` serves, so
-/// `fill` refuses the staged request with the code it returns for the full
-/// one, without the full length being allocated.
+/// `fill` returns a status code, and any code but `Ok` is returned
+/// unchanged. `cap` is one byte over the longest output `fill` serves, so a
+/// `len` of `cap` or more is a request refused for its length: it is staged
+/// at `cap` bytes, `fill` refuses the staged request with the code it
+/// returns for the full one without the full length being allocated, and
+/// nothing is written to `out`. A shorter request that fails, in `fill` or
+/// in the write, leaves `out` zeroized for `len` bytes.
 ///
 /// # Safety
 ///
@@ -213,6 +246,11 @@ unsafe fn staged_output(
         };
     }
     oxicrypt_zeroize::zeroize(&mut buf);
+    if code != R::Ok as c_int && len < cap {
+        // SAFETY: `out` is valid for writes of `len` bytes, or `len` is 0,
+        // by contract.
+        unsafe { zero_out(out, len) };
+    }
     code
 }
 
@@ -445,8 +483,7 @@ pub extern "C" fn oxi_is_operational() -> c_int {
 ///
 /// The value latches on the first run and nothing is re-run here, so a
 /// later call cannot revise it and this is safe to call from the error
-/// state. A value of 6 means the record held something this module never
-/// writes.
+/// state.
 ///
 /// # Safety
 ///
@@ -764,14 +801,8 @@ pub unsafe extern "C" fn oxi_sha512_256(
 
 // ── SHA-3 family ─────────────────────────────────────────────────
 //
-// SHA-3 (FIPS 202) is a separate primitive family from SHA-2 with a
-// different (sponge) construction; it is exposed as one-shot entry
-// points only, mirroring the existing `oxi_sha256` / `oxi_sha512`
-// shape. Streaming exposure is deferred until the underlying
-// `oxicrypt_sha` Rust API exposes streaming SHA-3 publicly — exposing
-// a caller-managed streaming surface ahead of the Rust API would
-// invert the dependency direction (same rationale as PRD foundation
-// Decision D1 for AES-GCM streaming).
+// SHA-3 (FIPS 202) is a sponge construction, a separate family from
+// SHA-2. The C interface exposes it as one-shot entry points only.
 
 /// Compute SHA3-224 over `data_len` bytes at `data_ptr`.
 ///
@@ -1501,7 +1532,7 @@ pub unsafe extern "C" fn oxi_ecdsa_p384_verify(
 //
 // Two-step extract/expand surface — RFC 5869 §2's pure-function
 // abstract. The PRK is `L` bytes (32/48/64 for SHA-256/384/512) and
-// is the entire HKDF state, so we expose it as raw bytes between
+// is the entire HKDF state, so it is exposed as raw bytes between
 // `extract` and `expand` rather than wrapping it in an opaque
 // handle. Caller decides PRK storage (RAM, KMS, file). Profile
 // gating routes through `P::KDF_SERVICE`, because each PRF choice is
@@ -1809,7 +1840,10 @@ pub unsafe extern "C" fn oxi_hkdf_sha512_expand(
 ///
 /// Returns `OxiResult::InvalidInput = 5` if `out_len` exceeds 65535 or 255
 /// hash blocks, if the label is empty or longer than 249 bytes, or if the
-/// context is longer than 255 bytes (RFC 8446 §7.1), with `out` zeroized.
+/// context is longer than 255 bytes (RFC 8446 §7.1). An `out_len` above
+/// 255 hash blocks is refused for its length and writes nothing to `out`.
+/// Otherwise a failure once the derivation has started, a refused label or
+/// context or a refused write, leaves `out` zeroized for `out_len` bytes.
 ///
 /// # Safety
 ///
@@ -1861,7 +1895,10 @@ pub unsafe extern "C" fn oxi_tls13_hkdf_expand_label_sha256(
 ///
 /// Returns `OxiResult::InvalidInput = 5` if `out_len` exceeds 65535 or 255
 /// hash blocks, if the label is empty or longer than 249 bytes, or if the
-/// context is longer than 255 bytes (RFC 8446 §7.1), with `out` zeroized.
+/// context is longer than 255 bytes (RFC 8446 §7.1). An `out_len` above
+/// 255 hash blocks is refused for its length and writes nothing to `out`.
+/// Otherwise a failure once the derivation has started, a refused label or
+/// context or a refused write, leaves `out` zeroized for `out_len` bytes.
 ///
 /// # Safety
 ///
@@ -1915,7 +1952,10 @@ pub unsafe extern "C" fn oxi_tls13_hkdf_expand_label_sha384(
 ///
 /// Returns `OxiResult::InvalidInput = 5` if `out_len` exceeds 65535 or 255
 /// hash blocks, if the label is empty or longer than 249 bytes, or if the
-/// context is longer than 255 bytes (RFC 8446 §7.1), with `out` zeroized.
+/// context is longer than 255 bytes (RFC 8446 §7.1). An `out_len` above
+/// 255 hash blocks is refused for its length and writes nothing to `out`.
+/// Otherwise a failure once the derivation has started, a refused label or
+/// context or a refused write, leaves `out` zeroized for `out_len` bytes.
 ///
 /// # Safety
 ///
@@ -1968,7 +2008,10 @@ pub unsafe extern "C" fn oxi_tls13_derive_secret_sha256(
 ///
 /// Returns `OxiResult::InvalidInput = 5` if `out_len` exceeds 65535 or 255
 /// hash blocks, if the label is empty or longer than 249 bytes, or if the
-/// context is longer than 255 bytes (RFC 8446 §7.1), with `out` zeroized.
+/// context is longer than 255 bytes (RFC 8446 §7.1). An `out_len` above
+/// 255 hash blocks is refused for its length and writes nothing to `out`.
+/// Otherwise a failure once the derivation has started, a refused label or
+/// context or a refused write, leaves `out` zeroized for `out_len` bytes.
 ///
 /// # Safety
 ///
@@ -2027,7 +2070,7 @@ pub unsafe extern "C" fn oxi_tls13_derive_secret_sha384(
 //     the same `(seed, msg)` pair. NO `sign_with_k` variant
 //     because there is no `k` to supply.
 //   - verify(pk, msg, sig) → bool  per RFC 8032 §5.1.7 — returns
-//     `Ok(false)` for well-formed-but-invalid; we map that to
+//     `Ok(false)` for well-formed-but-invalid, which maps to
 //     `OxiResult::TagMismatch = 22`, as every verify family in
 //     this file does.
 //
@@ -2377,6 +2420,9 @@ pub unsafe extern "C" fn oxi_ecdh_p256_generate_keypair(
     // SAFETY: `public_out` is valid for writes of 65 bytes by contract,
     // and the local `q` does not overlap it.
     if let Err(e) = unsafe { write_out(public_out, &q[..65]) } {
+        // SAFETY: `private_out` is valid for writes of 32 bytes by contract;
+        // the output already written there does not survive the failure.
+        unsafe { zero_out(private_out, 32) };
         return e as c_int;
     }
     R::Ok as c_int
@@ -2393,6 +2439,10 @@ pub unsafe extern "C" fn oxi_ecdh_p256_generate_keypair(
 /// 48-byte private scalar, 97-byte SEC1 uncompressed public key,
 /// RFC 5903 §8.2 responder keypair drives the IG 10.3.A PCT.
 /// Same error mapping and thread-safety contract.
+///
+/// Returns `OxiResult::Uninstantiated = 8` if the DRBG handle was never
+/// instantiated, and `OxiResult::InvalidInput = 5` if it was instantiated
+/// by another process; both are checked before the module state.
 ///
 /// # Safety
 ///
@@ -2427,6 +2477,9 @@ pub unsafe extern "C" fn oxi_ecdh_p384_generate_keypair(
     // SAFETY: `public_out` is valid for writes of 97 bytes by contract,
     // and the local `q` does not overlap it.
     if let Err(e) = unsafe { write_out(public_out, &q[..97]) } {
+        // SAFETY: `private_out` is valid for writes of 48 bytes by contract;
+        // the output already written there does not survive the failure.
+        unsafe { zero_out(private_out, 48) };
         return e as c_int;
     }
     R::Ok as c_int
@@ -2452,11 +2505,10 @@ pub unsafe extern "C" fn oxi_ecdh_p384_generate_keypair(
 //
 // Errors: `InvalidInput = 5` covers a non-canonical private key
 // `x` (outside `[1, q − 1]`), peer-key validation failure, OR the
-// degenerate result `Z == 1` (the §5.7.1.1 "shall fail" condition,
-// which can only occur for adversarially-chosen peer keys that
-// passed partial validation but happened to lie in the order-2
-// subgroup mod the cofactor — `[2, p − 2]` already excludes the
-// trivial case but the upstream check is defence-in-depth).
+// degenerate result `Z == 1` (the §5.7.1.1 "shall fail" condition).
+// With `x` in `[1, q − 1]` and `y` in `[2, p − 2]` every `y` has order
+// `q` or `2q`, neither divides `x`, so `Z == 1` cannot arise from
+// validated inputs; the upstream check is defence-in-depth.
 //
 // DRBG-driven keygen (`oxicrypt_dh::generate_keypair_3072`) is
 // `oxi_dh3072_generate_keypair` below.
@@ -2531,8 +2583,7 @@ pub unsafe extern "C" fn oxi_dh3072_compute_shared_secret(
 /// advanced (its `(K, V, reseed_counter)` state mutates) by the
 /// rejection-sampling loop.
 ///
-/// **First C ABI surface to consume an opaque DRBG handle.** The
-/// caller is responsible for: (a) allocating the handle via
+/// The caller is responsible for: (a) allocating the handle via
 /// [`oxi_hmac_drbg_sha256_new`]; (b) having the handle instantiated
 /// with [`oxi_hmac_drbg_sha256_instantiate_from_module`], which seeds
 /// it from the module's seed path, before this call; (c) freeing it via
@@ -2566,9 +2617,6 @@ pub unsafe extern "C" fn oxi_dh3072_generate_keypair(
     if drbg.is_null() || private_out.is_null() || public_out.is_null() {
         return R::NullPointer as c_int;
     }
-    // Concurrent C calls on the same handle pointer are a
-    // serialization-contract violation per the per-call-mutating-handle
-    // thread-safety contract documented in `drbg.rs`.
     // SAFETY: `drbg` is a live handle nothing else reaches during this
     // call, by contract; the borrow ends with this function.
     let drbg_ref = match unsafe { crate::drbg::typed_drbg_access(drbg) } {
@@ -2587,6 +2635,9 @@ pub unsafe extern "C" fn oxi_dh3072_generate_keypair(
     // SAFETY: `public_out` is valid for writes of 384 bytes by contract,
     // and the local `y` does not overlap it.
     if let Err(e) = unsafe { write_out(public_out, &y[..384]) } {
+        // SAFETY: `private_out` is valid for writes of 384 bytes by contract;
+        // the output already written there does not survive the failure.
+        unsafe { zero_out(private_out, 384) };
         return e as c_int;
     }
     R::Ok as c_int
@@ -2599,25 +2650,22 @@ pub unsafe extern "C" fn oxi_dh3072_generate_keypair(
 //
 //   {2048, 3072, 4096} × {PKCS#1-v1.5, PSS}
 //
-// Hash variant is fixed at SHA-256 for all six — the only hash the
-// upstream RSA crate currently exposes for the 3072 and 4096 sizes.
+// Hash variant is fixed at SHA-256 for all six — the only hash
+// `oxicrypt-rsa` exposes for verification at the 3072 and 4096 sizes.
 // All six fns take the public modulus `n` as a raw byte array
 // (256 / 384 / 512 bytes big-endian), the public exponent `e` as a
 // u64 (covers RFC-mandated common values 3, 17, 65537 = F4 with
 // 32-bit headroom), the message bytes, and the signature as a raw
 // byte array (same length as the modulus).
 //
-// **TagMismatch=22 mapping**: the
-// upstream RSA verify fns return `Result<(), Error>` rather than
-// `Result<bool, Error>` — they collapse signature-invalid AND
-// input-decode-fail into a single `Err(Error::InvalidInput)`. The
-// FFI maps any non-NotOperational, non-AlgorithmRestricted Err to
-// `OxiResult::TagMismatch = 22` to maintain the cross-family
-// verify-mismatch convention established for ECDSA / EdDSA / AEAD.
-// This is a deliberate boundary choice: we lose the upstream
-// distinction between "your modulus parsed wrong" and "this signature
-// doesn't verify" but gain a uniform reviewer-facing semantic across
-// all verify families.
+// **TagMismatch=22 mapping**: the upstream RSA verify fns return
+// `Result<(), Error>` rather than `Result<bool, Error>` — they collapse
+// signature-invalid AND input-decode-fail into a single
+// `Err(Error::InvalidInput)`. The FFI maps `Err(InvalidInput)` to
+// `OxiResult::TagMismatch = 22`, the code every verify family returns
+// for a signature that does not verify, and every other error through
+// `OxiResult::from`. A caller therefore cannot tell a malformed modulus
+// from a signature that does not verify.
 //
 // DRBG-driven keygen, sign and OAEP surfaces are the RSA private-key
 // handle surface further down this file.
@@ -2979,6 +3027,9 @@ pub unsafe extern "C" fn oxi_ml_dsa_87_keygen(
     // SAFETY: `sk_out` is valid for writes of 4896 bytes by contract,
     // and the local `sk` does not overlap it.
     if let Err(e) = unsafe { write_out(sk_out, &sk[..4896]) } {
+        // SAFETY: `pk_out` is valid for writes of 2592 bytes by contract;
+        // the output already written there does not survive the failure.
+        unsafe { zero_out(pk_out, 2592) };
         return e as c_int;
     }
     R::Ok as c_int
@@ -3099,7 +3150,7 @@ pub unsafe extern "C" fn oxi_ml_dsa_87_verify(
 
 // ── ML-DSA-44 (FIPS 204) — stateless surface ─────────────────────
 //
-// Per-variant additive expansion of the ML-DSA-87 surface above.
+// The ML-DSA-87 surface above at another parameter set.
 // Same three-entry-point shape (keygen, sign, verify), same
 // deterministic-signing semantics, same `Err(InvalidInput)` →
 // `TagMismatch = 22` collapse on verify — only the byte counts
@@ -3113,7 +3164,7 @@ pub unsafe extern "C" fn oxi_ml_dsa_87_verify(
 // allow-list either. The underlying `Service::MlDsa44Keygen /
 // Sign / Verify` variants are permitted only under
 // `AlgorithmProfile::Unrestricted`; calls under either CNSA profile
-// return `OxiResult::AlgorithmRestricted = 6` via the existing
+// return `OxiResult::AlgorithmRestricted = 6` via the
 // `require_allowed` gate in `oxicrypt_module`.
 
 /// Generate an ML-DSA-44 key pair from a 32-byte seed (FIPS 204 §6.1).
@@ -3160,6 +3211,9 @@ pub unsafe extern "C" fn oxi_ml_dsa_44_keygen(
     // SAFETY: `sk_out` is valid for writes of 2560 bytes by contract,
     // and the local `sk` does not overlap it.
     if let Err(e) = unsafe { write_out(sk_out, &sk[..2560]) } {
+        // SAFETY: `pk_out` is valid for writes of 1312 bytes by contract;
+        // the output already written there does not survive the failure.
+        unsafe { zero_out(pk_out, 1312) };
         return e as c_int;
     }
     R::Ok as c_int
@@ -3280,7 +3334,7 @@ pub unsafe extern "C" fn oxi_ml_dsa_44_verify(
 
 // ── ML-DSA-65 (FIPS 204) — stateless surface ─────────────────────
 //
-// Per-variant additive expansion of the ML-DSA-87 surface above.
+// The ML-DSA-87 surface above at another parameter set.
 // Same three-entry-point shape (keygen, sign, verify), same
 // deterministic-signing semantics, same `Err(InvalidInput)` →
 // `TagMismatch = 22` collapse on verify — only the byte counts
@@ -3294,7 +3348,7 @@ pub unsafe extern "C" fn oxi_ml_dsa_44_verify(
 // allow-list either. The underlying `Service::MlDsa65Keygen /
 // Sign / Verify` variants are permitted only under
 // `AlgorithmProfile::Unrestricted`; calls under either CNSA profile
-// return `OxiResult::AlgorithmRestricted = 6` via the existing
+// return `OxiResult::AlgorithmRestricted = 6` via the
 // `require_allowed` gate in `oxicrypt_module`.
 
 /// Generate an ML-DSA-65 key pair from a 32-byte seed (FIPS 204 §6.1).
@@ -3341,6 +3395,9 @@ pub unsafe extern "C" fn oxi_ml_dsa_65_keygen(
     // SAFETY: `sk_out` is valid for writes of 4032 bytes by contract,
     // and the local `sk` does not overlap it.
     if let Err(e) = unsafe { write_out(sk_out, &sk[..4032]) } {
+        // SAFETY: `pk_out` is valid for writes of 1952 bytes by contract;
+        // the output already written there does not survive the failure.
+        unsafe { zero_out(pk_out, 1952) };
         return e as c_int;
     }
     R::Ok as c_int
@@ -3484,7 +3541,8 @@ pub unsafe extern "C" fn oxi_ml_dsa_65_verify(
 //     deterministic**: no caller-supplied randomness. The FO
 //     transform's implicit-rejection branch absorbs tampered
 //     ciphertext into a deterministic-but-pseudorandom shared secret
-//     in constant time. Tampered ct does NOT surface as a discrete
+//     (that this branch runs in constant time is unproven: no timing
+//     probe covers it). Tampered ct does NOT surface as a discrete
 //     error code — it produces a useless-but-uniform shared secret.
 //     This is the deliberate FIPS 203 §6.3 design. Distinct from
 //     RSA verify / ML-DSA verify / EdDSA verify
@@ -3557,6 +3615,9 @@ pub unsafe extern "C" fn oxi_ml_kem_1024_keygen(
     // SAFETY: `dk_out` is valid for writes of 3168 bytes by contract,
     // and the local `dk` does not overlap it.
     if let Err(e) = unsafe { write_out(dk_out, &dk[..3168]) } {
+        // SAFETY: `ek_out` is valid for writes of 1568 bytes by contract;
+        // the output already written there does not survive the failure.
+        unsafe { zero_out(ek_out, 1568) };
         return e as c_int;
     }
     R::Ok as c_int
@@ -3614,6 +3675,9 @@ pub unsafe extern "C" fn oxi_ml_kem_1024_encapsulate(
     // SAFETY: `ct_out` is valid for writes of 1568 bytes by contract,
     // and the local `ct` does not overlap it.
     if let Err(e) = unsafe { write_out(ct_out, &ct[..1568]) } {
+        // SAFETY: `ss_out` is valid for writes of 32 bytes by contract;
+        // the output already written there does not survive the failure.
+        unsafe { zero_out(ss_out, 32) };
         return e as c_int;
     }
     R::Ok as c_int
@@ -3627,8 +3691,9 @@ pub unsafe extern "C" fn oxi_ml_kem_1024_encapsulate(
 /// **Fully deterministic** — no caller randomness, no `Ok(false)`
 /// shape, no `TagMismatch = 22` mapping. The FO transform's
 /// implicit-rejection branch absorbs tampered ciphertext into a
-/// deterministic-but-pseudorandom shared secret in constant time;
-/// tamper does NOT surface as a discriminant.
+/// deterministic-but-pseudorandom shared secret; tamper does NOT
+/// surface as a discriminant. That this branch runs in constant time
+/// is unproven: no timing probe covers it.
 ///
 /// Returns `OxiResult::Ok = 0` on success, or a module error
 /// variant (`NotOperational`, `AlgorithmRestricted`).
@@ -3674,7 +3739,7 @@ pub unsafe extern "C" fn oxi_ml_kem_1024_decapsulate(
 
 // ── ML-KEM-512 (FIPS 203) — stateless surface ────────────────────
 //
-// Per-variant additive expansion of the ML-KEM-1024 surface above.
+// The ML-KEM-1024 surface above at another parameter set.
 // Same three-entry-point shape (keygen, encapsulate, decapsulate),
 // same caller-seeded `(d, z)` + `m` randomness contracts, same
 // implicit-rejection semantics on decapsulate — only the byte
@@ -3688,7 +3753,7 @@ pub unsafe extern "C" fn oxi_ml_kem_1024_decapsulate(
 // allow-list either. The underlying `Service::MlKem512Keygen /
 // Encaps / Decaps` variants are permitted only under
 // `AlgorithmProfile::Unrestricted`; calls under either CNSA profile
-// return `OxiResult::AlgorithmRestricted = 6` via the existing
+// return `OxiResult::AlgorithmRestricted = 6` via the
 // `require_allowed` gate in `oxicrypt_module`.
 
 /// Generate an ML-KEM-512 key pair from two 32-byte caller-supplied
@@ -3748,6 +3813,9 @@ pub unsafe extern "C" fn oxi_ml_kem_512_keygen(
     // SAFETY: `dk_out` is valid for writes of 1632 bytes by contract,
     // and the local `dk` does not overlap it.
     if let Err(e) = unsafe { write_out(dk_out, &dk[..1632]) } {
+        // SAFETY: `ek_out` is valid for writes of 800 bytes by contract;
+        // the output already written there does not survive the failure.
+        unsafe { zero_out(ek_out, 800) };
         return e as c_int;
     }
     R::Ok as c_int
@@ -3805,6 +3873,9 @@ pub unsafe extern "C" fn oxi_ml_kem_512_encapsulate(
     // SAFETY: `ct_out` is valid for writes of 768 bytes by contract,
     // and the local `ct` does not overlap it.
     if let Err(e) = unsafe { write_out(ct_out, &ct[..768]) } {
+        // SAFETY: `ss_out` is valid for writes of 32 bytes by contract;
+        // the output already written there does not survive the failure.
+        unsafe { zero_out(ss_out, 32) };
         return e as c_int;
     }
     R::Ok as c_int
@@ -3818,8 +3889,9 @@ pub unsafe extern "C" fn oxi_ml_kem_512_encapsulate(
 /// **Fully deterministic** — no caller randomness, no `Ok(false)`
 /// shape, no `TagMismatch = 22` mapping. The FO transform's
 /// implicit-rejection branch absorbs tampered ciphertext into a
-/// deterministic-but-pseudorandom shared secret in constant time;
-/// tamper does NOT surface as a discriminant.
+/// deterministic-but-pseudorandom shared secret; tamper does NOT
+/// surface as a discriminant. That this branch runs in constant time
+/// is unproven: no timing probe covers it.
 ///
 /// Returns `OxiResult::Ok = 0` on success, or a module error
 /// variant (`NotOperational`, `AlgorithmRestricted`).
@@ -3865,7 +3937,7 @@ pub unsafe extern "C" fn oxi_ml_kem_512_decapsulate(
 
 // ── ML-KEM-768 (FIPS 203) — stateless surface ────────────────────
 //
-// Per-variant additive expansion of the ML-KEM-1024 surface above.
+// The ML-KEM-1024 surface above at another parameter set.
 // Same three-entry-point shape (keygen, encapsulate, decapsulate),
 // same caller-seeded `(d, z)` + `m` randomness contracts, same
 // implicit-rejection semantics on decapsulate — only the byte
@@ -3879,7 +3951,7 @@ pub unsafe extern "C" fn oxi_ml_kem_512_decapsulate(
 // allow-list either. The underlying `Service::MlKem768Keygen /
 // Encaps / Decaps` variants are permitted only under
 // `AlgorithmProfile::Unrestricted`; calls under either CNSA profile
-// return `OxiResult::AlgorithmRestricted = 6` via the existing
+// return `OxiResult::AlgorithmRestricted = 6` via the
 // `require_allowed` gate in `oxicrypt_module`.
 
 /// Generate an ML-KEM-768 key pair from two 32-byte caller-supplied
@@ -3939,6 +4011,9 @@ pub unsafe extern "C" fn oxi_ml_kem_768_keygen(
     // SAFETY: `dk_out` is valid for writes of 2400 bytes by contract,
     // and the local `dk` does not overlap it.
     if let Err(e) = unsafe { write_out(dk_out, &dk[..2400]) } {
+        // SAFETY: `ek_out` is valid for writes of 1184 bytes by contract;
+        // the output already written there does not survive the failure.
+        unsafe { zero_out(ek_out, 1184) };
         return e as c_int;
     }
     R::Ok as c_int
@@ -3996,6 +4071,9 @@ pub unsafe extern "C" fn oxi_ml_kem_768_encapsulate(
     // SAFETY: `ct_out` is valid for writes of 1088 bytes by contract,
     // and the local `ct` does not overlap it.
     if let Err(e) = unsafe { write_out(ct_out, &ct[..1088]) } {
+        // SAFETY: `ss_out` is valid for writes of 32 bytes by contract;
+        // the output already written there does not survive the failure.
+        unsafe { zero_out(ss_out, 32) };
         return e as c_int;
     }
     R::Ok as c_int
@@ -4009,8 +4087,9 @@ pub unsafe extern "C" fn oxi_ml_kem_768_encapsulate(
 /// **Fully deterministic** — no caller randomness, no `Ok(false)`
 /// shape, no `TagMismatch = 22` mapping. The FO transform's
 /// implicit-rejection branch absorbs tampered ciphertext into a
-/// deterministic-but-pseudorandom shared secret in constant time;
-/// tamper does NOT surface as a discriminant.
+/// deterministic-but-pseudorandom shared secret; tamper does NOT
+/// surface as a discriminant. That this branch runs in constant time
+/// is unproven: no timing probe covers it.
 ///
 /// Returns `OxiResult::Ok = 0` on success, or a module error
 /// variant (`NotOperational`, `AlgorithmRestricted`).
@@ -4153,6 +4232,9 @@ pub unsafe extern "C" fn oxi_slh_dsa_sha2_256s_keygen(
     // SAFETY: `sk_out` is valid for writes of 128 bytes by contract,
     // and the local `sk` does not overlap it.
     if let Err(e) = unsafe { write_out(sk_out, &sk[..128]) } {
+        // SAFETY: `pk_out` is valid for writes of 64 bytes by contract;
+        // the output already written there does not survive the failure.
+        unsafe { zero_out(pk_out, 64) };
         return e as c_int;
     }
     R::Ok as c_int
@@ -4267,7 +4349,7 @@ pub unsafe extern "C" fn oxi_slh_dsa_sha2_256s_verify(
 
 // ── SLH-DSA — SHA-2 family, 5 additional variants ───────────────
 //
-// Per-variant additive expansion of the SHA2-256s surface above.
+// The SHA2-256s surface above at the other SHA-2 parameter sets.
 // Same three-entry-point shape (keygen, sign, verify), same
 // deterministic-signing semantics, same `Err(InvalidInput)` →
 // `TagMismatch = 22` collapse on verify — only the byte counts
@@ -4280,7 +4362,7 @@ pub unsafe extern "C" fn oxi_slh_dsa_sha2_256s_verify(
 //   n=32 (256-bit category): xi=96, pk=64, sk=128, sig-s=29 792,
 //                            sig-f=49 856
 //
-// xi continues to frame as `SK.seed ‖ SK.prf ‖ PK.seed` (three
+// xi frames as `SK.seed ‖ SK.prf ‖ PK.seed` (three
 // `n`-byte components, role-segregated and NOT interchangeable —
 // SK.seed drives WOTS+/FORS secret derivation, SK.prf is the PRF
 // key for deterministic message randomness, PK.seed is the
@@ -4293,7 +4375,7 @@ pub unsafe extern "C" fn oxi_slh_dsa_sha2_256s_verify(
 // below — are permitted only under
 // `AlgorithmProfile::Unrestricted`; calls under either CNSA
 // profile return `OxiResult::AlgorithmRestricted = 6` via the
-// existing `require_allowed` gate in `oxicrypt_module` against
+// `require_allowed` gate in `oxicrypt_module` against
 // the per-parameter-set `Service::SlhDsa<Family><Level><SF><Op>`
 // discriminants (320-355, contiguous block).
 
@@ -4328,6 +4410,9 @@ pub unsafe extern "C" fn oxi_slh_dsa_sha2_128s_keygen(
     // SAFETY: `sk_out` is valid for writes of 64 bytes by contract,
     // and the local `sk` does not overlap it.
     if let Err(e) = unsafe { write_out(sk_out, &sk[..64]) } {
+        // SAFETY: `pk_out` is valid for writes of 32 bytes by contract;
+        // the output already written there does not survive the failure.
+        unsafe { zero_out(pk_out, 32) };
         return e as c_int;
     }
     R::Ok as c_int
@@ -4447,6 +4532,9 @@ pub unsafe extern "C" fn oxi_slh_dsa_sha2_128f_keygen(
     // SAFETY: `sk_out` is valid for writes of 64 bytes by contract,
     // and the local `sk` does not overlap it.
     if let Err(e) = unsafe { write_out(sk_out, &sk[..64]) } {
+        // SAFETY: `pk_out` is valid for writes of 32 bytes by contract;
+        // the output already written there does not survive the failure.
+        unsafe { zero_out(pk_out, 32) };
         return e as c_int;
     }
     R::Ok as c_int
@@ -4569,6 +4657,9 @@ pub unsafe extern "C" fn oxi_slh_dsa_sha2_192s_keygen(
     // SAFETY: `sk_out` is valid for writes of 96 bytes by contract,
     // and the local `sk` does not overlap it.
     if let Err(e) = unsafe { write_out(sk_out, &sk[..96]) } {
+        // SAFETY: `pk_out` is valid for writes of 48 bytes by contract;
+        // the output already written there does not survive the failure.
+        unsafe { zero_out(pk_out, 48) };
         return e as c_int;
     }
     R::Ok as c_int
@@ -4687,6 +4778,9 @@ pub unsafe extern "C" fn oxi_slh_dsa_sha2_192f_keygen(
     // SAFETY: `sk_out` is valid for writes of 96 bytes by contract,
     // and the local `sk` does not overlap it.
     if let Err(e) = unsafe { write_out(sk_out, &sk[..96]) } {
+        // SAFETY: `pk_out` is valid for writes of 48 bytes by contract;
+        // the output already written there does not survive the failure.
+        unsafe { zero_out(pk_out, 48) };
         return e as c_int;
     }
     R::Ok as c_int
@@ -4805,6 +4899,9 @@ pub unsafe extern "C" fn oxi_slh_dsa_sha2_256f_keygen(
     // SAFETY: `sk_out` is valid for writes of 128 bytes by contract,
     // and the local `sk` does not overlap it.
     if let Err(e) = unsafe { write_out(sk_out, &sk[..128]) } {
+        // SAFETY: `pk_out` is valid for writes of 64 bytes by contract;
+        // the output already written there does not survive the failure.
+        unsafe { zero_out(pk_out, 64) };
         return e as c_int;
     }
     R::Ok as c_int
@@ -4937,6 +5034,9 @@ pub unsafe extern "C" fn oxi_slh_dsa_shake_128s_keygen(
     // SAFETY: `sk_out` is valid for writes of 64 bytes by contract,
     // and the local `sk` does not overlap it.
     if let Err(e) = unsafe { write_out(sk_out, &sk[..64]) } {
+        // SAFETY: `pk_out` is valid for writes of 32 bytes by contract;
+        // the output already written there does not survive the failure.
+        unsafe { zero_out(pk_out, 32) };
         return e as c_int;
     }
     R::Ok as c_int
@@ -5054,6 +5154,9 @@ pub unsafe extern "C" fn oxi_slh_dsa_shake_128f_keygen(
     // SAFETY: `sk_out` is valid for writes of 64 bytes by contract,
     // and the local `sk` does not overlap it.
     if let Err(e) = unsafe { write_out(sk_out, &sk[..64]) } {
+        // SAFETY: `pk_out` is valid for writes of 32 bytes by contract;
+        // the output already written there does not survive the failure.
+        unsafe { zero_out(pk_out, 32) };
         return e as c_int;
     }
     R::Ok as c_int
@@ -5171,6 +5274,9 @@ pub unsafe extern "C" fn oxi_slh_dsa_shake_192s_keygen(
     // SAFETY: `sk_out` is valid for writes of 96 bytes by contract,
     // and the local `sk` does not overlap it.
     if let Err(e) = unsafe { write_out(sk_out, &sk[..96]) } {
+        // SAFETY: `pk_out` is valid for writes of 48 bytes by contract;
+        // the output already written there does not survive the failure.
+        unsafe { zero_out(pk_out, 48) };
         return e as c_int;
     }
     R::Ok as c_int
@@ -5288,6 +5394,9 @@ pub unsafe extern "C" fn oxi_slh_dsa_shake_192f_keygen(
     // SAFETY: `sk_out` is valid for writes of 96 bytes by contract,
     // and the local `sk` does not overlap it.
     if let Err(e) = unsafe { write_out(sk_out, &sk[..96]) } {
+        // SAFETY: `pk_out` is valid for writes of 48 bytes by contract;
+        // the output already written there does not survive the failure.
+        unsafe { zero_out(pk_out, 48) };
         return e as c_int;
     }
     R::Ok as c_int
@@ -5405,6 +5514,9 @@ pub unsafe extern "C" fn oxi_slh_dsa_shake_256s_keygen(
     // SAFETY: `sk_out` is valid for writes of 128 bytes by contract,
     // and the local `sk` does not overlap it.
     if let Err(e) = unsafe { write_out(sk_out, &sk[..128]) } {
+        // SAFETY: `pk_out` is valid for writes of 64 bytes by contract;
+        // the output already written there does not survive the failure.
+        unsafe { zero_out(pk_out, 64) };
         return e as c_int;
     }
     R::Ok as c_int
@@ -5522,6 +5634,9 @@ pub unsafe extern "C" fn oxi_slh_dsa_shake_256f_keygen(
     // SAFETY: `sk_out` is valid for writes of 128 bytes by contract,
     // and the local `sk` does not overlap it.
     if let Err(e) = unsafe { write_out(sk_out, &sk[..128]) } {
+        // SAFETY: `pk_out` is valid for writes of 64 bytes by contract;
+        // the output already written there does not survive the failure.
+        unsafe { zero_out(pk_out, 64) };
         return e as c_int;
     }
     R::Ok as c_int
@@ -9897,18 +10012,18 @@ pub unsafe extern "C" fn oxi_xmss_verify(
 
 // ── ECDSA DRBG-driven (FIPS 186-5 §A.2.2 + IG 10.3.A) — handle surface ───
 //
-// Eight C ABI entry points + two opaque types extending the existing
-// stateless ECDSA family (above, lib.rs §"ECDSA (FIPS 186-5) — stateless
-// surface") with the FIPS 186-5 §A.2.2 rejection-sampler-driven keygen
-// and SHA-{256,384}-based signing. DRBG-handle-as-parameter pattern,
-// the same seam `oxi_dh3072_generate_keypair` uses.
+// Eight C ABI entry points + two opaque types beside the stateless
+// ECDSA surface above: FIPS 186-5 §A.2.2 rejection-sampler-driven keygen
+// and SHA-{256,384}-based signing. The DRBG handle is a parameter, as in
+// `oxi_dh3072_generate_keypair`.
 //
 // Per-curve set:
 //   - OxiEcdsaP{256,384}PrivateKey — opaque handle that has passed an
 //     IG 10.3.A pairwise consistency test at construction time. Carries
 //     both the private scalar `d` and the derived uncompressed SEC1
 //     public key `Q`. Drop chain calls upstream
-//     `oxicrypt_zeroize::zeroize(&mut self.d)`.
+//     `oxicrypt_zeroize::zeroize(&mut self.d)`; that the freed memory
+//     reads zero is unproven, since no test inspects it.
 //
 //   - oxi_ecdsa_p{256,384}_private_key_new_generate(drbg, **out_key) —
 //     allocates a heap handle, generates `d` via FIPS 186-5 §A.2.2
@@ -9917,7 +10032,7 @@ pub unsafe extern "C" fn oxi_xmss_verify(
 //     pass; PCT-fail collapses to `OxiResult::InvalidInput = 5`.
 //
 //   - oxi_ecdsa_p{256,384}_private_key_free(key) — NULL-safe; releases
-//     the heap handle and runs Drop, which zeroises `d`.
+//     the heap handle and runs Drop, which calls zeroize on `d`.
 //
 //   - oxi_ecdsa_p{256,384}_private_key_public_key(key, out_pk) — copies
 //     the SEC1 uncompressed public key (65 / 97 bytes) into the
@@ -9961,9 +10076,9 @@ pub struct OxiEcdsaP256PrivateKey {
 
 impl OxiEcdsaP256PrivateKey {
     /// Crate-internal accessor for the underlying read-only
-    /// `EcdsaP256PrivateKey`. Returns `None` if the handle has been
-    /// finalised (today: never — this handle has no `_finalize` entry
-    /// point, only `_free` via Drop).
+    /// `EcdsaP256PrivateKey`. Returns `None` only for a finalised
+    /// handle, and this handle has no `_finalize` entry point, only
+    /// `_free` via Drop.
     pub(crate) fn inner_ref(&self) -> Option<&oxicrypt_ecdsa::p256_ecdsa::EcdsaP256PrivateKey> {
         self.inner.as_ref()
     }
@@ -10004,6 +10119,10 @@ impl OxiEcdsaP384PrivateKey {
 /// `Operational` state. Returns `OxiResult::AlgorithmRestricted = 6`
 /// if the active algorithm profile blocks ECDSA-P256 keygen.
 ///
+/// Returns `OxiResult::Uninstantiated = 8` if the DRBG handle was never
+/// instantiated, and `OxiResult::InvalidInput = 5` if it was instantiated
+/// by another process; both are checked before the module state.
+///
 /// # Safety
 ///
 /// `drbg` must be a live, instantiated handle from
@@ -10039,9 +10158,9 @@ pub unsafe extern "C" fn oxi_ecdsa_p256_private_key_new_generate(
 ///
 /// After this call the caller's pointer is dangling; the caller
 /// SHOULD set their pointer to NULL to avoid use-after-free. Drop
-/// on the upstream `EcdsaP256PrivateKey` zeroises the private
-/// scalar `d` via the workspace-wide `oxicrypt-zeroize` volatile-
-/// write convention; no caller-side scrubbing is required.
+/// on the upstream `EcdsaP256PrivateKey` calls `oxicrypt-zeroize` on
+/// the private scalar `d`; no caller-side scrubbing is required. That
+/// the freed memory reads zero is unproven: no test inspects it.
 ///
 /// # Safety
 ///
@@ -10063,7 +10182,7 @@ pub unsafe extern "C" fn oxi_ecdsa_p256_private_key_free(key: *mut OxiEcdsaP256P
 /// Returns `OxiResult::Ok = 0` on success;
 /// `OxiResult::NullPointer = 10` if either pointer is NULL;
 /// `OxiResult::NotOperational = 1` if the handle has been
-/// finalised (today: never — no `_finalize` exists for this handle).
+/// finalised, which cannot happen: this handle has no `_finalize`.
 ///
 /// Returns `OxiResult::NotOperational = 1` outside the `SelfTest` and
 /// `Operational` states, including for a handle created before the module
@@ -10115,6 +10234,10 @@ pub unsafe extern "C" fn oxi_ecdsa_p256_private_key_public_key(
 /// if the active algorithm profile blocks ECDSA-P256 sign (a profile
 /// MAY allow `EcdsaP256Keygen` but block `EcdsaP256Sign`, in which
 /// case `_new_generate` succeeds but this fn returns 6).
+///
+/// Returns `OxiResult::Uninstantiated = 8` if the DRBG handle was never
+/// instantiated, and `OxiResult::InvalidInput = 5` if it was instantiated
+/// by another process; both are checked before the module state.
 ///
 /// # Safety
 ///
@@ -10168,6 +10291,10 @@ pub unsafe extern "C" fn oxi_ecdsa_p256_private_key_sign_sha256(
 /// `drbg`, deriving its public key, and running the IG 10.3.A
 /// pairwise consistency test before returning. Mirrors
 /// [`oxi_ecdsa_p256_private_key_new_generate`].
+///
+/// Returns `OxiResult::Uninstantiated = 8` if the DRBG handle was never
+/// instantiated, and `OxiResult::InvalidInput = 5` if it was instantiated
+/// by another process; both are checked before the module state.
 ///
 /// # Safety
 ///
@@ -10264,6 +10391,10 @@ pub unsafe extern "C" fn oxi_ecdsa_p384_private_key_public_key(
 /// `EcdsaP384Keygen` but block `EcdsaP384Sign`, in which case
 /// `_new_generate` succeeds but this fn returns 6).
 ///
+/// Returns `OxiResult::Uninstantiated = 8` if the DRBG handle was never
+/// instantiated, and `OxiResult::InvalidInput = 5` if it was instantiated
+/// by another process; both are checked before the module state.
+///
 /// # Safety
 ///
 /// `key` must be a live handle from
@@ -10332,8 +10463,9 @@ pub unsafe extern "C" fn oxi_ecdsa_p384_private_key_sign_sha384(
 // **CRT-secret-exfil safe by API shape:** the handle exposes only `n`
 // (modulus) and `e` (public exponent) via accessors. The CRT
 // components — `p`, `q`, `dP`, `dQ`, `qInv` — remain encapsulated
-// inside the upstream `RsaPrivateKey{N}` struct and are zeroized by
-// its `Drop` impl on handle release. There is no FFI accessor that
+// inside the upstream `RsaPrivateKey{N}` struct, whose `Drop` impl
+// calls zeroize on them at handle release (that the freed memory reads
+// zero is unproven: no test inspects it). There is no FFI accessor that
 // can extract the secret half-moduli or private exponent: the C API
 // does not surface them and the underlying Rust struct's CRT field is
 // `pub(crate)`-private to `oxicrypt-rsa`.
@@ -10374,9 +10506,9 @@ pub struct OxiRsaPrivateKey2048 {
 
 impl OxiRsaPrivateKey2048 {
     /// Crate-internal accessor for the underlying read-only
-    /// `RsaPrivateKey2048`. Returns `None` if the handle has been
-    /// finalised (today: never — this handle has no `_finalize`
-    /// entry point, only `_free` via Drop).
+    /// `RsaPrivateKey2048`. Returns `None` only for a finalised
+    /// handle, and this handle has no `_finalize` entry point, only
+    /// `_free` via Drop.
     pub(crate) fn inner_ref(&self) -> Option<&oxicrypt_rsa::RsaPrivateKey2048> {
         self.inner.as_ref()
     }
@@ -10432,6 +10564,10 @@ impl OxiRsaPrivateKey4096 {
 /// `OxiResult::AlgorithmRestricted = 6` if the active algorithm
 /// profile blocks RSA-2048 keygen.
 ///
+/// Returns `OxiResult::Uninstantiated = 8` if the DRBG handle was never
+/// instantiated, and `OxiResult::InvalidInput = 5` if it was instantiated
+/// by another process; both are checked before the module state.
+///
 /// # Safety
 ///
 /// `drbg` must be a live, instantiated handle from
@@ -10467,9 +10603,10 @@ pub unsafe extern "C" fn oxi_rsa_2048_private_key_new_generate(
 /// Free an RSA-2048 private-key handle. NULL-safe.
 ///
 /// After this call the caller's pointer is dangling. Drop on the
-/// upstream `RsaPrivateKey2048` zeroises the private exponent `d`
-/// and (when present) the CRT components `p, q, dP, dQ, qInv` via
-/// the workspace-wide `oxicrypt-zeroize` volatile-write convention.
+/// upstream `RsaPrivateKey2048` calls `oxicrypt-zeroize` on the
+/// private exponent `d` and (when present) the CRT components
+/// `p, q, dP, dQ, qInv`. That the freed memory reads zero is unproven:
+/// no test inspects it.
 ///
 /// # Safety
 ///
@@ -10602,6 +10739,10 @@ pub unsafe extern "C" fn oxi_rsa_2048_sign_pkcs1_v15_sha256(
 ///
 /// On success, writes 256 bytes into `sig_out` and returns `Ok = 0`.
 ///
+/// Returns `OxiResult::Uninstantiated = 8` if the DRBG handle was never
+/// instantiated, and `OxiResult::InvalidInput = 5` if it was instantiated
+/// by another process; both are checked before the module state.
+///
 /// # Safety
 ///
 /// `key` must be a live handle. `drbg` must be a live, instantiated
@@ -10653,6 +10794,10 @@ pub unsafe extern "C" fn oxi_rsa_2048_sign_pss_sha256(
 /// bytes (`k − 2·hLen − 2` with `k = 256`, `hLen = 32`).
 ///
 /// On success, writes 256 bytes into `ct_out` and returns `Ok = 0`.
+///
+/// Returns `OxiResult::Uninstantiated = 8` if the DRBG handle was never
+/// instantiated, and `OxiResult::InvalidInput = 5` if it was instantiated
+/// by another process; both are checked before the module state.
 ///
 /// # Safety
 ///
@@ -10791,6 +10936,10 @@ pub unsafe extern "C" fn oxi_rsa_2048_oaep_decrypt_sha256(
 /// [`oxi_rsa_2048_private_key_new_generate`] for the 3072-bit
 /// modulus; PCT-at-construction runs on the CRT path with Bellcore
 /// verify-after-sign.
+///
+/// Returns `OxiResult::Uninstantiated = 8` if the DRBG handle was never
+/// instantiated, and `OxiResult::InvalidInput = 5` if it was instantiated
+/// by another process; both are checked before the module state.
 ///
 /// # Safety
 ///
@@ -10938,6 +11087,10 @@ pub unsafe extern "C" fn oxi_rsa_3072_sign_pkcs1_v15_sha256(
 /// Sign `msg` with RSASSA-PSS SHA-256 under the RSA-3072 handle,
 /// DRBG-sampled salt. Produces a 384-byte signature.
 ///
+/// Returns `OxiResult::Uninstantiated = 8` if the DRBG handle was never
+/// instantiated, and `OxiResult::InvalidInput = 5` if it was instantiated
+/// by another process; both are checked before the module state.
+///
 /// # Safety
 ///
 /// See [`oxi_rsa_2048_sign_pss_sha256`]. `sig_out` must be a
@@ -10982,6 +11135,10 @@ pub unsafe extern "C" fn oxi_rsa_3072_sign_pss_sha256(
 /// public key `(n, e)`, DRBG-sampled seed. Maximum plaintext length
 /// is 318 bytes (`k − 2·hLen − 2` with `k = 384`, `hLen = 32`).
 /// Ciphertext is fixed at 384 bytes.
+///
+/// Returns `OxiResult::Uninstantiated = 8` if the DRBG handle was never
+/// instantiated, and `OxiResult::InvalidInput = 5` if it was instantiated
+/// by another process; both are checked before the module state.
 ///
 /// # Safety
 ///
@@ -11105,6 +11262,10 @@ pub unsafe extern "C" fn oxi_rsa_3072_oaep_decrypt_sha256(
 /// Allocate a new RSA-4096 private-key handle. Mirrors
 /// [`oxi_rsa_2048_private_key_new_generate`] for the 4096-bit
 /// modulus.
+///
+/// Returns `OxiResult::Uninstantiated = 8` if the DRBG handle was never
+/// instantiated, and `OxiResult::InvalidInput = 5` if it was instantiated
+/// by another process; both are checked before the module state.
 ///
 /// # Safety
 ///
@@ -11250,6 +11411,10 @@ pub unsafe extern "C" fn oxi_rsa_4096_sign_pkcs1_v15_sha256(
 /// Sign `msg` with RSASSA-PSS SHA-256 under the RSA-4096 handle,
 /// DRBG-sampled salt. Produces a 512-byte signature.
 ///
+/// Returns `OxiResult::Uninstantiated = 8` if the DRBG handle was never
+/// instantiated, and `OxiResult::InvalidInput = 5` if it was instantiated
+/// by another process; both are checked before the module state.
+///
 /// # Safety
 ///
 /// See [`oxi_rsa_2048_sign_pss_sha256`]. `sig_out` must be a
@@ -11293,6 +11458,10 @@ pub unsafe extern "C" fn oxi_rsa_4096_sign_pss_sha256(
 /// Encrypt `msg` with RSAES-OAEP SHA-256 against the RSA-4096
 /// public key `(n, e)`, DRBG-sampled seed. Maximum plaintext length
 /// is 446 bytes; ciphertext is 512 bytes.
+///
+/// Returns `OxiResult::Uninstantiated = 8` if the DRBG handle was never
+/// instantiated, and `OxiResult::InvalidInput = 5` if it was instantiated
+/// by another process; both are checked before the module state.
 ///
 /// # Safety
 ///
@@ -11829,17 +11998,15 @@ mod lama_tests {
 
     /// The embedded manifest must not contain either integrity-slot magic.
     ///
-    /// This crate now carries a ~500 KB document inside an artifact whose
-    /// integrity slot is located by scanning the on-disk bytes for a
-    /// header/footer magic pair. A second match anywhere in the file makes
-    /// the signer refuse the artifact as ambiguous, a hard failure — so an
-    /// arbitrary embedded document is a surface worth guarding rather than
-    /// assuming away.
+    /// The artifact's integrity slot is located by scanning its on-disk
+    /// bytes for a header/footer magic pair, and a second match anywhere in
+    /// the file makes the signer refuse the artifact as ambiguous, a hard
+    /// failure.
     ///
-    /// It holds structurally today: both magics lead with `0xfc` / `0xfd`,
-    /// which are not legal UTF-8 lead bytes, and the manifest is valid UTF-8.
-    /// The test exists so a future change to either the magics or the
-    /// embedding says so out loud.
+    /// Both magics lead with `0xfc` / `0xfd`, which are not legal UTF-8 lead
+    /// bytes, and the manifest is valid UTF-8, so the manifest cannot
+    /// contain either. This test fails if a change to the magics or to the
+    /// embedding breaks that.
     #[test]
     fn embedded_manifest_carries_neither_integrity_magic() {
         let bytes = LAMA_MANIFEST.as_bytes();
@@ -11871,5 +12038,151 @@ mod lama_tests {
         // the document silently for any C consumer calling strlen.
         assert_eq!(bytes.iter().position(|b| *b == 0), Some(bytes.len() - 1));
         assert_eq!(bytes.last(), Some(&0u8));
+    }
+}
+
+#[cfg(test)]
+#[allow(clippy::panic)]
+mod partial_output_tests {
+    use super::*;
+    use crate::rbg::WRITES_BEFORE_REFUSAL;
+    use core::ptr;
+
+    /// Stands in for the pre-operational integrity test, which cannot pass
+    /// in an unsigned test binary.
+    const UNSIGNED_TEST_BINARY: &[oxicrypt_module::KatEntry] = &[oxicrypt_module::KatEntry {
+        name: "integrity not verifiable in an unsigned test binary",
+        run: || Ok(()),
+    }];
+
+    /// Makes the module operational.
+    fn setup() {
+        match oxicrypt_module::initialize_with_tests(UNSIGNED_TEST_BINARY, &[]) {
+            Ok(()) | Err(oxicrypt_module::Error::AlreadyInitialized) => {}
+            Err(e) => panic!("module failed to initialise: {e:?}"),
+        }
+    }
+
+    /// A two-output key generation whose second write is refused zeroizes
+    /// the first output: no private key survives a failed call.
+    #[test]
+    fn second_write_refused_zeroizes_first_output() {
+        setup();
+        let mut drbg = ptr::null_mut();
+        let mut private = [0xA5_u8; 32];
+        let mut public = [0x5A_u8; 65];
+        // SAFETY: `drbg` is a writable local and the handle is live from
+        // `_new` to `_free`; both key buffers are writable locals of the
+        // sizes the function writes.
+        let (healthy, refused) = unsafe {
+            assert_eq!(crate::drbg::oxi_hmac_drbg_sha256_new(&raw mut drbg), 0);
+            assert_eq!(
+                crate::drbg::oxi_hmac_drbg_sha256_instantiate_from_module(drbg, ptr::null(), 0),
+                0
+            );
+            let healthy =
+                oxi_ecdh_p256_generate_keypair(drbg, private.as_mut_ptr(), public.as_mut_ptr());
+            let written = private.iter().any(|&b| b != 0xA5 && b != 0);
+            assert!(written, "the healthy call wrote no private key");
+            private = [0xA5_u8; 32];
+            WRITES_BEFORE_REFUSAL.set(Some(1));
+            let refused =
+                oxi_ecdh_p256_generate_keypair(drbg, private.as_mut_ptr(), public.as_mut_ptr());
+            crate::drbg::oxi_hmac_drbg_sha256_free(drbg);
+            (healthy, refused)
+        };
+        assert_eq!(healthy, R::Ok as c_int);
+        assert_eq!(refused, R::NotOperational as c_int);
+        assert_eq!(
+            WRITES_BEFORE_REFUSAL.get(),
+            None,
+            "the refusal was not reached"
+        );
+        assert!(
+            private.iter().all(|&b| b == 0),
+            "the first output survived the failed second write"
+        );
+    }
+
+    /// A staged single output whose write is refused zeroizes the caller's
+    /// buffer.
+    #[test]
+    fn staged_output_refused_zeroizes_out() {
+        setup();
+        let mut out = [0xA5_u8; 16];
+        WRITES_BEFORE_REFUSAL.set(Some(0));
+        // SAFETY: `out` is a writable local of 16 bytes.
+        let code = unsafe {
+            staged_output(out.as_mut_ptr(), out.len(), 17, |buf| {
+                buf.fill(7);
+                R::Ok as c_int
+            })
+        };
+        assert_eq!(code, R::NotOperational as c_int);
+        assert!(out.iter().all(|&b| b == 0), "{out:?}");
+        out = [0xA5_u8; 16];
+        // SAFETY: as above.
+        let code = unsafe {
+            staged_output(out.as_mut_ptr(), out.len(), 17, |buf| {
+                buf.fill(7);
+                R::InvalidInput as c_int
+            })
+        };
+        assert_eq!(code, R::InvalidInput as c_int);
+        assert!(out.iter().all(|&b| b == 0), "{out:?}");
+        // SAFETY: as above.
+        let code = unsafe {
+            staged_output(out.as_mut_ptr(), out.len(), 17, |buf| {
+                buf.fill(7);
+                R::Ok as c_int
+            })
+        };
+        assert_eq!(code, R::Ok as c_int);
+        assert!(out.iter().all(|&b| b == 7), "{out:?}");
+    }
+
+    /// A request of `cap` bytes or more is refused for its length and writes
+    /// nothing to the caller's buffer: at `cap`, where `fill` refuses the
+    /// length, and above it, where the request is staged at `cap` and even a
+    /// `fill` that accepts the staged buffer is refused.
+    #[test]
+    fn staged_output_length_refusal_writes_nothing() {
+        setup();
+        let cases = [
+            (17, R::OutputTooLong as c_int),
+            (32, R::OutputTooLong as c_int),
+            (32, R::Ok as c_int),
+        ];
+        for (len, fill_code) in cases {
+            let mut out = [0xA5_u8; 32];
+            // SAFETY: `out` is a writable local of at least `len` bytes.
+            let code = unsafe {
+                staged_output(out.as_mut_ptr(), len, 17, |buf| {
+                    assert_eq!(buf.len(), 17, "the request was not staged at cap");
+                    buf.fill(7);
+                    fill_code
+                })
+            };
+            assert_ne!(code, R::Ok as c_int, "len {len}");
+            assert!(out.iter().all(|&b| b == 0xA5), "len {len}: {out:?}");
+        }
+    }
+
+    /// A request below `cap` whose `fill` fails leaves the caller's buffer
+    /// zeroized for its length and no further.
+    #[test]
+    fn staged_output_failed_fill_zeroizes_len_bytes() {
+        setup();
+        let mut out = [0xA5_u8; 32];
+        // SAFETY: `out` is a writable local of 32 bytes.
+        let code = unsafe {
+            staged_output(out.as_mut_ptr(), 16, 17, |buf| {
+                buf.fill(7);
+                R::InvalidInput as c_int
+            })
+        };
+        assert_eq!(code, R::InvalidInput as c_int);
+        assert!(out[..16].iter().all(|&b| b == 0), "{out:?}");
+        assert!(out[16..].iter().all(|&b| b == 0xA5), "{out:?}");
     }
 }

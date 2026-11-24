@@ -67,7 +67,12 @@
 #          name fails the check. An entry the library no longer imports is
 #          reported as a note and does not fail it. Names a library looks
 #          up at run time through dlsym or GetProcAddress are not imports
-#          and are not checked.
+#          and are not checked. A library that exports a symbol starting
+#          `oxi_test_`, from `nm -D --defined-only` (ELF), the export table
+#          `objdump -p` or `llvm-readobj --coff-exports` prints (PE) or
+#          `nm -g -U` (Mach-O), fails the check: those are the
+#          fault-injection test symbols, which a shipped library must not
+#          contain.
 # examples Each examples/<language>/ directory holding a run.sh runs it with
 #          the bundle directory as its argument, and it must exit 0 and print
 #              ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad
@@ -284,6 +289,50 @@ list_imports() {
     return 0
 }
 
+# list_test_exports <elf|pe|macho> <library> <mach-o arch>: prints the
+# fault-injection test symbols (`oxi_test_*`) the library exports, one per
+# line. Returns non-zero, naming the tool, when it fails to read the
+# library.
+list_test_exports() {
+    local format="$1" lib="$2" arch="$3" nm listing
+    case "$format" in
+        elf)
+            nm="$(tool nm)" || return 1
+            listing="$("$nm" -D --defined-only "$lib")" || { echo "FAILED: $nm could not read $lib" >&2; return 1; }
+            ;;
+        macho)
+            nm="$(tool nm)" || return 1
+            listing="$("$nm" -g -U -arch "$arch" "$lib")" || { echo "FAILED: $nm could not read $lib" >&2; return 1; }
+            ;;
+        pe)
+            if command -v objdump >/dev/null 2>&1; then
+                listing="$(objdump -p "$lib")" || { echo "FAILED: objdump could not read $lib" >&2; return 1; }
+                # The `[Ordinal/Name Pointer] Table` heading is followed by one
+                # row per exported name, ending at a blank line. Newer binutils
+                # add a column header and Ordinal and Hint columns; the name is
+                # the last field either way.
+                listing="$(printf '%s\n' "$listing" | tr -d '\r' | awk '
+                    /^\[Ordinal\/Name Pointer\] Table/ { inside = 1; next }
+                    inside && NF == 0 { inside = 0; next }
+                    inside && /^\t\[/ { print $NF }
+                ')"
+            elif command -v llvm-readobj >/dev/null 2>&1; then
+                listing="$(llvm-readobj --coff-exports "$lib")" || { echo "FAILED: llvm-readobj could not read $lib" >&2; return 1; }
+                listing="$(printf '%s\n' "$listing" | tr -d '\r' | awk '
+                    /^Export \{/ { inside = 1; next }
+                    /^\}/ { inside = 0; next }
+                    inside && /^  Name: / { print $2 }
+                ')"
+            else
+                echo "FAILED: neither objdump nor llvm-readobj is on PATH" >&2
+                return 1
+            fi
+            ;;
+    esac
+    printf '%s\n' "$listing" | awk 'NF && !/:$/ { print $NF }' | sed -n 's/^_\{0,1\}\(oxi_test_.*\)/\1/p'
+    return 0
+}
+
 tmp="$(mktemp -d)"
 # The mode may still be inside the extract directory.
 trap 'cd / && rm -rf "$tmp"' EXIT
@@ -438,7 +487,15 @@ case "$mode" in
         minus() { awk 'FILENAME == ARGV[1] { have[$0] = 1; next } NF && !($0 in have)' "$1" "$2"; }
         unlisted="$(minus "$tmp/allowed" "$tmp/found")" || { echo "FAILED: could not compare $lib's imports with $list" >&2; exit 1; }
         unused="$(minus "$tmp/found" "$tmp/allowed")" || { echo "FAILED: could not compare $list with $lib's imports" >&2; exit 1; }
+        # A tool failure here fails the check without hiding the import
+        # comparison below.
         failed=0
+        test_exports="$(list_test_exports "$format" "$(native "$dir/$lib")" "$arch")" || failed=1
+        while IFS= read -r entry; do
+            [ -n "$entry" ] || continue
+            echo "FAILED: $lib exports the test symbol $entry" >&2
+            failed=1
+        done <<<"$(printf '%s\n' "$test_exports" | tr -d '\r')"
         while IFS= read -r entry; do
             [ -n "$entry" ] || continue
             echo "FAILED: $lib imports $entry, which the allow-list $list does not name" >&2
