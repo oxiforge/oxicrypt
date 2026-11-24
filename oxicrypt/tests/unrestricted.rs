@@ -8,50 +8,68 @@
 
 mod common;
 
-use common::{init, unhex};
-use oxicrypt::{Error, HMAC_DRBG_MAX_REQUEST_LEN, MlDsa87KeySeed, Module, Profile};
+use common::init;
+use oxicrypt::{
+    DrbgKind, Error, HMAC_DRBG_MAX_PROVIDED_LEN, HMAC_DRBG_MAX_REQUEST_LEN, MlDsa87KeySeed,
+    MlKem1024EncapsSeed, MlKem1024KeySeedD, MlKem1024KeySeedZ, Module, Profile,
+};
 
 fn module() -> Module {
     init(Profile::Unrestricted).expect("the signed fixture library initialises unrestricted")
 }
 
-// NIST CAVP HMAC_DRBG.rsp, [SHA-256], PredictionResistance = False, no
-// reseed, no personalization or additional input, COUNT = 0; the same values
-// are the module's HMAC_DRBG-SHA-256 self-test in crates/oxicrypt-drbg/src/kat.rs.
-const ENTROPY: &str = "ca851911349384bffe89de1cbdc46e6831e44d34a4fb935ee285dd14b71a7488";
-const NONCE: &str = "659ba96c601dc69fc902940805ec0ca8";
-const EXPECTED: &str = "e528e9abf2dece54d47c7e75e5fe302149f817ea9fb4bee6f4199697d04d5b89\
-                        d54fbb978a15b5c443c9ec21036d2460b6f73ebad0dc2aba6e624abf07745bc1\
-                        07694bb7547bb0995f70de25d6b29e2d3011bb19d27676c07162c8b5ccde0668\
-                        961df86803482cb37ed6d5c0bb8d50cf1f50d476aa0458bdaba806f48be9dcb8";
+/// Each kind with the security strength SP 800-90A gives it: 256 bits for
+/// every HMAC_DRBG and Hash_DRBG here, the AES key length for CTR_DRBG.
+const KINDS: [(DrbgKind, u32); 9] = [
+    (DrbgKind::HmacSha256, 256),
+    (DrbgKind::HmacSha384, 256),
+    (DrbgKind::HmacSha512, 256),
+    (DrbgKind::HashSha256, 256),
+    (DrbgKind::HashSha384, 256),
+    (DrbgKind::HashSha512, 256),
+    (DrbgKind::CtrAes128, 128),
+    (DrbgKind::CtrAes192, 192),
+    (DrbgKind::CtrAes256, 256),
+];
 
 #[test]
-fn hmac_drbg_sha256_known_answer() {
+fn drbg_generates_and_reseeds() {
     let m = module();
-    let mut drbg = m.hmac_drbg_sha256().unwrap();
-    drbg.instantiate(&unhex(ENTROPY), &unhex(NONCE), &[])
-        .unwrap();
-    let mut out = [0u8; 128];
-    drbg.generate(&[], &mut out).unwrap();
-    drbg.generate(&[], &mut out).unwrap();
-    assert_eq!(out.as_slice(), unhex(EXPECTED));
+    for (kind, strength) in KINDS {
+        let mut first = m.drbg(kind).unwrap();
+        let mut second = m.drbg(kind).unwrap();
+        first.instantiate(&[]).unwrap();
+        second.instantiate(&[]).unwrap();
+        let (mut a, mut b) = ([0u8; 64], [0u8; 64]);
+        first.generate(&[], &mut a).unwrap();
+        second.generate(&[], &mut b).unwrap();
+        assert_ne!(a, [0u8; 64], "{kind:?} wrote nothing");
+        assert_ne!(
+            a, b,
+            "two instantiations of {kind:?} produced the same output"
+        );
+
+        first.reseed(b"additional").unwrap();
+        let mut c = [0u8; 64];
+        first.generate(b"more", &mut c).unwrap();
+        assert_ne!(a, c, "{kind:?} repeated its output after a reseed");
+        assert_eq!(first.strength_bits(), Ok(strength), "{kind:?}");
+        assert_eq!(second.strength_bits(), Ok(strength), "{kind:?}");
+    }
 }
 
 #[test]
-fn hmac_drbg_sha256_states_and_bounds() {
+fn drbg_states_and_bounds() {
     let m = module();
-    let mut drbg = m.hmac_drbg_sha256().unwrap();
+    let mut drbg = m.drbg(DrbgKind::HmacSha256).unwrap();
     let mut out = [0xAAu8; 16];
     assert_eq!(drbg.generate(&[], &mut out), Err(Error::Uninstantiated));
     assert!(out.iter().all(|b| *b == 0), "output not wiped on error");
-    assert_eq!(
-        drbg.seed::<MlDsa87KeySeed>().unwrap_err(),
-        Error::Uninstantiated
-    );
+    assert_eq!(drbg.reseed(&[]), Err(Error::Uninstantiated));
+    assert_eq!(drbg.strength_bits(), Err(Error::Uninstantiated));
 
-    drbg.instantiate(&unhex(ENTROPY), &unhex(NONCE), b"p")
-        .unwrap();
-    drbg.reseed(&[3; 32], b"additional").unwrap();
+    drbg.instantiate(b"p").unwrap();
+    drbg.reseed(b"additional").unwrap();
     let mut big = vec![0xAAu8; HMAC_DRBG_MAX_REQUEST_LEN + 1];
     assert_eq!(drbg.generate(&[], &mut big), Err(Error::OutputTooLong));
     assert!(big.iter().all(|b| *b == 0), "output not wiped on error");
@@ -59,19 +77,14 @@ fn hmac_drbg_sha256_states_and_bounds() {
     drbg.generate(b"more", &mut big).unwrap();
 
     assert_eq!(
-        drbg.instantiate(&[0; 700], &[0; 69], &[]),
+        drbg.instantiate(&[0; HMAC_DRBG_MAX_PROVIDED_LEN]),
         Err(Error::InvalidInput),
-        "769 bytes provided, over HMAC_DRBG_MAX_PROVIDED_LEN"
+        "a personalization string as long as everything HMAC_DRBG accepts"
     );
     assert_eq!(
-        drbg.instantiate(&[0; 31], &[0; 16], &[]),
-        Err(Error::EntropyInputTooShort),
-        "31 bytes of entropy, under the 256-bit strength"
-    );
-    assert_eq!(
-        drbg.instantiate(&[0; 32], &[0; 15], &[]),
-        Err(Error::NonceTooShort),
-        "15-byte nonce, under half the strength"
+        drbg.strength_bits(),
+        Ok(256),
+        "a refused instantiation leaves the handle as it was"
     );
 }
 
@@ -79,9 +92,9 @@ fn hmac_drbg_sha256_states_and_bounds() {
 /// called: on an uninstantiated handle the library would answer
 /// `Uninstantiated` first.
 #[test]
-fn hmac_drbg_sha256_request_bound_is_checked_before_the_call() {
+fn drbg_request_bound_is_checked_before_the_call() {
     let m = module();
-    let mut drbg = m.hmac_drbg_sha256().unwrap();
+    let mut drbg = m.drbg(DrbgKind::HmacSha256).unwrap();
     let mut big = vec![0xAAu8; HMAC_DRBG_MAX_REQUEST_LEN + 1];
     assert_eq!(drbg.generate(&[], &mut big), Err(Error::OutputTooLong));
     let mut max = vec![0xAAu8; HMAC_DRBG_MAX_REQUEST_LEN];
@@ -91,25 +104,38 @@ fn hmac_drbg_sha256_request_bound_is_checked_before_the_call() {
 #[test]
 fn seeds_from_the_drbg_generate_keys() {
     let m = module();
-    let mut drbg = m.hmac_drbg_sha256().unwrap();
-    drbg.instantiate(&unhex(ENTROPY), &unhex(NONCE), &[])
-        .unwrap();
-    let first: MlDsa87KeySeed = drbg.seed().unwrap();
-    let second: MlDsa87KeySeed = drbg.seed().unwrap();
-    assert_ne!(first.as_bytes(), second.as_bytes());
+    let mut drbg = m.drbg(DrbgKind::HmacSha256).unwrap();
+    drbg.instantiate(&[]).unwrap();
+    let mut draw = || {
+        let mut bytes = [0u8; 32];
+        drbg.generate(&[], &mut bytes).unwrap();
+        bytes
+    };
 
-    let (pk, sk) = m.ml_dsa_87_keygen(first).unwrap();
+    let (pk, sk) = m
+        .ml_dsa_87_keygen(MlDsa87KeySeed::from_bytes(&draw()))
+        .unwrap();
     let sig = m.ml_dsa_87_sign(&sk, b"m", b"").unwrap();
     assert_eq!(m.ml_dsa_87_verify(&pk, b"m", b"", &sig), Ok(()));
 
     let (ek, dk) = m
-        .ml_kem_1024_keygen(drbg.seed().unwrap(), drbg.seed().unwrap())
+        .ml_kem_1024_keygen(
+            MlKem1024KeySeedD::from_bytes(&draw()),
+            MlKem1024KeySeedZ::from_bytes(&draw()),
+        )
         .unwrap();
     let (sent, ct) = m
-        .ml_kem_1024_encapsulate(&ek, drbg.seed().unwrap())
+        .ml_kem_1024_encapsulate(&ek, MlKem1024EncapsSeed::from_bytes(&draw()))
         .unwrap();
     let received = m.ml_kem_1024_decapsulate(&dk, &ct).unwrap();
     assert_eq!(sent.as_bytes(), received.as_bytes());
+}
+
+#[test]
+fn entropy_on_demand_test_names_the_seed_path() {
+    let label = module().entropy_on_demand_test().unwrap();
+    assert!(!label.is_empty());
+    assert_ne!(label, "undecided");
 }
 
 #[test]

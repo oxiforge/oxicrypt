@@ -1,13 +1,13 @@
 //! The wrapped services.
 
+use core::ffi::{CStr, c_char, c_int};
 use core::ptr::{self, NonNull};
 
 use crate::error::{Error, Site, status};
 use crate::module::{Module, check};
 use crate::secret::{
-    DrbgSeed, HkdfPrk, MlDsa87KeySeed, MlDsa87SecretKey, MlKem1024DecapsulationKey,
-    MlKem1024EncapsSeed, MlKem1024KeySeedD, MlKem1024KeySeedZ, Okm, SharedSecret, seed_bytes_mut,
-    wipe, zeroed_seed,
+    HkdfPrk, MlDsa87KeySeed, MlDsa87SecretKey, MlKem1024DecapsulationKey, MlKem1024EncapsSeed,
+    MlKem1024KeySeedD, MlKem1024KeySeedZ, Okm, SharedSecret, wipe,
 };
 use crate::sys;
 use crate::{
@@ -243,24 +243,56 @@ impl Module {
         Ok(plaintext)
     }
 
-    /// A new, uninstantiated HMAC_DRBG-SHA-256 handle.
-    pub fn hmac_drbg_sha256(self) -> Result<HmacDrbgSha256, Error> {
-        let mut handle: *mut sys::OxiHmacDrbgSha256 = ptr::null_mut();
-        // SAFETY: U1; `out_handle` points to a live local.
-        let code = unsafe { sys::oxi_hmac_drbg_sha256_new(&raw mut handle) };
+    /// A new, uninstantiated DRBG of `kind`, seeded by the module when
+    /// [`Drbg::instantiate`] is called.
+    pub fn drbg(self, kind: DrbgKind) -> Result<Drbg, Error> {
+        let new: unsafe extern "C" fn(*mut *mut sys::OxiDrbg) -> c_int = match kind {
+            DrbgKind::HmacSha256 => sys::oxi_hmac_drbg_sha256_new_rbg,
+            DrbgKind::HmacSha384 => sys::oxi_hmac_drbg_sha384_new_rbg,
+            DrbgKind::HmacSha512 => sys::oxi_hmac_drbg_sha512_new_rbg,
+            DrbgKind::HashSha256 => sys::oxi_hash_drbg_sha256_new_rbg,
+            DrbgKind::HashSha384 => sys::oxi_hash_drbg_sha384_new_rbg,
+            DrbgKind::HashSha512 => sys::oxi_hash_drbg_sha512_new_rbg,
+            DrbgKind::CtrAes128 => sys::oxi_ctr_drbg_aes128_new_rbg,
+            DrbgKind::CtrAes192 => sys::oxi_ctr_drbg_aes192_new_rbg,
+            DrbgKind::CtrAes256 => sys::oxi_ctr_drbg_aes256_new_rbg,
+        };
+        let mut handle: *mut sys::OxiDrbg = ptr::null_mut();
+        // SAFETY: U1; `out` points to a live local.
+        let code = unsafe { new(&raw mut handle) };
         check(code)?;
         NonNull::new(handle)
-            .map(|ptr| HmacDrbgSha256 { ptr })
+            .map(|ptr| Drbg { ptr })
             .ok_or(Error::NullPointer)
+    }
+
+    /// Runs the entropy source's on-demand test on the module's seed path
+    /// and returns the label naming that path.
+    ///
+    /// The first call in a process decides the seed path, as the first DRBG
+    /// instantiation does. A failed test returns
+    /// [`Error::EntropyUnavailable`], after which the module is in its error
+    /// state; [`Error::Busy`] asks for a retry after a pause.
+    pub fn entropy_on_demand_test(self) -> Result<&'static str, Error> {
+        let mut label: *const c_char = ptr::null();
+        // SAFETY: U1; `label_out` points to a live local.
+        let code = unsafe { sys::oxi_entropy_on_demand_test(&raw mut label) };
+        check(code)?;
+        if label.is_null() {
+            return Err(Error::NullPointer);
+        }
+        // SAFETY: U5, on status 0 the header sets `label` to a static
+        // NUL-terminated string that lives as long as the library.
+        let label = unsafe { CStr::from_ptr(label) };
+        label.to_str().map_err(|_| Error::Internal)
     }
 
     /// ML-DSA-87 key generation from a 32-byte seed (FIPS 204 §6.1).
     ///
     /// The key is generated inside the module. Its approved status depends
-    /// on where the seed came from: a seed from
-    /// [`HmacDrbgSha256::seed`] is drawn from the module's DRBG, which the
-    /// caller seeds; a seed from [`MlDsa87KeySeed::from_bytes`] comes from
-    /// outside the module. The seed is consumed and zeroed.
+    /// on where the seed came from; a seed passed to
+    /// [`MlDsa87KeySeed::from_bytes`] comes from outside the module. The seed
+    /// is consumed and zeroed.
     pub fn ml_dsa_87_keygen(
         self,
         seed: MlDsa87KeySeed,
@@ -429,67 +461,87 @@ impl core::fmt::Debug for Aes256Key {
     }
 }
 
-/// An HMAC_DRBG-SHA-256 instance held by the library (SP 800-90A §10.1.2).
-///
-/// The caller seeds it through [`instantiate`](Self::instantiate) and
-/// [`reseed`](Self::reseed): the library's entropy source is not connected to
-/// the C ABI's DRBG handles, so the caller supplies entropy meeting
-/// SP 800-90A and SP 800-90B and documents its source. Freed exactly once,
-/// when dropped; the library zeroes the state.
-pub struct HmacDrbgSha256 {
-    ptr: NonNull<sys::OxiHmacDrbgSha256>,
+/// The SP 800-90A mechanism and primitive a [`Drbg`] holds.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum DrbgKind {
+    /// HMAC_DRBG with SHA-256.
+    HmacSha256,
+    /// HMAC_DRBG with SHA-384.
+    HmacSha384,
+    /// HMAC_DRBG with SHA-512.
+    HmacSha512,
+    /// Hash_DRBG with SHA-256.
+    HashSha256,
+    /// Hash_DRBG with SHA-384.
+    HashSha384,
+    /// Hash_DRBG with SHA-512.
+    HashSha512,
+    /// CTR_DRBG with AES-128 and the derivation function.
+    CtrAes128,
+    /// CTR_DRBG with AES-192 and the derivation function.
+    CtrAes192,
+    /// CTR_DRBG with AES-256 and the derivation function.
+    CtrAes256,
 }
 
-// SAFETY: U7, the library-side state is reached only through `&mut self`, so
+/// One of the module's SP 800-90A DRBGs, held by the library and seeded by
+/// the module from its own entropy source.
+///
+/// Created uninstantiated by [`Module::drbg`]; [`instantiate`](Self::instantiate)
+/// draws its entropy input and nonce from the module's seed path. Freed
+/// exactly once, when dropped; the library wipes the state.
+///
+/// A `Drbg` can move to another thread but not be shared between threads,
+/// since every call that changes its state takes `&mut self`:
+/// ```compile_fail,E0277
+/// fn share(drbg: &oxicrypt::Drbg) {
+///     std::thread::scope(|s| {
+///         s.spawn(|| drbg.strength_bits());
+///         s.spawn(|| drbg.strength_bits());
+///     });
+/// }
+/// ```
+pub struct Drbg {
+    ptr: NonNull<sys::OxiDrbg>,
+}
+
+// SAFETY: U7, the library-side state is changed only through `&mut self`, so
 // moving the handle to another thread moves its sole user.
-unsafe impl Send for HmacDrbgSha256 {}
+unsafe impl Send for Drbg {}
 
-impl HmacDrbgSha256 {
-    /// Instantiate (SP 800-90A §10.1.2.3). Empty `nonce` or
-    /// `personalization` are passed as absent.
-    pub fn instantiate(
-        &mut self,
-        entropy: &[u8],
-        nonce: &[u8],
-        personalization: &[u8],
-    ) -> Result<(), Error> {
-        // SAFETY: U1; U4 for the handle; U2 for each input.
-        let code = unsafe {
-            sys::oxi_hmac_drbg_sha256_instantiate(
-                self.ptr.as_ptr(),
-                input(entropy),
-                entropy.len(),
-                input(nonce),
-                nonce.len(),
-                input(personalization),
-                personalization.len(),
-            )
-        };
+impl Drbg {
+    /// Instantiates from the module's seed path with the personalization
+    /// string `perso`, replacing any earlier instantiation. An empty `perso`
+    /// is passed as absent.
+    ///
+    /// A personalization string longer than the DRBG accepts returns
+    /// [`Error::InvalidInput`]; a failed draw returns [`Error::Busy`] (retry
+    /// after a pause) or [`Error::EntropyUnavailable`], and leaves the handle
+    /// as it was. In a child process after `fork`, this is the call that
+    /// makes an inherited handle usable again.
+    pub fn instantiate(&mut self, perso: &[u8]) -> Result<(), Error> {
+        // SAFETY: U1; U4 for the handle; U2 for `perso`.
+        let code =
+            unsafe { sys::oxi_drbg_instantiate(self.ptr.as_ptr(), input(perso), perso.len()) };
         check(code)
     }
 
-    /// Reseed (SP 800-90A §10.1.2.4). An empty `additional` is passed as
-    /// absent.
-    pub fn reseed(&mut self, entropy: &[u8], additional: &[u8]) -> Result<(), Error> {
-        // SAFETY: U1; U4 for the handle; U2 for each input.
-        let code = unsafe {
-            sys::oxi_hmac_drbg_sha256_reseed(
-                self.ptr.as_ptr(),
-                input(entropy),
-                entropy.len(),
-                input(additional),
-                additional.len(),
-            )
-        };
+    /// Reseeds from the module's seed path with the additional input
+    /// `additional`. An empty `additional` is passed as absent.
+    pub fn reseed(&mut self, additional: &[u8]) -> Result<(), Error> {
+        // SAFETY: U1; U4 for the handle; U2 for `additional`.
+        let code =
+            unsafe { sys::oxi_drbg_reseed(self.ptr.as_ptr(), input(additional), additional.len()) };
         check(code)
     }
 
-    /// Generate (SP 800-90A §10.1.2.5) `out.len()` bytes into `out`. An empty
-    /// `additional` is passed as absent. `out` is zeroed on every error.
+    /// Generates `out.len()` bytes into `out`, with the additional input
+    /// `additional`. An empty `additional` is passed as absent. `out` is
+    /// zeroed on every error. The DRBG reseeds itself from the module's seed
+    /// path when it reaches its reseed interval.
     ///
     /// A request over [`HMAC_DRBG_MAX_REQUEST_LEN`] is refused with
-    /// [`Error::OutputTooLong`] before the library is called, which would
-    /// otherwise allocate a buffer of the requested length before refusing.
+    /// [`Error::OutputTooLong`] before the library is called.
     pub fn generate(&mut self, additional: &[u8], out: &mut [u8]) -> Result<(), Error> {
         if out.len() > HMAC_DRBG_MAX_REQUEST_LEN {
             wipe(out);
@@ -499,7 +551,7 @@ impl HmacDrbgSha256 {
         // `out.len()` writable bytes, bounded above, and that is the length
         // passed.
         let code = unsafe {
-            sys::oxi_hmac_drbg_sha256_generate(
+            sys::oxi_drbg_generate(
                 self.ptr.as_ptr(),
                 input(additional),
                 additional.len(),
@@ -510,26 +562,28 @@ impl HmacDrbgSha256 {
         status_or_wipe(code, Site::Other, out)
     }
 
-    /// A 32-byte seed of type `S` generated by this DRBG, written directly
-    /// into its zeroing owner. The type is usually inferred from the call the
-    /// seed is passed to.
-    pub fn seed<S: DrbgSeed>(&mut self) -> Result<S, Error> {
-        let mut seed: S = zeroed_seed();
-        self.generate(&[], seed_bytes_mut(&mut seed))?;
-        Ok(seed)
+    /// The security strength of the instantiated DRBG, in bits.
+    /// [`Error::Uninstantiated`] before the first successful
+    /// [`instantiate`](Self::instantiate).
+    pub fn strength_bits(&self) -> Result<u32, Error> {
+        let mut bits = 0u32;
+        // SAFETY: U1; U4 for the handle; `out` points to a live local.
+        let code = unsafe { sys::oxi_drbg_strength_bits(self.ptr.as_ptr(), &raw mut bits) };
+        check(code)?;
+        Ok(bits)
     }
 }
 
-impl Drop for HmacDrbgSha256 {
+impl Drop for Drbg {
     fn drop(&mut self) {
-        // SAFETY: U4, `ptr` came from a successful `oxi_hmac_drbg_sha256_new`,
-        // is private to this type and is freed only here.
-        unsafe { sys::oxi_hmac_drbg_sha256_free(self.ptr.as_ptr()) };
+        // SAFETY: U4, `ptr` came from a successful `_new_rbg`, is private to
+        // this type and is freed only here.
+        unsafe { sys::oxi_drbg_free(self.ptr.as_ptr()) };
     }
 }
 
-impl core::fmt::Debug for HmacDrbgSha256 {
+impl core::fmt::Debug for Drbg {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        f.write_str("HmacDrbgSha256")
+        f.write_str("Drbg")
     }
 }

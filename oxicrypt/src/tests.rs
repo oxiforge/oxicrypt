@@ -198,6 +198,7 @@ fn header_type(c: &str) -> String {
     let base = match base.trim() {
         "int" => "c_int".to_owned(),
         "uintptr_t" => "usize".to_owned(),
+        "uint32_t" => "u32".to_owned(),
         "uint64_t" => "u64".to_owned(),
         "uint8_t" => "u8".to_owned(),
         "char" => "c_char".to_owned(),
@@ -312,7 +313,7 @@ fn sys_functions() -> BTreeMap<String, Signature> {
 fn sys_declares_exactly_the_header() {
     let header = header_functions();
     let sys = sys_functions();
-    assert_eq!(header.len(), 293, "the header's export count changed");
+    assert_eq!(header.len(), 299, "the header's export count changed");
     assert!(header.contains_key("lama_manifest"));
     assert_eq!(
         header["oxi_aes256_new"],
@@ -670,11 +671,11 @@ mod forbidden_traits {
         HkdfPrk, MlDsa87KeySeed, MlDsa87SecretKey, MlKem1024DecapsulationKey, MlKem1024EncapsSeed,
         MlKem1024KeySeedD, MlKem1024KeySeedZ, Okm, SharedSecret,
     };
-    use crate::{Aes256Key, HmacDrbgSha256};
+    use crate::{Aes256Key, Drbg};
     use core::hash::Hash;
 
     assert_not_impl!(Aes256Key: Clone, Copy);
-    assert_not_impl!(HmacDrbgSha256: Clone, Copy, Sync);
+    assert_not_impl!(Drbg: Clone, Copy, Sync);
     assert_not_impl!(HkdfPrk: Clone, Copy, PartialEq, Hash, core::fmt::Display);
     assert_not_impl!(Okm: Clone, Copy, PartialEq, Hash, core::fmt::Display);
     assert_not_impl!(SharedSecret: Clone, Copy, PartialEq, Hash, core::fmt::Display);

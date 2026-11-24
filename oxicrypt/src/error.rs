@@ -24,8 +24,10 @@ pub enum Site {
 /// it.
 ///
 /// Variants up to [`Error::Internal`] are the library's status codes, in the
-/// order and with the meaning of `OxiResult` in the C ABI. The last five are
-/// the crate's own.
+/// order and with the meaning of `OxiResult` in the C ABI.
+/// [`Error::SignatureInvalid`] is code 22 from a signature verification,
+/// [`Error::Unknown`] is any code the crate does not recognise, and the last
+/// four are the crate's own checks.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum Error {
@@ -45,7 +47,10 @@ pub enum Error {
     NotImplemented,
     /// Code 8: a DRBG handle was used before it was instantiated.
     Uninstantiated,
-    /// Code 9: a DRBG handle must be reseeded before it generates more output.
+    /// Code 9: a DRBG passed its reseed interval and cannot reseed itself.
+    /// The library returns no code 9 at ABI 2, because every DRBG it
+    /// exposes is seeded by the module and reseeds itself; the variant is
+    /// kept so the code keeps its meaning.
     ReseedRequired,
     /// Code 10: a required pointer was null.
     NullPointer,
@@ -79,6 +84,16 @@ pub enum Error {
     EntropyInputTooShort,
     /// Code 30: a DRBG's nonce is shorter than half its security strength.
     NonceTooShort,
+    /// Code 31: the random bit generator handed to a service is weaker than
+    /// the service requires.
+    RbgTooWeak,
+    /// Code 32: a DRBG handle is in use by another call, or the module's seed
+    /// path was held for longer than its wait bound. Nothing was changed;
+    /// retry after a pause.
+    Busy,
+    /// Code 33: the entropy source failed while seeding or testing, and the
+    /// module has entered its error state.
+    EntropyUnavailable,
     /// Code 255: an internal error of the library.
     Internal,
     /// Code 22 from a signature verification: the signature did not verify,
@@ -153,6 +168,9 @@ impl Error {
             28 => Self::IntegrityUnverified,
             29 => Self::EntropyInputTooShort,
             30 => Self::NonceTooShort,
+            31 => Self::RbgTooWeak,
+            32 => Self::Busy,
+            33 => Self::EntropyUnavailable,
             255 => Self::Internal,
             other => Self::Unknown(other),
         }
@@ -183,7 +201,9 @@ impl fmt::Display for Error {
             }
             Self::NotImplemented => f.write_str("service not implemented"),
             Self::Uninstantiated => f.write_str("DRBG used before it was instantiated"),
-            Self::ReseedRequired => f.write_str("DRBG must be reseeded before it generates more"),
+            Self::ReseedRequired => {
+                f.write_str("DRBG passed its reseed interval and cannot reseed itself")
+            }
             Self::NullPointer => f.write_str("a required pointer was null"),
             Self::BufferTooSmall => {
                 f.write_str("output buffer smaller than the documented minimum")
@@ -206,6 +226,11 @@ impl fmt::Display for Error {
             Self::NonceTooShort => {
                 f.write_str("nonce shorter than half the DRBG's security strength")
             }
+            Self::RbgTooWeak => {
+                f.write_str("random bit generator weaker than the service requires")
+            }
+            Self::Busy => f.write_str("DRBG handle or seed path busy; retry after a pause"),
+            Self::EntropyUnavailable => f.write_str("entropy source failed"),
             Self::Internal => f.write_str("internal error in the library"),
             Self::SignatureInvalid => f.write_str("signature did not verify"),
             Self::Unknown(code) => write!(f, "unknown status code {code}"),

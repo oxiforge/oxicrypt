@@ -8,16 +8,15 @@
 //! ```
 //!
 //! The profile is `Unrestricted`, because the CNSA 2.0 profile does not
-//! permit HMAC_DRBG-SHA-256. The DRBG's entropy here is read from the
-//! operating system's generator for demonstration; an application documents
-//! an entropy source meeting SP 800-90B instead.
+//! permit HMAC_DRBG-SHA-256. The DRBG is seeded by the module from its own
+//! entropy source.
 
 #![allow(clippy::print_stdout)]
 
 #[cfg(any(oxicrypt_pinned, oxicrypt_unpinned))]
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    use oxicrypt::{Module, Profile};
-    use std::io::Read;
+    use oxicrypt::{DrbgKind, MlDsa87KeySeed, MlKem1024EncapsSeed, Module, Profile};
+    use oxicrypt::{MlKem1024KeySeedD, MlKem1024KeySeedZ};
 
     fn hex(bytes: &[u8]) -> String {
         use std::fmt::Write;
@@ -51,21 +50,30 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let refused = module.aes256_gcm_decrypt_vec(&key, &nonce, b"aad", &ciphertext, &bad_tag);
     println!("aes-256-gcm modified tag: {:?}", refused.err());
 
-    let mut entropy = [0u8; 48];
-    std::fs::File::open("/dev/urandom")?.read_exact(&mut entropy)?;
-    let mut drbg = module.hmac_drbg_sha256()?;
-    drbg.instantiate(&entropy[..32], &entropy[32..], b"quickstart")?;
-    let seed = drbg.seed()?;
+    println!("entropy source: {}", module.entropy_on_demand_test()?);
+    let mut drbg = module.drbg(DrbgKind::HmacSha256)?;
+    drbg.instantiate(b"quickstart")?;
+    drbg.reseed(&[])?;
+    println!("hmac_drbg-sha256: {} bits", drbg.strength_bits()?);
+    let mut seed = [0u8; 32];
+    drbg.generate(&[], &mut seed)?;
 
-    let (pk, sk) = module.ml_dsa_87_keygen(seed)?;
+    let (pk, sk) = module.ml_dsa_87_keygen(MlDsa87KeySeed::from_bytes(&seed))?;
     let sig = module.ml_dsa_87_sign(&sk, b"message", b"")?;
     module.ml_dsa_87_verify(&pk, b"message", b"", &sig)?;
     println!("ml-dsa-87: signature verified");
     let wrong = module.ml_dsa_87_verify(&pk, b"other message", b"", &sig);
     println!("ml-dsa-87 other message: {:?}", wrong.err());
 
-    let (ek, dk) = module.ml_kem_1024_keygen(drbg.seed()?, drbg.seed()?)?;
-    let (sent, ct) = module.ml_kem_1024_encapsulate(&ek, drbg.seed()?)?;
+    let (mut d, mut z, mut m) = ([0u8; 32], [0u8; 32], [0u8; 32]);
+    drbg.generate(&[], &mut d)?;
+    drbg.generate(&[], &mut z)?;
+    drbg.generate(&[], &mut m)?;
+    let (ek, dk) = module.ml_kem_1024_keygen(
+        MlKem1024KeySeedD::from_bytes(&d),
+        MlKem1024KeySeedZ::from_bytes(&z),
+    )?;
+    let (sent, ct) = module.ml_kem_1024_encapsulate(&ek, MlKem1024EncapsSeed::from_bytes(&m))?;
     let received = module.ml_kem_1024_decapsulate(&dk, &ct)?;
     println!(
         "ml-kem-1024: shared secrets agree: {}",

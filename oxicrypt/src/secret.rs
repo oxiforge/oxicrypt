@@ -164,52 +164,6 @@ stack_secret!(
     ML_KEM_1024_SEED_LEN
 );
 
-mod sealed {
-    /// Implemented only by this crate's seed types.
-    pub trait Sealed {
-        fn zeroed_seed() -> Self;
-        fn seed_bytes_mut(&mut self) -> &mut [u8; 32];
-    }
-}
-
-/// A seed type the module's DRBG can fill with
-/// [`HmacDrbgSha256::seed`](crate::HmacDrbgSha256::seed): the four seed types
-/// of this crate, and no others.
-///
-/// A seed drawn from the module's DRBG comes from inside the module; a seed
-/// passed to `from_bytes` comes from outside it.
-pub trait DrbgSeed: sealed::Sealed {}
-
-macro_rules! drbg_seed {
-    ($($name:ident),*) => {$(
-        impl sealed::Sealed for $name {
-            fn zeroed_seed() -> Self {
-                Self::zeroed()
-            }
-            fn seed_bytes_mut(&mut self) -> &mut [u8; 32] {
-                &mut self.bytes
-            }
-        }
-        impl DrbgSeed for $name {}
-    )*};
-}
-
-drbg_seed!(
-    MlDsa87KeySeed,
-    MlKem1024KeySeedD,
-    MlKem1024KeySeedZ,
-    MlKem1024EncapsSeed
-);
-
-/// A zeroed seed of type `S`, and the 32 bytes the DRBG writes into it.
-pub(crate) fn zeroed_seed<S: DrbgSeed>() -> S {
-    S::zeroed_seed()
-}
-
-pub(crate) fn seed_bytes_mut<S: DrbgSeed>(seed: &mut S) -> &mut [u8; 32] {
-    seed.seed_bytes_mut()
-}
-
 boxed_secret!(
     /// An ML-DSA-87 secret key, 4,896 bytes on the heap.
     MlDsa87SecretKey,

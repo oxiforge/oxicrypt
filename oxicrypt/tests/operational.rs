@@ -11,7 +11,7 @@ mod common;
 
 use common::{acvp, array, init};
 use oxicrypt::{
-    Error, HKDF_SHA384_MAX_OKM_LEN, IntegrityStatus, MlDsa87KeySeed, MlDsa87SecretKey,
+    DrbgKind, Error, HKDF_SHA384_MAX_OKM_LEN, IntegrityStatus, MlDsa87KeySeed, MlDsa87SecretKey,
     MlKem1024DecapsulationKey, MlKem1024EncapsSeed, MlKem1024KeySeedD, MlKem1024KeySeedZ, Module,
     Profile,
 };
@@ -353,8 +353,8 @@ fn handle_debug_prints_only_the_type_name() {
         "Aes256Key"
     );
     assert_eq!(
-        format!("{:?}", m.hmac_drbg_sha256().unwrap()),
-        "HmacDrbgSha256"
+        format!("{:?}", m.drbg(DrbgKind::HmacSha512).unwrap()),
+        "Drbg"
     );
 }
 
@@ -374,15 +374,42 @@ fn aes256_key_is_shared_across_threads() {
     }
 }
 
-// ----- HMAC_DRBG-SHA-256 under a profile that forbids it -----
+// ----- the DRBGs under CNSA 2.0 -----
 
 #[test]
-fn hmac_drbg_sha256_is_restricted_under_cnsa2() {
+fn drbgs_below_cnsa2_are_restricted() {
     let m = module();
-    let result = m
-        .hmac_drbg_sha256()
-        .and_then(|mut drbg| drbg.instantiate(&[1; 32], &[2; 16], &[]));
-    assert_eq!(result, Err(Error::AlgorithmRestricted));
+    for kind in [
+        DrbgKind::HmacSha256,
+        DrbgKind::HashSha256,
+        DrbgKind::CtrAes128,
+        DrbgKind::CtrAes192,
+    ] {
+        let mut drbg = m.drbg(kind).unwrap();
+        assert_eq!(
+            drbg.instantiate(&[]),
+            Err(Error::AlgorithmRestricted),
+            "{kind:?}"
+        );
+        assert_eq!(
+            drbg.strength_bits(),
+            Err(Error::AlgorithmRestricted),
+            "{kind:?}"
+        );
+    }
+    for kind in [
+        DrbgKind::HmacSha384,
+        DrbgKind::HmacSha512,
+        DrbgKind::HashSha384,
+        DrbgKind::HashSha512,
+        DrbgKind::CtrAes256,
+    ] {
+        let mut drbg = m.drbg(kind).unwrap();
+        drbg.instantiate(b"cnsa2").unwrap();
+        let mut out = [0u8; 48];
+        drbg.generate(&[], &mut out).unwrap();
+        assert_eq!(drbg.strength_bits(), Ok(256), "{kind:?}");
+    }
 }
 
 // ----- ML-DSA-87 -----

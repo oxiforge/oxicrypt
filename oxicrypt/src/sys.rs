@@ -4,8 +4,9 @@
 //! No generator runs at build time. The header-pinning test compares the
 //! name, parameter types and return type of every declaration here with the
 //! header, in both directions. Header types map as: `uint8_t` to `u8`,
-//! `uintptr_t` to `usize`, `uint64_t` to `u64`, `int` to `c_int`, `char` to
-//! `c_char`, a pointer to `const T` to `*const T`, any other pointer to
+//! `uintptr_t` to `usize`, `uint32_t` to `u32`, `uint64_t` to `u64`, `int`
+//! to `c_int`, `char` to `c_char`, a pointer to `const T` to `*const T`, any
+//! other pointer to
 //! `*mut T`, and each opaque handle `typedef` to a zero-sized `#[repr(C)]`
 //! struct of the same name.
 //!
@@ -40,6 +41,7 @@ opaque!(
     OxiCtrDrbgAes128,
     OxiCtrDrbgAes192,
     OxiCtrDrbgAes256,
+    OxiDrbg,
     OxiEcdsaP256PrivateKey,
     OxiEcdsaP384PrivateKey,
     OxiHashDrbgSha256,
@@ -1460,22 +1462,6 @@ unsafe extern "C" {
     ) -> c_int;
     pub(crate) fn oxi_hmac_drbg_sha256_new(out_handle: *mut *mut OxiHmacDrbgSha256) -> c_int;
     pub(crate) fn oxi_hmac_drbg_sha256_free(handle: *mut OxiHmacDrbgSha256);
-    pub(crate) fn oxi_hmac_drbg_sha256_instantiate(
-        handle: *mut OxiHmacDrbgSha256,
-        entropy: *const u8,
-        entropy_len: usize,
-        nonce: *const u8,
-        nonce_len: usize,
-        personalization: *const u8,
-        personalization_len: usize,
-    ) -> c_int;
-    pub(crate) fn oxi_hmac_drbg_sha256_reseed(
-        handle: *mut OxiHmacDrbgSha256,
-        entropy: *const u8,
-        entropy_len: usize,
-        additional_input: *const u8,
-        additional_input_len: usize,
-    ) -> c_int;
     pub(crate) fn oxi_hmac_drbg_sha256_generate(
         handle: *mut OxiHmacDrbgSha256,
         additional_input: *const u8,
@@ -1483,24 +1469,19 @@ unsafe extern "C" {
         out: *mut u8,
         out_len: usize,
     ) -> c_int;
+    pub(crate) fn oxi_hmac_drbg_sha256_instantiate_from_module(
+        handle: *mut OxiHmacDrbgSha256,
+        perso: *const u8,
+        perso_len: usize,
+    ) -> c_int;
+    pub(crate) fn oxi_hmac_drbg_sha256_reseed_from_module(
+        handle: *mut OxiHmacDrbgSha256,
+        additional: *const u8,
+        additional_len: usize,
+    ) -> c_int;
+    pub(crate) fn oxi_hmac_drbg_sha256_new_rbg(out: *mut *mut OxiDrbg) -> c_int;
     pub(crate) fn oxi_hmac_drbg_sha384_new(out_handle: *mut *mut OxiHmacDrbgSha384) -> c_int;
     pub(crate) fn oxi_hmac_drbg_sha384_free(handle: *mut OxiHmacDrbgSha384);
-    pub(crate) fn oxi_hmac_drbg_sha384_instantiate(
-        handle: *mut OxiHmacDrbgSha384,
-        entropy: *const u8,
-        entropy_len: usize,
-        nonce: *const u8,
-        nonce_len: usize,
-        personalization: *const u8,
-        personalization_len: usize,
-    ) -> c_int;
-    pub(crate) fn oxi_hmac_drbg_sha384_reseed(
-        handle: *mut OxiHmacDrbgSha384,
-        entropy: *const u8,
-        entropy_len: usize,
-        additional_input: *const u8,
-        additional_input_len: usize,
-    ) -> c_int;
     pub(crate) fn oxi_hmac_drbg_sha384_generate(
         handle: *mut OxiHmacDrbgSha384,
         additional_input: *const u8,
@@ -1508,24 +1489,19 @@ unsafe extern "C" {
         out: *mut u8,
         out_len: usize,
     ) -> c_int;
+    pub(crate) fn oxi_hmac_drbg_sha384_instantiate_from_module(
+        handle: *mut OxiHmacDrbgSha384,
+        perso: *const u8,
+        perso_len: usize,
+    ) -> c_int;
+    pub(crate) fn oxi_hmac_drbg_sha384_reseed_from_module(
+        handle: *mut OxiHmacDrbgSha384,
+        additional: *const u8,
+        additional_len: usize,
+    ) -> c_int;
+    pub(crate) fn oxi_hmac_drbg_sha384_new_rbg(out: *mut *mut OxiDrbg) -> c_int;
     pub(crate) fn oxi_hmac_drbg_sha512_new(out_handle: *mut *mut OxiHmacDrbgSha512) -> c_int;
     pub(crate) fn oxi_hmac_drbg_sha512_free(handle: *mut OxiHmacDrbgSha512);
-    pub(crate) fn oxi_hmac_drbg_sha512_instantiate(
-        handle: *mut OxiHmacDrbgSha512,
-        entropy: *const u8,
-        entropy_len: usize,
-        nonce: *const u8,
-        nonce_len: usize,
-        personalization: *const u8,
-        personalization_len: usize,
-    ) -> c_int;
-    pub(crate) fn oxi_hmac_drbg_sha512_reseed(
-        handle: *mut OxiHmacDrbgSha512,
-        entropy: *const u8,
-        entropy_len: usize,
-        additional_input: *const u8,
-        additional_input_len: usize,
-    ) -> c_int;
     pub(crate) fn oxi_hmac_drbg_sha512_generate(
         handle: *mut OxiHmacDrbgSha512,
         additional_input: *const u8,
@@ -1533,24 +1509,19 @@ unsafe extern "C" {
         out: *mut u8,
         out_len: usize,
     ) -> c_int;
+    pub(crate) fn oxi_hmac_drbg_sha512_instantiate_from_module(
+        handle: *mut OxiHmacDrbgSha512,
+        perso: *const u8,
+        perso_len: usize,
+    ) -> c_int;
+    pub(crate) fn oxi_hmac_drbg_sha512_reseed_from_module(
+        handle: *mut OxiHmacDrbgSha512,
+        additional: *const u8,
+        additional_len: usize,
+    ) -> c_int;
+    pub(crate) fn oxi_hmac_drbg_sha512_new_rbg(out: *mut *mut OxiDrbg) -> c_int;
     pub(crate) fn oxi_hash_drbg_sha256_new(out_handle: *mut *mut OxiHashDrbgSha256) -> c_int;
     pub(crate) fn oxi_hash_drbg_sha256_free(handle: *mut OxiHashDrbgSha256);
-    pub(crate) fn oxi_hash_drbg_sha256_instantiate(
-        handle: *mut OxiHashDrbgSha256,
-        entropy: *const u8,
-        entropy_len: usize,
-        nonce: *const u8,
-        nonce_len: usize,
-        personalization: *const u8,
-        personalization_len: usize,
-    ) -> c_int;
-    pub(crate) fn oxi_hash_drbg_sha256_reseed(
-        handle: *mut OxiHashDrbgSha256,
-        entropy: *const u8,
-        entropy_len: usize,
-        additional_input: *const u8,
-        additional_input_len: usize,
-    ) -> c_int;
     pub(crate) fn oxi_hash_drbg_sha256_generate(
         handle: *mut OxiHashDrbgSha256,
         additional_input: *const u8,
@@ -1558,24 +1529,19 @@ unsafe extern "C" {
         out: *mut u8,
         out_len: usize,
     ) -> c_int;
+    pub(crate) fn oxi_hash_drbg_sha256_instantiate_from_module(
+        handle: *mut OxiHashDrbgSha256,
+        perso: *const u8,
+        perso_len: usize,
+    ) -> c_int;
+    pub(crate) fn oxi_hash_drbg_sha256_reseed_from_module(
+        handle: *mut OxiHashDrbgSha256,
+        additional: *const u8,
+        additional_len: usize,
+    ) -> c_int;
+    pub(crate) fn oxi_hash_drbg_sha256_new_rbg(out: *mut *mut OxiDrbg) -> c_int;
     pub(crate) fn oxi_hash_drbg_sha384_new(out_handle: *mut *mut OxiHashDrbgSha384) -> c_int;
     pub(crate) fn oxi_hash_drbg_sha384_free(handle: *mut OxiHashDrbgSha384);
-    pub(crate) fn oxi_hash_drbg_sha384_instantiate(
-        handle: *mut OxiHashDrbgSha384,
-        entropy: *const u8,
-        entropy_len: usize,
-        nonce: *const u8,
-        nonce_len: usize,
-        personalization: *const u8,
-        personalization_len: usize,
-    ) -> c_int;
-    pub(crate) fn oxi_hash_drbg_sha384_reseed(
-        handle: *mut OxiHashDrbgSha384,
-        entropy: *const u8,
-        entropy_len: usize,
-        additional_input: *const u8,
-        additional_input_len: usize,
-    ) -> c_int;
     pub(crate) fn oxi_hash_drbg_sha384_generate(
         handle: *mut OxiHashDrbgSha384,
         additional_input: *const u8,
@@ -1583,24 +1549,19 @@ unsafe extern "C" {
         out: *mut u8,
         out_len: usize,
     ) -> c_int;
+    pub(crate) fn oxi_hash_drbg_sha384_instantiate_from_module(
+        handle: *mut OxiHashDrbgSha384,
+        perso: *const u8,
+        perso_len: usize,
+    ) -> c_int;
+    pub(crate) fn oxi_hash_drbg_sha384_reseed_from_module(
+        handle: *mut OxiHashDrbgSha384,
+        additional: *const u8,
+        additional_len: usize,
+    ) -> c_int;
+    pub(crate) fn oxi_hash_drbg_sha384_new_rbg(out: *mut *mut OxiDrbg) -> c_int;
     pub(crate) fn oxi_hash_drbg_sha512_new(out_handle: *mut *mut OxiHashDrbgSha512) -> c_int;
     pub(crate) fn oxi_hash_drbg_sha512_free(handle: *mut OxiHashDrbgSha512);
-    pub(crate) fn oxi_hash_drbg_sha512_instantiate(
-        handle: *mut OxiHashDrbgSha512,
-        entropy: *const u8,
-        entropy_len: usize,
-        nonce: *const u8,
-        nonce_len: usize,
-        personalization: *const u8,
-        personalization_len: usize,
-    ) -> c_int;
-    pub(crate) fn oxi_hash_drbg_sha512_reseed(
-        handle: *mut OxiHashDrbgSha512,
-        entropy: *const u8,
-        entropy_len: usize,
-        additional_input: *const u8,
-        additional_input_len: usize,
-    ) -> c_int;
     pub(crate) fn oxi_hash_drbg_sha512_generate(
         handle: *mut OxiHashDrbgSha512,
         additional_input: *const u8,
@@ -1608,41 +1569,19 @@ unsafe extern "C" {
         out: *mut u8,
         out_len: usize,
     ) -> c_int;
+    pub(crate) fn oxi_hash_drbg_sha512_instantiate_from_module(
+        handle: *mut OxiHashDrbgSha512,
+        perso: *const u8,
+        perso_len: usize,
+    ) -> c_int;
+    pub(crate) fn oxi_hash_drbg_sha512_reseed_from_module(
+        handle: *mut OxiHashDrbgSha512,
+        additional: *const u8,
+        additional_len: usize,
+    ) -> c_int;
+    pub(crate) fn oxi_hash_drbg_sha512_new_rbg(out: *mut *mut OxiDrbg) -> c_int;
     pub(crate) fn oxi_ctr_drbg_aes128_new(out_handle: *mut *mut OxiCtrDrbgAes128) -> c_int;
     pub(crate) fn oxi_ctr_drbg_aes128_free(handle: *mut OxiCtrDrbgAes128);
-    pub(crate) fn oxi_ctr_drbg_aes128_instantiate_no_df(
-        handle: *mut OxiCtrDrbgAes128,
-        seed_material: *const u8,
-        seed_material_len: usize,
-    ) -> c_int;
-    pub(crate) fn oxi_ctr_drbg_aes128_instantiate_df(
-        handle: *mut OxiCtrDrbgAes128,
-        entropy: *const u8,
-        entropy_len: usize,
-        nonce: *const u8,
-        nonce_len: usize,
-        personalization: *const u8,
-        personalization_len: usize,
-    ) -> c_int;
-    pub(crate) fn oxi_ctr_drbg_aes128_reseed_no_df(
-        handle: *mut OxiCtrDrbgAes128,
-        seed_material: *const u8,
-        seed_material_len: usize,
-    ) -> c_int;
-    pub(crate) fn oxi_ctr_drbg_aes128_reseed_df(
-        handle: *mut OxiCtrDrbgAes128,
-        entropy: *const u8,
-        entropy_len: usize,
-        additional_input: *const u8,
-        additional_input_len: usize,
-    ) -> c_int;
-    pub(crate) fn oxi_ctr_drbg_aes128_generate_no_df(
-        handle: *mut OxiCtrDrbgAes128,
-        additional_input: *const u8,
-        additional_input_len: usize,
-        out: *mut u8,
-        out_len: usize,
-    ) -> c_int;
     pub(crate) fn oxi_ctr_drbg_aes128_generate_df(
         handle: *mut OxiCtrDrbgAes128,
         additional_input: *const u8,
@@ -1650,41 +1589,19 @@ unsafe extern "C" {
         out: *mut u8,
         out_len: usize,
     ) -> c_int;
+    pub(crate) fn oxi_ctr_drbg_aes128_instantiate_from_module(
+        handle: *mut OxiCtrDrbgAes128,
+        perso: *const u8,
+        perso_len: usize,
+    ) -> c_int;
+    pub(crate) fn oxi_ctr_drbg_aes128_reseed_from_module(
+        handle: *mut OxiCtrDrbgAes128,
+        additional: *const u8,
+        additional_len: usize,
+    ) -> c_int;
+    pub(crate) fn oxi_ctr_drbg_aes128_new_rbg(out: *mut *mut OxiDrbg) -> c_int;
     pub(crate) fn oxi_ctr_drbg_aes192_new(out_handle: *mut *mut OxiCtrDrbgAes192) -> c_int;
     pub(crate) fn oxi_ctr_drbg_aes192_free(handle: *mut OxiCtrDrbgAes192);
-    pub(crate) fn oxi_ctr_drbg_aes192_instantiate_no_df(
-        handle: *mut OxiCtrDrbgAes192,
-        seed_material: *const u8,
-        seed_material_len: usize,
-    ) -> c_int;
-    pub(crate) fn oxi_ctr_drbg_aes192_instantiate_df(
-        handle: *mut OxiCtrDrbgAes192,
-        entropy: *const u8,
-        entropy_len: usize,
-        nonce: *const u8,
-        nonce_len: usize,
-        personalization: *const u8,
-        personalization_len: usize,
-    ) -> c_int;
-    pub(crate) fn oxi_ctr_drbg_aes192_reseed_no_df(
-        handle: *mut OxiCtrDrbgAes192,
-        seed_material: *const u8,
-        seed_material_len: usize,
-    ) -> c_int;
-    pub(crate) fn oxi_ctr_drbg_aes192_reseed_df(
-        handle: *mut OxiCtrDrbgAes192,
-        entropy: *const u8,
-        entropy_len: usize,
-        additional_input: *const u8,
-        additional_input_len: usize,
-    ) -> c_int;
-    pub(crate) fn oxi_ctr_drbg_aes192_generate_no_df(
-        handle: *mut OxiCtrDrbgAes192,
-        additional_input: *const u8,
-        additional_input_len: usize,
-        out: *mut u8,
-        out_len: usize,
-    ) -> c_int;
     pub(crate) fn oxi_ctr_drbg_aes192_generate_df(
         handle: *mut OxiCtrDrbgAes192,
         additional_input: *const u8,
@@ -1692,41 +1609,19 @@ unsafe extern "C" {
         out: *mut u8,
         out_len: usize,
     ) -> c_int;
+    pub(crate) fn oxi_ctr_drbg_aes192_instantiate_from_module(
+        handle: *mut OxiCtrDrbgAes192,
+        perso: *const u8,
+        perso_len: usize,
+    ) -> c_int;
+    pub(crate) fn oxi_ctr_drbg_aes192_reseed_from_module(
+        handle: *mut OxiCtrDrbgAes192,
+        additional: *const u8,
+        additional_len: usize,
+    ) -> c_int;
+    pub(crate) fn oxi_ctr_drbg_aes192_new_rbg(out: *mut *mut OxiDrbg) -> c_int;
     pub(crate) fn oxi_ctr_drbg_aes256_new(out_handle: *mut *mut OxiCtrDrbgAes256) -> c_int;
     pub(crate) fn oxi_ctr_drbg_aes256_free(handle: *mut OxiCtrDrbgAes256);
-    pub(crate) fn oxi_ctr_drbg_aes256_instantiate_no_df(
-        handle: *mut OxiCtrDrbgAes256,
-        seed_material: *const u8,
-        seed_material_len: usize,
-    ) -> c_int;
-    pub(crate) fn oxi_ctr_drbg_aes256_instantiate_df(
-        handle: *mut OxiCtrDrbgAes256,
-        entropy: *const u8,
-        entropy_len: usize,
-        nonce: *const u8,
-        nonce_len: usize,
-        personalization: *const u8,
-        personalization_len: usize,
-    ) -> c_int;
-    pub(crate) fn oxi_ctr_drbg_aes256_reseed_no_df(
-        handle: *mut OxiCtrDrbgAes256,
-        seed_material: *const u8,
-        seed_material_len: usize,
-    ) -> c_int;
-    pub(crate) fn oxi_ctr_drbg_aes256_reseed_df(
-        handle: *mut OxiCtrDrbgAes256,
-        entropy: *const u8,
-        entropy_len: usize,
-        additional_input: *const u8,
-        additional_input_len: usize,
-    ) -> c_int;
-    pub(crate) fn oxi_ctr_drbg_aes256_generate_no_df(
-        handle: *mut OxiCtrDrbgAes256,
-        additional_input: *const u8,
-        additional_input_len: usize,
-        out: *mut u8,
-        out_len: usize,
-    ) -> c_int;
     pub(crate) fn oxi_ctr_drbg_aes256_generate_df(
         handle: *mut OxiCtrDrbgAes256,
         additional_input: *const u8,
@@ -1734,4 +1629,35 @@ unsafe extern "C" {
         out: *mut u8,
         out_len: usize,
     ) -> c_int;
+    pub(crate) fn oxi_ctr_drbg_aes256_instantiate_from_module(
+        handle: *mut OxiCtrDrbgAes256,
+        perso: *const u8,
+        perso_len: usize,
+    ) -> c_int;
+    pub(crate) fn oxi_ctr_drbg_aes256_reseed_from_module(
+        handle: *mut OxiCtrDrbgAes256,
+        additional: *const u8,
+        additional_len: usize,
+    ) -> c_int;
+    pub(crate) fn oxi_ctr_drbg_aes256_new_rbg(out: *mut *mut OxiDrbg) -> c_int;
+    pub(crate) fn oxi_drbg_instantiate(
+        h: *mut OxiDrbg,
+        perso: *const u8,
+        perso_len: usize,
+    ) -> c_int;
+    pub(crate) fn oxi_drbg_reseed(
+        h: *mut OxiDrbg,
+        additional: *const u8,
+        additional_len: usize,
+    ) -> c_int;
+    pub(crate) fn oxi_drbg_generate(
+        h: *mut OxiDrbg,
+        additional: *const u8,
+        additional_len: usize,
+        out: *mut u8,
+        out_len: usize,
+    ) -> c_int;
+    pub(crate) fn oxi_drbg_strength_bits(h: *const OxiDrbg, out: *mut u32) -> c_int;
+    pub(crate) fn oxi_drbg_free(h: *mut OxiDrbg);
+    pub(crate) fn oxi_entropy_on_demand_test(label_out: *mut *const c_char) -> c_int;
 }

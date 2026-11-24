@@ -76,7 +76,7 @@
 //! or deploy the library where the loader looks: on Windows, the
 //! application's directory. When the library is missing, the loader refuses
 //! to start the program with its own message, before any Rust code runs: on
-//! Linux `error while loading shared libraries: liboxicrypt_ffi.so.1: cannot
+//! Linux `error while loading shared libraries: liboxicrypt_ffi.so.2: cannot
 //! open shared object file`, naming the library's delivered name, exit status
 //! 127; on macOS `dyld: Library not
 //! loaded`; on Windows a dialog or exit status `0xC0000135`
@@ -112,17 +112,16 @@
 //! ```
 //!
 //! Key generation and encapsulation take caller-supplied seeds, as the C ABI
-//! does; the crate generates no randomness. The approved status of a key
-//! generated through this crate depends on where its seed came from: a seed
-//! drawn from the module's DRBG with [`HmacDrbgSha256::seed`] comes from
-//! inside the module, a seed passed to `from_bytes` from outside it. Each seed
-//! role has its own type ([`MlDsa87KeySeed`], [`MlKem1024KeySeedD`],
+//! does; the crate generates no randomness of its own. The approved status
+//! of a key generated through this crate depends on where its seed came
+//! from: a seed passed to `from_bytes` comes from outside the module. Each
+//! seed role has its own type ([`MlDsa87KeySeed`], [`MlKem1024KeySeedD`],
 //! [`MlKem1024KeySeedZ`], [`MlKem1024EncapsSeed`]), and each is consumed by
 //! the call that uses it.
-//! The DRBG itself is seeded by the caller through
-//! [`HmacDrbgSha256::instantiate`] and [`HmacDrbgSha256::reseed`], so the
-//! caller supplies entropy meeting SP 800-90A and SP 800-90B and documents
-//! its source in their own security policy.
+//! The module's DRBGs are reached through [`Drbg`], which the module seeds
+//! from its own entropy source when [`Drbg::instantiate`] and
+//! [`Drbg::reseed`] are called; [`Module::entropy_on_demand_test`] runs that
+//! source's on-demand test.
 //!
 //! Secrets the crate returns zero themselves when dropped (see [`HkdfPrk`],
 //! [`Okm`], [`MlDsa87SecretKey`], [`MlKem1024DecapsulationKey`],
@@ -215,7 +214,8 @@
 //!         | E::OutputTooLong | E::NotBlockAligned | E::InvalidIvLength | E::TagMismatch
 //!         | E::LengthMismatch | E::InvalidNonceLength | E::InvalidTagLength
 //!         | E::InvalidPayloadLength | E::InvalidAadLength | E::IntegrityUnverified
-//!         | E::EntropyInputTooShort | E::NonceTooShort | E::Internal | E::SignatureInvalid
+//!         | E::EntropyInputTooShort | E::NonceTooShort | E::RbgTooWeak | E::Busy
+//!         | E::EntropyUnavailable | E::Internal | E::SignatureInvalid
 //!         | E::Unknown(_) | E::LibraryAbi { .. } | E::LibraryVersion { .. }
 //!         | E::ProfileMismatch { .. } | E::KeyFingerprint { .. } => false,
 //!     }
@@ -251,11 +251,21 @@
 //! - `oxi_aes256_free`
 //! - `oxi_aes256_gcm_encrypt`
 //! - `oxi_aes256_gcm_decrypt`
-//! - `oxi_hmac_drbg_sha256_new`
-//! - `oxi_hmac_drbg_sha256_free`
-//! - `oxi_hmac_drbg_sha256_instantiate`
-//! - `oxi_hmac_drbg_sha256_reseed`
-//! - `oxi_hmac_drbg_sha256_generate`
+//! - `oxi_hmac_drbg_sha256_new_rbg`
+//! - `oxi_hmac_drbg_sha384_new_rbg`
+//! - `oxi_hmac_drbg_sha512_new_rbg`
+//! - `oxi_hash_drbg_sha256_new_rbg`
+//! - `oxi_hash_drbg_sha384_new_rbg`
+//! - `oxi_hash_drbg_sha512_new_rbg`
+//! - `oxi_ctr_drbg_aes128_new_rbg`
+//! - `oxi_ctr_drbg_aes192_new_rbg`
+//! - `oxi_ctr_drbg_aes256_new_rbg`
+//! - `oxi_drbg_instantiate`
+//! - `oxi_drbg_reseed`
+//! - `oxi_drbg_generate`
+//! - `oxi_drbg_strength_bits`
+//! - `oxi_drbg_free`
+//! - `oxi_entropy_on_demand_test`
 //! - `oxi_ml_dsa_87_keygen`
 //! - `oxi_ml_dsa_87_sign`
 //! - `oxi_ml_dsa_87_verify`
@@ -281,7 +291,7 @@
 //!
 //! | crate built against | accepts |
 //! |---|---|
-//! | ABI 1 | a library reporting ABI 1 that exports every function the crate calls; a library without `oxi_abi_version` only at the crate's own release version |
+//! | ABI 2 | a library reporting ABI 2 that exports every function the crate calls; a library without `oxi_abi_version` only at the crate's own release version |
 //!
 //! On Linux the library's `SONAME` is `liboxicrypt_ffi.so.<ABI>` and on macOS
 //! its install name is `@rpath/liboxicrypt_ffi.<ABI>.dylib`: the loader asks
@@ -302,14 +312,14 @@ mod tests;
 
 pub use error::{DetailError, Error, InitError, Site};
 pub use module::{Fingerprint, IntegrityStatus, Module, Profile};
-pub use ops::{Aes256Key, HmacDrbgSha256};
+pub use ops::{Aes256Key, Drbg, DrbgKind};
 pub use secret::{
-    DrbgSeed, HkdfPrk, MlDsa87KeySeed, MlDsa87SecretKey, MlKem1024DecapsulationKey,
-    MlKem1024EncapsSeed, MlKem1024KeySeedD, MlKem1024KeySeedZ, Okm, SharedSecret,
+    HkdfPrk, MlDsa87KeySeed, MlDsa87SecretKey, MlKem1024DecapsulationKey, MlKem1024EncapsSeed,
+    MlKem1024KeySeedD, MlKem1024KeySeedZ, Okm, SharedSecret,
 };
 
 /// The ABI number of the C interface this crate was built against.
-pub const OXI_ABI_VERSION: i32 = 1;
+pub const OXI_ABI_VERSION: i32 = 2;
 
 /// SHA-384 digest length.
 pub const SHA384_LEN: usize = 48;
@@ -323,11 +333,13 @@ pub const AES256_KEY_LEN: usize = 32;
 pub const AES256_GCM_NONCE_LEN: usize = 12;
 /// AES-256-GCM tag length.
 pub const AES256_GCM_TAG_LEN: usize = 16;
-/// The most entropy, nonce and personalization bytes HMAC_DRBG-SHA-256
-/// accepts in one call, combined.
+/// The module's bound on the bytes HMAC_DRBG combines in one seeding call:
+/// the size of the buffer `oxicrypt-drbg` assembles them in, far below
+/// SP 800-90A's own limits. The module supplies 48 of them at instantiate,
+/// so a personalization string longer than 720 bytes is refused.
 pub const HMAC_DRBG_MAX_PROVIDED_LEN: usize = 768;
-/// The most bytes one HMAC_DRBG-SHA-256 generate call returns
-/// (SP 800-90A Table 3).
+/// The most bytes one [`Drbg::generate`] call returns (SP 800-90A Tables 2
+/// and 3).
 pub const HMAC_DRBG_MAX_REQUEST_LEN: usize = 65_536;
 /// ML-DSA-87 key-generation seed length.
 pub const ML_DSA_87_SEED_LEN: usize = 32;
