@@ -123,8 +123,10 @@ wave that follows it.
   in small, readily auditable crates: **volatile CSP zeroization** (one isolated `write_volatile`
   mechanism); **CPU-intrinsic acceleration** (feature-gated, default-off, runtime-detected,
   equivalence to the portable path proven by KAT + cross-path oracle); **CPU timer/counter
-  intrinsics** (read-only, side-effect-free counter reads, no cryptographic logic); and the
-  **system calls the integrity test needs** to read the module's own loaded image. Which crates carry
+  intrinsics** (read-only, side-effect-free counter reads, no cryptographic logic); the
+  **system calls the integrity test needs** to read the module's own loaded image; and the
+  **platform calls** the seed path needs (the operating-system random generator, the process id,
+  and the one process-aware static cell). Which crates carry
   them, and how many in-boundary crates carry `forbid`, is stated in `AGENTS.md`, which `doc-guard`
   checks against the workspace, and in Security Policy §9.2. The default build graph contains
   no acceleration crate; the portable baseline is the shipping default. The C-ABI crate
@@ -155,7 +157,7 @@ wave that follows it.
   reconciles against are **D.G Key Transport Methods (2026-08-19)**, **D.J Entropy Estimation and
   Compliance with SP 800-90B (2021-11-05)** and **D.K Interpretation of SP 800-90B Requirements
   (2026-04-16)**. Reconcile on IG updates, per section rather than per cover date.
-- **`no_std` algorithm crates**, `forbid(unsafe_code)` at every in-boundary crate root except the six readily auditable exception crates the security policy names, deny-level workspace lints.
+- **`no_std` algorithm crates**, `forbid(unsafe_code)` at every in-boundary crate root except the seven readily auditable exception crates the security policy names, deny-level workspace lints.
 - **`oxicrypt-entropy` is inside the CMVP module boundary** — full workspace discipline applies to it:
   forbid-unsafe accounting, security-policy claims, doc-sync, `no_std`-capable core.
 - **Pure Rust, no C dependencies, no FFI** to any external entropy library.

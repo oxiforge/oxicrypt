@@ -54,6 +54,7 @@ tooling, and are documented here only for completeness:
 | `oxicrypt-timer` | In-boundary / internal — jitter-source timing primitive |
 | `oxicrypt-entropy` | In-boundary / internal — entropy-source assessment support |
 | `oxicrypt-imageread` | In-boundary / internal — reads of the module's own loaded image for the integrity test |
+| `oxicrypt-platform` | In-boundary / internal — the module's own platform calls: operating-system random generator, process id, and the process-aware spin cell behind the DRBG seed path |
 | `oxicrypt-maxwell` | Out-of-boundary tooling / internal — SP 800-90B entropy-estimation tooling |
 | `oxicrypt-ffi` | Out-of-boundary tooling / internal — C ABI foreign-function interface |
 

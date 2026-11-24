@@ -30,6 +30,7 @@ members = [
     "crates/oxicrypt-dh",
     "crates/oxicrypt-entropy",
     "crates/oxicrypt-timer",
+    "crates/oxicrypt-platform",
     "crates/oxicrypt-maxwell",
     "acvp-harness",
     "esv-harness",
@@ -59,15 +60,15 @@ keywords = ["cryptography", "fips", "fips-140-3", "no-std", "nist"]
 categories = ["cryptography", "no-std"]
 publish = true
 
-# Phase 1 policy: zero third-party dependencies. All crypto is pure Rust,
-# written in-tree. Dependencies will be re-evaluated per-crate in later phases
-# and must be justified in the Security Policy before adoption.
+# The module's default build has no third-party dependency: its cryptography
+# is pure Rust, written in-tree. A dependency must be justified in the
+# Security Policy before adoption.
 [workspace.dependencies]
 # Internal crates are declared once here with BOTH a path and a version.
 # The path is what a workspace build resolves; the version is what
 # `cargo package` records -- without it, packaging fails for every crate
-# that depends on another (#196). One table means a release moves 29
-# literals instead of 155, and `scripts/bump-version.sh` edits one file.
+# that depends on another. One table means a release edits the internal
+# versions here alone, and `scripts/bump-version.sh` edits one file.
 
 acvp-harness = { path = "acvp-harness", version = "0.26.1" }
 oxicrypt-aes = { path = "crates/oxicrypt-aes", version = "0.26.1" }
@@ -95,6 +96,7 @@ oxicrypt-sha-accel = { path = "crates/oxicrypt-sha-accel", version = "0.26.1" }
 oxicrypt-slh-dsa = { path = "crates/oxicrypt-slh-dsa", version = "0.26.1" }
 oxicrypt-test-vectors = { path = "crates/oxicrypt-test-vectors", version = "0.26.1" }
 oxicrypt-timer = { path = "crates/oxicrypt-timer", version = "0.26.1" }
+oxicrypt-platform = { path = "crates/oxicrypt-platform", version = "0.26.1" }
 oxicrypt-tls-kdf = { path = "crates/oxicrypt-tls-kdf", version = "0.26.1" }
 oxicrypt-xmss = { path = "crates/oxicrypt-xmss", version = "0.26.1" }
 oxicrypt-xof = { path = "crates/oxicrypt-xof", version = "0.26.1" }
@@ -117,8 +119,8 @@ must_use_candidate = "allow"
 missing_errors_doc = "allow"
 missing_panics_doc = "allow"
 # NIST documents are full of identifiers like CTR_DRBG, EdDSA, SHA-3,
-# P-256 that doc_markdown wants wrapped in backticks. We prefer prose
-# that reads like the spec, so this lint is off globally.
+# P-256 that doc_markdown wants wrapped in backticks. Prose here reads like
+# the spec, so this lint is off globally.
 doc_markdown = "allow"
 # Deny patterns that have historically caused real bugs in crypto code:
 indexing_slicing = "deny"
@@ -130,8 +132,8 @@ todo = "warn"
 dbg_macro = "deny"
 print_stdout = "deny"
 print_stderr = "deny"
-# Side-channel hygiene: forbid arithmetic that silently wraps on secret data.
-# We will use explicit `wrapping_*` / `checked_*` when wrapping is intended.
+# Side-channel hygiene: warn on arithmetic that can silently wrap on secret
+# data. Intended wrapping is written as explicit `wrapping_*` / `checked_*`.
 arithmetic_side_effects = "warn"
 
 # LAMA manifest pointer for agents that discover oxicrypt via crates.io.

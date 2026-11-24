@@ -818,6 +818,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "oxicrypt-platform"
+version = "0.26.1"
+dependencies = [
+ "oxicrypt-zeroize",
+]
+
+[[package]]
 name = "oxicrypt-rsa"
 version = "0.26.1"
 dependencies = [

@@ -62,10 +62,11 @@ mod tests {
     /// crate while another gains it — fails by name, not just by count.
     /// `deny(unsafe_code)` deliberately does not qualify: the policy's claim
     /// is the compiler-hard forbid level.
-    const UNSAFE_EXCEPTIONS: [&str; 6] = [
+    const UNSAFE_EXCEPTIONS: [&str; 7] = [
         "oxicrypt-aes-accel",
         "oxicrypt-imageread",
         "oxicrypt-keccak-accel",
+        "oxicrypt-platform",
         "oxicrypt-sha-accel",
         "oxicrypt-timer",
         "oxicrypt-zeroize",
@@ -135,7 +136,7 @@ mod tests {
 
     /// Every file withheld from this repository, by name. The Security Policy,
     /// and the jitter-entropy concept mapping — an annex whose columns cite the
-    /// policy's own rule numbering, moved with it 2026-08-05. The containment
+    /// policy's own rule numbering and is withheld with it. The containment
     /// sweep denies all of them; only `POLICY_FILE` is resolved at runtime,
     /// because only the policy has assertions that depend on its content.
     const WITHHELD_FILES: [&str; 2] = ["security-policy.md", "jent-concept-mapping.md"];
@@ -144,7 +145,7 @@ mod tests {
     /// `oxiforge/oxicrypt-policy` there needs no further configuration.
     const POLICY_REPO_REL: &str = "repos/oxicrypt-policy";
 
-    /// The in-tree path the policy used to occupy. Retained so
+    /// The in-tree path for the policy, named so
     /// `policy_resolution_precedence_holds` can assert it is never a
     /// resolution target — deliberately **not** a fallback, since a fallback
     /// would make that failure mode reachable and silent at the same time.
@@ -802,8 +803,7 @@ mod tests {
         );
     }
 
-    /// ISC-125 across **every** surface that documents α, not just the two the
-    /// original divergence named.
+    /// ISC-125 across **every** surface that documents α.
     ///
     /// The ruled-out phrasing is denied repo-wide rather than corrected per
     /// file. A criterion reported as fixed while its own defect persists one
@@ -875,8 +875,8 @@ mod tests {
     // growing, and it makes the current gap visible instead of leaving it to be
     // rediscovered.
 
-    /// Resolutions cited by a criterion that are, as of #158, named nowhere in
-    /// the repository. Listed rather than silently tolerated: the assertion below
+    /// Resolutions cited by a criterion that are named nowhere in the
+    /// repository. Listed rather than silently tolerated: the assertion below
     /// requires this set to be EXACT, so citing one of these fails the test until
     /// it is removed here — the list cannot quietly become permanent.
     ///
@@ -1077,13 +1077,11 @@ mod tests {
 
     // ----- banned-phrase: the mechanism behind #159 (#157 family 3) -----
     //
-    // The Security Policy ships unresolved drafting text; the census below pins
-    // how much, per marker. This is the document a CST lab and a CMVP reviewer
-    // read.
-    //
-    // Resolving them is the content decision in #159, and one of the two blocks
-    // on an external answer. This is the mechanism, and it pins the census PER
-    // MARKER so the set cannot change shape quietly.
+    // The Security Policy is the document a CST lab and a CMVP reviewer read.
+    // The census below pins its drafting markers PER MARKER, so the set cannot
+    // change shape quietly. Every marker is pinned at 0 except `TODO`, whose one
+    // open occurrence, §1.5's list of vendor-affirmed operational environments,
+    // waits on the decision of which environments to affirm.
 
     /// Drafting markers that must not accumulate in current-state policy prose,
     /// with the number of occurrences currently open for each.
@@ -1100,15 +1098,12 @@ mod tests {
     const OPEN_MARKERS: &[(&str, usize)] = &[
         // Each count is the number of markers of that kind open in the
         // Security Policy. Lower it in the change that resolves one.
-        // `TODO`: the remaining marker is §1.5's; §6 Operational Environment
-        // states the build, the target triples and the run-time dependencies
-        // the release workflow's import allow-lists enumerate.
         ("TODO", 1),
         ("TBD", 0),
         ("FIXME", 0),
         ("XXX", 0),
-        ("pending]", 8),
-        ("[MARK", 1),
+        ("pending]", 0),
+        ("[MARK", 0),
     ];
 
     /// A frozen-history line: a row whose first cell is an ISO date.
@@ -1140,7 +1135,7 @@ mod tests {
     /// The policy's front matter documents what a `TODO` marker means, and that
     /// sentence must not count as an unresolved item — but skipping the whole
     /// LINE is far too broad. It exempts any line that merely cites the
-    /// convention, anywhere in a 3,500-line document, including the other markers
+    /// convention, anywhere in the document, including the other markers
     /// on it. Stripping the backticked span keeps the documentation exempt while
     /// leaving every bare marker on the same line visible.
     fn without_code_spans(line: &str) -> String {
@@ -3019,8 +3014,7 @@ documented here only for completeness:
     /// The aggregate floor below catches a sweep that stops reading; it does not
     /// catch one that stops reading *one kind of file*. Dropping `md` from the
     /// extension list leaves the yaml and toml surfaces alone above the floor,
-    /// green, with the two documents a newcomer actually reads unchecked — one
-    /// of which is the file that was wrong.
+    /// green, with the two documents a newcomer actually reads unchecked.
     const RUST_VERSION_WITNESSES: [&str; 3] = ["README.md", "docs/building.md", "lama.yaml"];
 
     /// The markers that introduce a statement about the Rust version. Keying on
@@ -3263,9 +3257,8 @@ documented here only for completeness:
     /// two values the authoritative files own.
     ///
     /// The MSRV is restated across a dozen documents and manifests and the build
-    /// pin in none. Nothing held them in step: `docs/building.md` sat a full
-    /// minor version behind the workspace for long enough that following it
-    /// produced a build failure the document itself predicted would work.
+    /// pin in none, and nothing else holds them in step. A stale restatement
+    /// sends a reader to a toolchain that cannot build the workspace.
     #[test]
     fn rust_version_statements_match_the_authoritative_files() {
         let msrv = workspace_msrv();
@@ -3351,9 +3344,8 @@ documented here only for completeness:
     /// restating them.
     ///
     /// §1.4 says in terms that version literals are deliberately absent from it
-    /// so the paragraph cannot drift — and then, in the same paragraph, stated
-    /// two of them. A sentence that describes its own discipline is not evidence
-    /// that the discipline held.
+    /// so the paragraph cannot drift. A sentence that describes its own
+    /// discipline is not evidence that the discipline holds.
     ///
     /// The detector reads any dotted literal, so these two paragraphs may not
     /// cite `CNSA 2.0` or `TLS 1.3` either. That is a constraint rather than a
@@ -3851,10 +3843,10 @@ documented here only for completeness:
     /// checkout.
     ///
     /// Deliberately not gated on the Security Policy. Every input here is in the
-    /// public tree, and leaving the derivation reachable only from a
-    /// policy-gated test meant an ordinary clone verified no relationship
-    /// between the gates and any document at all — the machinery would go
-    /// unexercised and its own liveness assertions unrun.
+    /// public tree. Reachable only from a policy-gated test, the derivation
+    /// would verify no relationship between the gates and any document in an
+    /// ordinary clone — the machinery would go unexercised and its own
+    /// liveness assertions unrun.
     #[test]
     fn the_profile_gate_derivation_is_healthy() {
         let (owner, seen) = service_owning_crates();
@@ -4041,8 +4033,7 @@ documented here only for completeness:
     /// The coarse condition is genuinely weaker and the difference matters. A
     /// row for PBKDF2 promoted to `U, C1, C2, M` satisfies it, because
     /// `oxicrypt-kdf` holds HKDF-SHA-384, which CNSA 1.0 does permit — that is
-    /// the whole reason the per-service check above exists, and PBKDF2 is one of
-    /// the rows that was actually wrong.
+    /// the whole reason the per-service check above exists.
     #[test]
     fn policy_service_table_matches_the_profile_definitions() {
         let Some(policy) = read_policy() else {

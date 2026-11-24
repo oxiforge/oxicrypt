@@ -7,18 +7,19 @@ every session by any agent that respects `AGENTS.md`. Model-agnostic — phrase 
 ## Project context
 
 oxicrypt is a **pure-Rust cryptographic module targeting FIPS 140-3 Level 1**. It implements FIPS-approved
-algorithms across a 30-crate workspace (AES, SHA, SHA-3/XOF, HMAC, CMAC, KDF, TLS-KDF, DRBG, ECDH,
+algorithms across a 31-crate workspace (AES, SHA, SHA-3/XOF, HMAC, CMAC, KDF, TLS-KDF, DRBG, ECDH,
 ECDSA, EdDSA, RSA, DH, ML-KEM, ML-DSA, SLH-DSA, LMS, XMSS, plus `zeroize`, `sha-accel`, `integrity`,
-`ffi`, `module`, `test-vectors`, and the SP 800-90B `entropy` scaffolding). The crate is `no_std`-capable and
-disciplined about `unsafe`: **22 of the 28 crates inside the cryptographic boundary are
-`#![forbid(unsafe_code)]`.** The six readily auditable in-boundary exceptions, each isolating sanctioned
+`ffi`, `module`, `test-vectors`, and `entropy`, the SP 800-90B source the DRBG seed path draws from). The crate is `no_std`-capable and
+disciplined about `unsafe`: **22 of the 29 crates inside the cryptographic boundary are
+`#![forbid(unsafe_code)]`.** The seven readily auditable in-boundary exceptions, each isolating sanctioned
 `unsafe` in a small dedicated crate, are `oxicrypt-zeroize` (volatile zeroization of critical
 security parameters), the three CPU-intrinsic acceleration crates `oxicrypt-sha-accel` /
 `oxicrypt-aes-accel` / `oxicrypt-keccak-accel` (feature-gated, default-off, runtime-detected,
 equivalence proven by KAT + cross-path oracle), `oxicrypt-timer` (read-only CPU timer/counter
-intrinsics for the entropy source), and `oxicrypt-imageread` (the system calls the integrity test needs:
+intrinsics for the entropy source), `oxicrypt-imageread` (the system calls the integrity test needs:
 kernel-mediated reads of the module's own loaded image, the image path, bound-import resolution and
-the thread id). Separately,
+the thread id), and `oxicrypt-platform` (the module's own platform calls: the operating-system random
+generator, the process id, and the one process-aware static cell the DRBG seed path holds). Separately,
 `oxicrypt-ffi` sits **outside** the boundary to offer a C ABI, where `unsafe extern "C"` is an
 unavoidable requirement of exposing the module to C callers. (See the Security Policy — withheld from this
 repository, see `docs/security-policy/README.md` — for the authoritative unsafe-code accounting;

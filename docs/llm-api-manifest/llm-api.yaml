@@ -178,6 +178,11 @@ modules:
     no_std: true
     depends_on: []
 
+  - name: oxicrypt-platform
+    description: "The module's own platform calls: the operating-system random generator (os_random), the process id (process_id) and a process-aware spin cell (SpinCell) that rebuilds itself in a forked child; one of the in-boundary crates that isolate sanctioned unsafe."
+    no_std: true
+    depends_on: [oxicrypt-zeroize]
+
   - name: oxicrypt-ml-kem
     description: "ML-KEM-1024 (FIPS 203) key encapsulation: keygen, encapsulate, decapsulate with implicit-rejection construction."
     no_std: true
@@ -2223,6 +2228,51 @@ types:
       contains_secret: true
       zeroize_on_drop: true
       constant_time: true
+
+  - name: OsRandomError
+    module: oxicrypt-platform
+    kind: enum
+    description: Why os_random could not fill its output.
+    variants:
+      - name: Unavailable
+        description: The generator could not be used; the platform is not one the crate reaches, the call failed, or it returned nothing.
+
+  - name: SpinCell
+    module: oxicrypt-platform
+    kind: struct
+    description: "Process-global cell holding an Option<T> behind a spin lock; lock spins for at most 2^24 iterations before returning Busy, and the cell resets itself, discarding its contents without running their destructors, when a different process locks it."
+    security:
+      contains_secret: false
+      zeroize_on_drop: false
+      constant_time: false
+
+  - name: SpinGuard
+    module: oxicrypt-platform
+    kind: struct
+    description: Exclusive access to the contents of a SpinCell; dropping it releases the lock.
+    security:
+      contains_secret: false
+      zeroize_on_drop: false
+      constant_time: false
+
+  - name: Busy
+    module: oxicrypt-platform
+    kind: struct
+    description: SpinCell::lock spun for its whole bound without taking the cell; the caller retries after a pause.
+    security:
+      contains_secret: false
+      zeroize_on_drop: false
+      constant_time: false
+
+  - name: ForkResult
+    module: oxicrypt-platform
+    kind: enum
+    description: Which side of testing::fork_for_test the caller is on; available on Unix targets with the fault-injection feature or in the crate's own tests.
+    variants:
+      - name: Parent
+        description: The original process; the child field is the child's process id, or -1 when fork failed and there is no child.
+      - name: Child
+        description: The new process.
 
 # ─────────────────────────────────────────────────────────────────────
 # Functions
@@ -5185,6 +5235,154 @@ functions:
     returns:
       type: u64
       description: Raw counter value.
+
+  - name: os_random
+    module: oxicrypt-platform
+    description: "Fill a slice with bytes from the operating system's random generator: getrandom on Linux and Android, getentropy on macOS, ProcessPrng on Windows; an empty slice succeeds without calling the operating system."
+    signature: 'pub fn os_random(out: &mut [u8]) -> Result<(), OsRandomError>'
+    parameters:
+      - name: out
+        type: '&mut [u8]'
+        direction: out
+        description: Buffer to fill with random bytes.
+    returns:
+      type: 'Result<(), OsRandomError>'
+      description: "Ok when every byte of out was written; Unavailable means the generator was unavailable and every byte of out was zeroized."
+      error_variants:
+        - name: Unavailable
+          condition: The target has no generator this crate reaches, the call reported an error other than EINTR, or it returned zero bytes.
+    thread_safety: thread-safe
+    security:
+      constant_time: false
+      handles_secrets: true
+      fips_approved: false
+
+  - name: process_id
+    module: oxicrypt-platform
+    description: "Return the calling process's id: getpid on Unix-like targets, GetCurrentProcessId on Windows, 0 on any other target; the call cannot fail."
+    signature: 'pub fn process_id() -> u64'
+    returns:
+      type: 'u64'
+      description: The calling process's id.
+    thread_safety: thread-safe
+    security:
+      constant_time: true
+      handles_secrets: false
+      fips_approved: false
+
+  - name: SpinCell::new
+    module: oxicrypt-platform
+    description: Create an empty, unlocked cell with no recorded process, usable in a static.
+    signature: 'pub const fn new() -> Self'
+    returns:
+      type: 'SpinCell<T>'
+      description: The empty cell.
+    thread_safety: thread-safe
+    security:
+      constant_time: true
+      handles_secrets: false
+      fips_approved: false
+
+  - name: SpinCell::lock
+    module: oxicrypt-platform
+    description: "Take the lock, first resetting the cell if a different process used it last; spins for at most 2^24 iterations and never blocks indefinitely."
+    signature: "pub fn lock(&self) -> Result<SpinGuard<'_, T>, Busy>"
+    returns:
+      type: 'Result<SpinGuard<'_, T>, Busy>'
+      description: A guard giving exclusive access to the contents, released on drop; Busy when the bound passed without the cell becoming available.
+      error_variants:
+        - name: Busy
+          condition: The spin bound passed without the cell becoming available; waiting for another thread's reset counts toward the same bound.
+    thread_safety: thread-safe
+    security:
+      constant_time: false
+      handles_secrets: false
+      fips_approved: false
+
+  - name: testing::set_process_id_override
+    module: oxicrypt-platform
+    description: Make process_id return the given id until called with None; available with the fault-injection feature or in the crate's own tests.
+    signature: 'pub fn set_process_id_override(id: Option<u64>)'
+    parameters:
+      - name: id
+        type: 'Option<u64>'
+        direction: in
+        description: Id to return, or None to clear the override.
+    returns:
+      type: '()'
+      description: No value.
+    thread_safety: thread-safe
+    security:
+      constant_time: true
+      handles_secrets: false
+      fips_approved: false
+
+  - name: testing::set_errno_override
+    module: oxicrypt-platform
+    description: Make every errno read return the given code until called with None; available with the fault-injection feature or in the crate's own tests.
+    signature: 'pub fn set_errno_override(code: Option<i32>)'
+    parameters:
+      - name: code
+        type: 'Option<i32>'
+        direction: in
+        description: errno value to return, or None to clear the override.
+    returns:
+      type: '()'
+      description: No value.
+    thread_safety: thread-safe
+    security:
+      constant_time: true
+      handles_secrets: false
+      fips_approved: false
+
+  - name: testing::set_os_random_result
+    module: oxicrypt-platform
+    description: Queue a simulated outcome for a coming platform generator call, consumed once; None clears every pending result; available with the fault-injection feature or in the crate's own tests.
+    signature: 'pub fn set_os_random_result(result: Option<Result<usize, OsRandomError>>)'
+    parameters:
+      - name: result
+        type: 'Option<Result<usize, OsRandomError>>'
+        direction: in
+        description: Outcome to queue, or None to clear all pending outcomes.
+    returns:
+      type: '()'
+      description: No value.
+    thread_safety: thread-safe
+    security:
+      constant_time: true
+      handles_secrets: false
+      fips_approved: false
+
+  - name: testing::fork_for_test
+    module: oxicrypt-platform
+    description: Fork the calling process; the child runs only the forking thread and should end with std::process::exit; Unix only, available with the fault-injection feature or in the crate's own tests.
+    signature: 'pub fn fork_for_test() -> ForkResult'
+    returns:
+      type: 'ForkResult'
+      description: Parent with the child's id (-1 when fork failed) in the original process, Child in the new process.
+    thread_safety: not-thread-safe
+    security:
+      constant_time: true
+      handles_secrets: false
+      fips_approved: false
+
+  - name: testing::wait_for_child
+    module: oxicrypt-platform
+    description: Wait for a forked child to exit and return its exit code; Unix only, available with the fault-injection feature or in the crate's own tests.
+    signature: 'pub fn wait_for_child(child: i32) -> i32'
+    parameters:
+      - name: child
+        type: 'i32'
+        direction: in
+        description: Process id of the child to wait for.
+    returns:
+      type: 'i32'
+      description: The child's exit code, or -1 when child is not positive, the wait fails or the child did not exit normally.
+    thread_safety: thread-safe
+    security:
+      constant_time: true
+      handles_secrets: false
+      fips_approved: false
 
   # ── CMAC (SP 800-38B) ────────────────────────────────────────────
 
