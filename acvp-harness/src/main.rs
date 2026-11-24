@@ -2,12 +2,12 @@
 //!
 //! The binary wraps the [`acvp_harness`] library with a tiny CLI:
 //!
-//! - `acvp-harness` (no args) — the Phase 1/2 default: run the
+//! - `acvp-harness` (no args) — run the
 //!   power-up self-tests and print a short summary of the wired-up
 //!   KAT inventory. This is what CI runs on every build to prove the
 //!   module still boots end to end.
 //! - `acvp-harness dispatch <prompt.json> <response.json>` — the
-//!   Phase 3 ACVP vector-set dispatcher: parse an ACVP
+//!   ACVP vector-set dispatcher: parse an ACVP
 //!   `internalProjection` slice from `<prompt.json>`, compute
 //!   responses, and write them to `<response.json>`.
 //! - `acvp-harness dispatch-shs <algorithm> <prompt.rsp> <response.json>`
@@ -39,8 +39,8 @@
 //!   never recomputes.
 //!
 //! Because this is a user-facing binary it is permitted to emit
-//! output to stdout/stderr — we override the workspace-wide
-//! print-macro lints at the crate root.
+//! output to stdout/stderr — the crate root overrides the
+//! workspace-wide print-macro lints.
 
 #![allow(
     clippy::print_stdout,
@@ -111,8 +111,7 @@ fn main() -> std::process::ExitCode {
     // `oxicrypt-integrity-sign --sign target/debug/acvp-harness`, and only
     // then execute it.
     //
-    // Note the constraint that shapes this is narrower than it looks. A
-    // running executable cannot be WRITTEN — Linux refuses every write-open
+    // A running executable cannot be WRITTEN — Linux refuses every write-open
     // of a file backing a live process image with `ETXTBSY`, truncating or
     // not — but it can be REPLACED, because `rename` rebinds the directory
     // entry while the process keeps running from its original inode. That is
@@ -168,8 +167,8 @@ fn run_demo_cli(args: &[String]) -> std::process::ExitCode {
     let mut mode: Option<String> = None;
     let mut revision: Option<String> = None;
     let mut paramset: Option<String> = None;
-    // Runtime LMS capabilities filter (retires the manual caps.rs edit). Also
-    // sourced from OXICRYPT_CAPS_FILTER after the arg loop; see the guard below.
+    // Runtime LMS capabilities filter. Also sourced from OXICRYPT_CAPS_FILTER
+    // after the arg loop; see the guard below.
     let mut caps_filter: Option<String> = None;
     let mut query_session: Option<String> = None;
     let mut refresh_with: Option<String> = None;
@@ -346,8 +345,6 @@ fn run_demo_cli(args: &[String]) -> std::process::ExitCode {
     // Currently only SLH-DSA supports per-paramSet filtering; the trait
     // default in `acvp_capabilities_filtered` ignores the flag for
     // other handlers, but accepting it silently would invite confusion.
-    // Future multi-variant families that adopt the filter extend this
-    // match arm.
     if let Some(name) = paramset.as_deref() {
         match algorithm.as_deref() {
             Some("SLH-DSA") => {
@@ -376,8 +373,8 @@ fn run_demo_cli(args: &[String]) -> std::process::ExitCode {
     }
 
     // --caps-filter (or the OXICRYPT_CAPS_FILTER env fallback) scopes the LMS
-    // specificCapabilities grid at runtime, retiring the manual caps.rs edit. It
-    // shares the `acvp_capabilities_filtered` seam with --paramset (one filter value
+    // specificCapabilities grid at runtime. It shares the
+    // `acvp_capabilities_filtered` seam with --paramset (one filter value
     // reaches every handler), so it is mutually exclusive with --paramset and must
     // name an algorithm OTHER than SLH-DSA — whose filter is an exact paramSet name
     // that would reject an LMS height/width token. Requiring --algorithm also keeps
@@ -419,8 +416,7 @@ fn run_demo_cli(args: &[String]) -> std::process::ExitCode {
 
     // Default backend: curl for software keys, s_client for hardware keys.
     // (The NIST ACVTS demo CDN filters curl's TLS fingerprint when curl
-    // signs CertVerify via PKCS#11 — observed 2026-04-26. s_client's
-    // handshake is accepted.)
+    // signs CertVerify via PKCS#11; s_client's handshake is accepted.)
     let http_backend = http_backend_explicit.unwrap_or(if have_pkcs11 {
         HttpBackend::OpenSslSClient
     } else {
@@ -445,8 +441,8 @@ fn run_demo_cli(args: &[String]) -> std::process::ExitCode {
             String::new()
         } else {
             // Read PIN from the file once at startup. The file path comes
-            // from --pkcs11-pin-source. We trim trailing whitespace
-            // (newline if the file was written with `echo`).
+            // from --pkcs11-pin-source. Trailing whitespace is trimmed
+            // (a newline if the file was written with `echo`).
             match std::fs::read_to_string(&pkcs11_pin_source) {
                 Ok(s) => s.trim_end().to_string(),
                 Err(e) => {
@@ -907,6 +903,21 @@ mod power_up_tests {
         (
             "oxicrypt_test_vectors",
             "vector data that algorithm crates' KATs read; it implements no algorithm",
+        ),
+        (
+            "oxicrypt_entropy",
+            "the SP 800-90B entropy source behind the DRBG seed path; its start-up health \
+             tests and conditioner known-answer test run when the seed path first starts the \
+             source (SP 800-90B section 4.3), a failure is a module failure, and its \
+             conditioning function's algorithm test is oxicrypt_sha's",
+        ),
+        (
+            "oxicrypt_timer",
+            "reads the CPU counter for the entropy source; it implements no algorithm",
+        ),
+        (
+            "oxicrypt_platform",
+            "the module's own platform calls for the seed path; it implements no algorithm",
         ),
     ];
 

@@ -14,32 +14,27 @@ use crate::json::JsonValue;
 
 // ── Internal helpers ─────────────────────────────────────────────
 
-/// Helper: build a JSON integer.
 fn num(n: i64) -> JsonValue {
     JsonValue::Number(n)
 }
 
-/// Helper: build a JSON string.
 fn str_val(s: &str) -> JsonValue {
     JsonValue::String(s.to_string())
 }
 
-/// Helper: build a JSON array of strings.
 fn str_array(vals: &[&str]) -> JsonValue {
     JsonValue::Array(vals.iter().map(|v| str_val(v)).collect())
 }
 
-/// Helper: build a JSON array of integers.
 fn num_array(vals: &[i64]) -> JsonValue {
     JsonValue::Array(vals.iter().map(|v| num(*v)).collect())
 }
 
-/// Helper: build a JSON object from key-value pairs.
 fn obj(pairs: Vec<(&str, JsonValue)>) -> JsonValue {
     JsonValue::Object(pairs.into_iter().map(|(k, v)| (k.to_string(), v)).collect())
 }
 
-/// Helper: a standard byte-aligned range domain.
+/// A standard byte-aligned range domain.
 fn range_domain(min: i64, max: i64, increment: i64) -> JsonValue {
     JsonValue::Array(vec![obj(vec![
         ("min", num(min)),
@@ -48,7 +43,7 @@ fn range_domain(min: i64, max: i64, increment: i64) -> JsonValue {
     ])])
 }
 
-/// Helper: boolean pair `[true, false]`.
+/// The boolean pair `[true, false]`.
 fn bool_pair() -> JsonValue {
     JsonValue::Array(vec![JsonValue::Bool(true), JsonValue::Bool(false)])
 }
@@ -204,9 +199,9 @@ pub fn tuplehash_capability(algorithm: &str) -> JsonValue {
     // Appendix A registration example (page 22): `msgLen` and
     // `hexCustomization` are both required for TupleHash; advertising
     // `hexCustomization: true` exercises both ASCII and hex decode
-    // paths (the server picks per-group). Pre-fix cap omitted both
-    // fields and the server rejected the registration with HTTP 400
-    // `General exception` (no specific complaint surfaced).
+    // paths (the server picks per-group). Without both fields the
+    // server rejects the registration with HTTP 400 `General
+    // exception` (no specific complaint surfaced).
     obj(vec![
         ("algorithm", str_val(algorithm)),
         ("revision", str_val("1.0")),
@@ -233,9 +228,9 @@ pub fn parallelhash_capability(algorithm: &str) -> JsonValue {
     // Required fields per `draft-celi-acvp-xof` §7.2 Table 3 and the
     // Appendix A registration example (page 21): `msgLen` and
     // `hexCustomization` are both required (in addition to
-    // ParallelHash's `blockSize`). Pre-fix cap omitted msgLen and
-    // hexCustomization; the server rejects such registrations with
-    // HTTP 400. Same shape as `tuplehash_capability`, plus blockSize.
+    // ParallelHash's `blockSize`); the server rejects a registration
+    // without msgLen and hexCustomization with HTTP 400. Same shape as
+    // `tuplehash_capability`, plus blockSize.
     obj(vec![
         ("algorithm", str_val(algorithm)),
         ("revision", str_val("1.0")),
@@ -353,24 +348,23 @@ pub fn ctr_drbg_capability() -> JsonValue {
         ("algorithm", str_val("ctrDRBG")),
         ("revision", str_val("1.0")),
         ("predResistanceEnabled", bool_pair()),
-        ("reseedImplemented", JsonValue::Bool(false)),
+        ("reseedImplemented", JsonValue::Bool(true)),
         (
             "capabilities",
             JsonValue::Array(vec![
-                // Entropy = seedlen (security strength + AES blocklen)
-                // for every entry. Without a derivation function the
-                // nonce is not used (SP 800-90A Rev. 1 §10.2.1.3.1), so
-                // nonceLen is 0. With one, the module refuses a nonce
-                // shorter than half the security strength, so nonceLen
-                // is that minimum: 64, 96 and 128 bits. NIST's sample
-                // vector set carries non-empty nonces for derFunc
-                // groups, so the server generates them.
+                // Only the derivation-function form is registered: the
+                // module instantiates every production CTR_DRBG through
+                // the derivation function, and the form without it is a
+                // testing interface. Entropy = seedlen (security
+                // strength + AES blocklen) for every entry. The module
+                // refuses a nonce shorter than half the security
+                // strength, so nonceLen is that minimum: 64, 96 and 128
+                // bits. NIST's sample vector set carries non-empty
+                // nonces for derFunc groups, so the server generates
+                // them.
                 ctr_drbg_mode_entry("AES-128", true, 256, 64),
-                ctr_drbg_mode_entry("AES-128", false, 256, 0),
                 ctr_drbg_mode_entry("AES-192", true, 320, 96),
-                ctr_drbg_mode_entry("AES-192", false, 320, 0),
                 ctr_drbg_mode_entry("AES-256", true, 384, 128),
-                ctr_drbg_mode_entry("AES-256", false, 384, 0),
             ]),
         ),
     ])
@@ -379,6 +373,10 @@ pub fn ctr_drbg_capability() -> JsonValue {
 /// Build a single ctrDRBG mode entry with its per-(mode, derFunc) domain
 /// fields. Entropy / nonce values are spec-mandated per SP 800-90A Rev 1
 /// Table 3 and constrained by the demo server's per-mode validation.
+///
+/// Only the derivation-function form is registered, so `der_func` is
+/// `true` at every call site. The parameter stays because the
+/// registration must still carry an explicit `derFuncEnabled` field.
 fn ctr_drbg_mode_entry(mode: &str, der_func: bool, entropy_len: i64, nonce_len: i64) -> JsonValue {
     obj(vec![
         ("mode", str_val(mode)),
@@ -401,18 +399,16 @@ fn ctr_drbg_mode_entry(mode: &str, der_func: bool, entropy_len: i64, nonce_len: 
 /// Build an ACVP registration block for Hash_DRBG.
 ///
 /// Per-mode entropy/nonce values follow the same shape pattern as
-/// ctrDRBG (verified empirically 2026-04-28 against the demo server),
-/// but the specific values for hashDRBG modes have not been live-
-/// verified yet — values match SP 800-90A Rev 1 Table 2 minima
+/// ctrDRBG. The hashDRBG values match SP 800-90A Rev 1 Table 2 minima
 /// (security_strength=256 for all SHA2-{256,384,512}, nonce =
-/// security_strength/2 = 128). A live-demo verification follow-up
-/// PR will tune these as needed.
+/// security_strength/2 = 128) and are not verified against the demo
+/// server.
 pub fn hash_drbg_capability() -> JsonValue {
     obj(vec![
         ("algorithm", str_val("hashDRBG")),
         ("revision", str_val("1.0")),
         ("predResistanceEnabled", bool_pair()),
-        ("reseedImplemented", JsonValue::Bool(false)),
+        ("reseedImplemented", JsonValue::Bool(true)),
         (
             "capabilities",
             JsonValue::Array(vec![
@@ -449,15 +445,14 @@ fn hash_drbg_mode_entry(
 /// Build an ACVP registration block for HMAC_DRBG.
 ///
 /// Per-mode entropy/nonce values follow the same shape pattern as
-/// ctrDRBG (verified empirically 2026-04-28). HMAC_DRBG specific values
-/// have not been live-verified yet — see `hash_drbg_capability` for the
-/// same caveat.
+/// ctrDRBG. The HMAC_DRBG values are not verified against the demo
+/// server; see `hash_drbg_capability`.
 pub fn hmac_drbg_capability() -> JsonValue {
     obj(vec![
         ("algorithm", str_val("hmacDRBG")),
         ("revision", str_val("1.0")),
         ("predResistanceEnabled", bool_pair()),
-        ("reseedImplemented", JsonValue::Bool(false)),
+        ("reseedImplemented", JsonValue::Bool(true)),
         (
             "capabilities",
             JsonValue::Array(vec![
@@ -544,8 +539,8 @@ pub fn kbkdf_capability() -> JsonValue {
 /// `fixedDataOrder` is the ACVP capability field that maps to the
 /// per-prompt `counterLocation` — the position of the iterator
 /// within the data input. The handler only dispatches
-/// `counterLocation = "before fixed data"` for every mode, so we
-/// advertise just that single ordering. Demo registration without
+/// `counterLocation = "before fixed data"` for every mode, so only
+/// that single ordering is advertised. Demo registration without
 /// this field returns HTTP 400 `KDF-1.0: No Data Orders supplied.`
 /// per mode.
 fn kbkdf_mode_entry(kdf_mode: &str) -> JsonValue {
@@ -789,24 +784,25 @@ fn rsa_siggen_sigtype(sig_type: &str) -> JsonValue {
 ///
 /// - **`randPQ`** is a per-capability required field; oxicrypt-rsa
 ///   generates **probable** primes via FIPS 186-5 §A.1.4 / §B.3.1
-///   (random candidate + 5-round Miller-Rabin per Table B.1) — see
-///   `crates/oxicrypt-rsa/src/keygen.rs` `gen_probable_prime_1024`
-///   plus the keypair driver. The other randPQ modes (provable,
-///   *WithProvableAux, *WithProbableAux) are not implemented; we
-///   advertise `"probable"` only, because a capability advertises only
+///   (random candidate + Miller-Rabin per Table B.1: 5 rounds at 2048,
+///   4 at 3072 and 4096) — see `crates/oxicrypt-rsa/src/keygen.rs`
+///   `gen_probable_prime_1024` and the `define_keygen` macro in
+///   `keygen_impl.rs`. The other randPQ modes (provable,
+///   *WithProvableAux, *WithProbableAux) are not implemented; only
+///   `"probable"` is advertised, because a capability advertises only
 ///   what its handler serves.
 /// - **`primeTest`** valid values per Table 6 are
 ///   `{"2pow100", "2powSecStr"}` (the FIPS186-4 legacy
 ///   `"tblC2"`/`"tblC3"` naming is NOT valid for FIPS186-5 and the
-///   server rejects it). 5 Miller-Rabin rounds yields error ≤ 2^-112
-///   per FIPS186-5 Table B.1 — sufficient to claim `"2pow100"` at
-///   all advertised moduli; insufficient for `"2powSecStr"` at
+///   server rejects it). Those round counts are the FIPS186-5
+///   Table B.1 values for error ≤ 2^-100 — sufficient to claim
+///   `"2pow100"` at all advertised moduli; insufficient for `"2powSecStr"` at
 ///   3072+ where securityStrength=128 would require more rounds.
 ///   Advertise `"2pow100"` honestly.
 /// - **`capabilities`** array wraps each `(randPQ, properties)` group;
-///   the pre-fix shape inlined `properties` at the top level (no
-///   `capabilities` wrapper, no `randPQ`), so the server emitted no
-///   prompts and registration silently produced an empty vector set.
+///   with `properties` inlined at the top level (no `capabilities`
+///   wrapper, no `randPQ`) the server emits no prompts and
+///   registration silently produces an empty vector set.
 /// - **`keyFormat = "crt"`** — handler returns `(n, d, p, q, dP, dQ, qInv)`
 ///   per the §A.1.1 / §B.3.1 reference output (see
 ///   `handlers::rsa_keygen::handle_keygen_group`); the non-CRT
@@ -853,9 +849,8 @@ pub fn rsa_keygen_capability() -> JsonValue {
 /// the catalog does not register `RSA / OAEP / RFC8017` as a
 /// standalone service; OAEP testing is filed under
 /// `KTS-IFC / — / Sp800-56Br2` (see `RsaOaepHandler`'s
-/// `acvp_capabilities` for the catalog citation). Preserved here as
-/// the RFC 8017 cap-shape reference for the future `KtsIfcHandler`
-/// migration arc that closes Section 12 RSA at 6/6.
+/// `acvp_capabilities` for the catalog citation). It records the
+/// RFC 8017 capability shape.
 pub fn rsa_oaep_capability() -> JsonValue {
     obj(vec![
         ("algorithm", str_val("RSA")),
@@ -877,12 +872,11 @@ pub fn rsa_oaep_capability() -> JsonValue {
 ///
 /// Per `draft-celi-acvp-rsa §7.10` (page 38): `modulo` is a REQUIRED
 /// top-level array advertising supported moduli (subset of
-/// `{2048, 3072, 4096}`). The pre-fix cap omitted it and the server
-/// rejects registration with HTTP 400 `No modulo supplied` (same
-/// failure mode the `signaturePrimitive` 2.0 cap had).
+/// `{2048, 3072, 4096}`); the server rejects a registration without
+/// it with HTTP 400 `No modulo supplied`.
 /// `oxicrypt-rsa` implements only the 2048-bit primitive
-/// (`rsa_decryption_primitive_2048_internal` + CRT variant), so we
-/// advertise `[2048]` alone, because a capability advertises only what
+/// (`rsa_decryption_primitive_2048_internal` + CRT variant), so
+/// `[2048]` alone is advertised, because a capability advertises only what
 /// its handler serves.
 pub fn rsa_decprim_capability() -> JsonValue {
     obj(vec![
@@ -900,11 +894,11 @@ pub fn rsa_decprim_capability() -> JsonValue {
 ///
 /// Per `draft-celi-acvp-rsa §7.8` Table 13 (page 36): `modulo` is a
 /// REQUIRED top-level array advertising supported moduli (subset of
-/// `{2048, 3072, 4096}`). The pre-fix cap omitted it and the server
-/// rejected registration with HTTP 400 `No modulo supplied`.
+/// `{2048, 3072, 4096}`); the server rejects a registration without
+/// it with HTTP 400 `No modulo supplied`.
 /// `oxicrypt-rsa` implements only the 2048-bit primitive
-/// (`rsa_signature_primitive_2048_internal` + CRT), so we advertise
-/// `[2048]` alone, because a capability advertises only what its handler
+/// (`rsa_signature_primitive_2048_internal` + CRT), so `[2048]` alone
+/// is advertised, because a capability advertises only what its handler
 /// serves.
 pub fn rsa_sigprim_capability() -> JsonValue {
     obj(vec![
@@ -924,9 +918,9 @@ pub fn rsa_sigprim_capability() -> JsonValue {
 ///
 /// Each capability block declares one strict (curve, hashAlg) pair
 /// matching the FIPS 186-5 §6.4.1 security-strength binding (P-256
-/// with SHA2-256, P-384 with SHA2-384). The earlier single-block
-/// form `curve: [P-256, P-384] × hashAlg: [SHA2-256, SHA2-384]`
-/// declared the cross product and prompted the demo server to
+/// with SHA2-256, P-384 with SHA2-384). A single-block form
+/// `curve: [P-256, P-384] × hashAlg: [SHA2-256, SHA2-384]` would
+/// declare the cross product and prompt the demo server to
 /// generate test cases for all four combinations, including the
 /// cross-pairs (P-256, SHA2-384) and (P-384, SHA2-256) that
 /// `oxicrypt-ecdsa` does not implement.
@@ -1054,9 +1048,9 @@ pub fn eddsa_keygen_capability() -> JsonValue {
 /// **no mode field** under revision `Sp800-56Ar3` — unlike `KAS-ECC`,
 /// which carries `mode: "CDH-Component"`. The server
 /// constructs its lookup key by concatenating
-/// `algorithm-mode-revision`; sending `mode: "Component"` produced
-/// `KAS-ECC-SSC-Component-Sp800-56Ar3` which doesn't exist in the
-/// catalog and was rejected with HTTP 400 `Unable to map ... to an
+/// `algorithm-mode-revision`; sending `mode: "Component"` produces
+/// `KAS-ECC-SSC-Component-Sp800-56Ar3`, which doesn't exist in the
+/// catalog and is rejected with HTTP 400 `Unable to map ... to an
 /// internal algorithm id`. The actual entry is
 /// `KAS-ECC-SSC-Sp800-56Ar3` (no mode segment).
 pub fn kas_ecc_ssc_capability() -> JsonValue {
@@ -1162,15 +1156,11 @@ pub fn kas_ffc_ssc_capability() -> JsonValue {
 /// satisfies the §7.7.1 Table 4 minimum of 128 bits without key
 /// confirmation. The MAC-confirmation variant
 /// (`KTS-OAEP-Party_V-confirmation`) and additional `l` widths /
-/// hash algorithms are deferred to follow-up arcs per the
-/// scoping in `prd_rsa_oaep_kts_ifc.md` §8 non-goals.
+/// hash algorithms are not registered.
 ///
-/// `prereqVals` is omitted to match the surrounding handler
-/// convention (KAS-ECC-SSC, KAS-FFC-SSC, every other cap in this
-/// module). The ACVTS demo server has tolerated prereqVals
-/// omission across all live-graded sessions to date; if a future
-/// 400-at-registration surfaces a prereqVals requirement, it is a
-/// scoped follow-up that applies uniformly across the cap module.
+/// `prereqVals` is omitted, as in every other capability in this
+/// module (KAS-ECC-SSC, KAS-FFC-SSC and the rest); the ACVTS demo
+/// server accepts registrations without it.
 pub fn kts_ifc_capability() -> JsonValue {
     obj(vec![
         ("algorithm", str_val("KTS-IFC")),
@@ -1229,9 +1219,9 @@ pub fn ml_kem_keygen_capability() -> JsonValue {
 /// `encapDecap` mode for both encapsulation and decapsulation; the
 /// `functions` array selects which the IUT supports. Key-check VAL
 /// functions (`encapsulationKeyCheck`/`decapsulationKeyCheck`) are
-/// not yet advertised — handler rejects non-AFT/VAL testTypes; the
-/// VAL key-check surface is a forward-looking item gated on FIPS 203
-/// §7.2/§7.3 key-validation routines being exposed via the public API.
+/// not advertised — handler rejects non-AFT/VAL testTypes, and the
+/// FIPS 203 §7.2/§7.3 key-validation routines are not exposed via the
+/// public API.
 pub fn ml_kem_encapdecap_capability() -> JsonValue {
     obj(vec![
         ("algorithm", str_val("ML-KEM")),
@@ -1251,10 +1241,9 @@ pub fn ml_kem_encapdecap_capability() -> JsonValue {
 ///
 /// Cap shape mirrors `draft-celi-acvp-ml-dsa §7.3.1`. All three
 /// FIPS 204 §4 Table 1 parameter sets (`ML-DSA-44`, `ML-DSA-65`,
-/// `ML-DSA-87`) are now advertised; `ML-DSA-87` is the CNSA 2.0
-/// digital-signature mandate, the other two ship under
-/// `AlgorithmProfile::Unrestricted` per the PQ-expansion mandate
-/// (`algo-capability-matrix.md` rows 192–194).
+/// `ML-DSA-87`) are advertised; `ML-DSA-87` is the CNSA 2.0
+/// digital-signature mandate, and the other two ship under
+/// `AlgorithmProfile::Unrestricted`.
 pub fn ml_dsa_keygen_capability() -> JsonValue {
     obj(vec![
         ("algorithm", str_val("ML-DSA")),
@@ -1274,8 +1263,7 @@ pub fn ml_dsa_keygen_capability() -> JsonValue {
 /// - `deterministic: [true]` — only deterministic-mode signing is
 ///   exposed (FIPS 204 §6.2 Algorithm 7 with rho_prime derived
 ///   from sk only); the randomized variant is intentionally not
-///   built (matrix row 194 — hedged mode is a separate post-launch
-///   consideration).
+///   built.
 /// - `signatureInterfaces: ["internal"]` — the harness invokes
 ///   `sign_internal`, which does not consume context bytes; the
 ///   external interface (`Sign(SK, M, ctx)`) is not advertised.
@@ -1323,7 +1311,7 @@ pub fn ml_dsa_siggen_capability() -> JsonValue {
 ///
 /// Cap shape mirrors `draft-celi-acvp-ml-dsa §7.5.1`, constrained
 /// to the same subset rationale as [`ml_dsa_siggen_capability`]
-/// above (internal-interface only, single parameter set,
+/// above (internal-interface only,
 /// `externalMu: [false]`, no pre-hash options per the
 /// internal-interface server-side constraint documented there).
 /// `deterministic` is not advertised on sigVer because verification
@@ -1385,9 +1373,7 @@ pub fn is_slh_dsa_paramset(name: &str) -> bool {
 ///
 /// `filter` semantics:
 /// - `None` → all 12 names (used by tests and the unfiltered
-///   `acvp_capabilities()` trait fallback; back-compat with the
-///   bundled-cap shape that shipped for ML-DSA; new multi-variant PQ
-///   families request one parameter set per session instead).
+///   `acvp_capabilities()` trait fallback).
 /// - `Some(name)` where `name` is in [`SLH_DSA_PARAMSETS`] → a
 ///   single-element array containing just that name: the
 ///   one-vector-set-per-session shape.
@@ -1411,7 +1397,7 @@ fn slh_dsa_paramsets_array(filter: Option<&str>) -> JsonValue {
 ///
 /// Cap shape mirrors `draft-livelsberger-acvp-slh-dsa §7.3.1`.
 /// `paramset_filter`:
-/// - `None` → bundled 12-paramSet advertisement (back-compat).
+/// - `None` → bundled 12-paramSet advertisement.
 /// - `Some(name)` → single-paramSet advertisement, the one-vector-
 ///   set-per-session shape (must be validated via
 ///   [`is_slh_dsa_paramset`] at the CLI layer first).
@@ -1479,7 +1465,7 @@ pub fn slh_dsa_siggen_capability(paramset_filter: Option<&str>) -> JsonValue {
 /// Cap shape mirrors `draft-livelsberger-acvp-slh-dsa §7.5.2`,
 /// constrained to the same subset rationale as
 /// [`slh_dsa_siggen_capability`] above (internal-interface only,
-/// single parameter set, no pre-hash options per the
+/// no pre-hash options per the
 /// internal-interface server-side constraint documented there).
 /// `deterministic` is not advertised on sigVer because verification
 /// is independent of the signer's randomness mode.
@@ -1510,9 +1496,8 @@ pub fn slh_dsa_sigver_capability(paramset_filter: Option<&str>) -> JsonValue {
 /// scalar `lmsMode` + `lmOtsMode` strings. The alternative
 /// `capabilities` object form (Table 4 — `lmsModes` plural,
 /// `lmOtsModes` plural, both arrays) is preferred when the IUT
-/// supports a wide cartesian product; for a single registered
-/// pair, `specificCapabilities` is more explicit-intent and
-/// advertises exactly what the handler serves. The two
+/// supports a full cartesian product; `specificCapabilities`
+/// advertises exactly the pairs the handler serves. The two
 /// forms cannot be advertised together (spec note above Table 4).
 #[allow(clippy::too_many_lines)]
 fn lms_specific_capabilities() -> JsonValue {
@@ -1873,8 +1858,7 @@ fn caps_filter_keep(filter: Option<&str>, lms_mode: &str, lmots_mode: &str) -> b
 }
 
 /// The LMS `specificCapabilities` array narrowed by a `--caps-filter` value (see
-/// [`caps_filter_keep`]). `None` returns the full 80-pair grid unchanged — so the
-/// default registration is byte-identical to the pre-filter behaviour.
+/// [`caps_filter_keep`]). `None` returns the full 80-pair grid unchanged.
 fn lms_specific_capabilities_filtered(filter: Option<&str>) -> JsonValue {
     let JsonValue::Array(all) = lms_specific_capabilities() else {
         unreachable!("lms_specific_capabilities always builds a JSON array");
@@ -1961,14 +1945,14 @@ pub fn xmss_sigver_capability() -> JsonValue {
     ])
 }
 
-// ── Tests: SLH-DSA paramset filter (B7 precursor) ───────────────
+// ── Tests: SLH-DSA paramset filter ───────────────────────────────
 
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::panic, clippy::uninlined_format_args)]
 mod tests {
     use super::*;
 
-    /// Helper: find `parameterSets` array on a keyGen-shaped cap
+    /// The `parameterSets` array of a keyGen-shaped cap
     /// (top-level field).
     fn keygen_paramsets(cap: &JsonValue) -> Vec<&str> {
         let pairs = cap.as_object().unwrap();
@@ -1984,7 +1968,7 @@ mod tests {
             .collect()
     }
 
-    /// Helper: find `parameterSets` array on a sigGen/sigVer-shaped
+    /// The `parameterSets` array of a sigGen/sigVer-shaped
     /// cap (nested under `capabilities[0].parameterSets`).
     fn nested_paramsets(cap: &JsonValue) -> Vec<&str> {
         let pairs = cap.as_object().unwrap();
@@ -2089,7 +2073,7 @@ mod tests {
 
     // ── LMS --caps-filter (the runtime tall-tree subset) ────────────
 
-    /// Helper: the `(lmsMode, lmOtsMode)` pairs of an LMS cap's
+    /// The `(lmsMode, lmOtsMode)` pairs of an LMS cap's
     /// `specificCapabilities` array.
     fn lms_pairs(cap: &JsonValue) -> Vec<(&str, &str)> {
         let sc = cap
@@ -2117,7 +2101,7 @@ mod tests {
 
     #[test]
     fn lms_caps_unfiltered_advertises_the_full_80_grid() {
-        // No filter == the full grid, byte-identical to the pre-filter behaviour.
+        // No filter == the full grid.
         assert_eq!(
             lms_pairs(&lms_sigver_capability(None)).len(),
             80,
@@ -2214,5 +2198,63 @@ mod tests {
         // A spec with no non-empty clause keeps no pair (rather than everything).
         let cap = lms_sigver_capability(Some(",,"));
         assert_eq!(lms_pairs(&cap).len(), 0);
+    }
+
+    /// Every value stored under `key`, at any depth.
+    fn values_named<'a>(v: &'a JsonValue, key: &str, out: &mut Vec<&'a JsonValue>) {
+        if let Some(pairs) = v.as_object() {
+            for (k, child) in pairs {
+                if k == key {
+                    out.push(child);
+                }
+                values_named(child, key, out);
+            }
+        } else if let Some(items) = v.as_array() {
+            for child in items {
+                values_named(child, key, out);
+            }
+        }
+    }
+
+    #[test]
+    fn caps_drbg_reseed_and_df() {
+        let caps = [
+            ctr_drbg_capability(),
+            hash_drbg_capability(),
+            hmac_drbg_capability(),
+        ];
+
+        let mut modes = Vec::new();
+        let mut reseed_true = 0;
+        let mut der_func = Vec::new();
+        for cap in &caps {
+            let entries = cap
+                .as_object()
+                .unwrap()
+                .iter()
+                .find(|(k, _)| k == "capabilities")
+                .and_then(|(_, v)| v.as_array())
+                .unwrap();
+            modes.push(entries.len());
+
+            let mut reseed = Vec::new();
+            values_named(cap, "reseedImplemented", &mut reseed);
+            assert_eq!(reseed.len(), 1, "one reseedImplemented per algorithm block");
+            reseed_true += reseed.iter().filter(|v| v.as_bool() == Some(true)).count();
+
+            values_named(cap, "derFuncEnabled", &mut der_func);
+        }
+
+        assert_eq!(modes, [3, 3, 3], "nine DRBGs: three modes per algorithm");
+        assert_eq!(reseed_true, 3, "reseedImplemented is true on every block");
+        assert_eq!(
+            der_func.len(),
+            3,
+            "each CTR_DRBG mode registers derFuncEnabled"
+        );
+        assert!(
+            der_func.iter().all(|v| v.as_bool() == Some(true)),
+            "no CTR_DRBG capability registers derFuncEnabled false"
+        );
     }
 }
