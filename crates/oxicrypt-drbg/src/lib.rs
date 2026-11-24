@@ -79,8 +79,13 @@
 //!
 //! # Sensitive security parameters
 //!
-//! - **Entropy input** (caller-supplied) — CSP. Consumed in-place
-//!   by `instantiate` / `reseed` and not retained beyond the call.
+//! - **Entropy input and nonce** (drawn by the module from the seed
+//!   path) — CSP. Held in buffers that wipe on drop, consumed by
+//!   `instantiate_from_module` / `reseed_from_module`, and not retained
+//!   beyond the call. The seed-material buffers built from them
+//!   (`entropy || nonce || personalization` on instantiate,
+//!   `entropy || additional_input` on reseed, and CTR_DRBG's derived
+//!   seed) wipe on drop as well.
 //! - **Internal state** (`V`, `Key`, `reseed_counter` for CTR_DRBG;
 //!   `V`, `C`, `reseed_counter` for Hash_DRBG; `K`, `V`,
 //!   `reseed_counter` for HMAC_DRBG) — CSP. Lives for the lifetime
@@ -96,8 +101,11 @@
 //!
 //! The instantiate entry points call [`oxicrypt_module::require_operational`]
 //! and [`oxicrypt_module::require_allowed`] to enforce algorithm-profile
-//! restrictions; reseed and generate operate on an already-gated
-//! instantiation and do not re-check. Instantiate methods
+//! restrictions, and so do the module-seeded reseeds. Every `generate`
+//! calls [`oxicrypt_module::require_operational`] before its own checks
+//! and [`oxicrypt_module::require_operational_for_output`] immediately
+//! before it writes output, so a module that entered its error state
+//! during the call writes nothing. Instantiate methods
 //! gate on the active profile via [`oxicrypt_module::Service::CtrDrbgAes128`],
 //! `Service::CtrDrbgAes192`, `Service::CtrDrbgAes256`, `Service::HashDrbgSha256`,
 //! `Service::HashDrbgSha384`, `Service::HashDrbgSha512`, `Service::HmacDrbgSha256`,
@@ -123,7 +131,7 @@ pub mod testing;
 
 pub use ctr::{
     Aes128Factory, Aes192Factory, Aes256Factory, CipherFactory, CtrDrbg, CtrDrbgAes128,
-    CtrDrbgAes192, CtrDrbgAes256, DrbgError, MAX_DF_INPUT,
+    CtrDrbgAes192, CtrDrbgAes256, DrbgError, MAX_DF_INPUT, rbg_error,
 };
 pub use hash::{
     HASH_DRBG_MAX_DF_INPUT, HashAlg, HashDrbg, HashDrbgSha256, HashDrbgSha384, HashDrbgSha512,
@@ -134,7 +142,7 @@ pub use hmac::{
     HmacSha256Alg, HmacSha384Alg, HmacSha512Alg,
 };
 pub use kat::KATS;
-pub use seed::{SeedPathReport, entropy_on_demand_test};
+pub use seed::{SeedPathReport, entropy_on_demand_test, seed_path_label};
 
 #[cfg(test)]
 pub(crate) mod test_support {
@@ -153,5 +161,16 @@ pub(crate) mod test_support {
     pub(crate) fn start_module() {
         let _ = initialize_with_tests(UNSIGNED_TEST_BINARY, &[]);
         assert_eq!(require_self_test_started(), Ok(()));
+    }
+
+    /// The seed cell and the seams are process-global, so tests that use
+    /// them run one at a time.
+    static SERIAL: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    /// Holds the lock that serializes tests using the seams.
+    pub(crate) fn serial() -> std::sync::MutexGuard<'static, ()> {
+        SERIAL
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
     }
 }

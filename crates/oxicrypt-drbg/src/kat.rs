@@ -19,7 +19,7 @@
 //!
 //! # Coverage
 //!
-//! For each AES key size (128, 192, 256) we exercise both CTR_DRBG
+//! For each AES key size (128, 192, 256) the KATs exercise both CTR_DRBG
 //! variants approved by SP 800-90A §10.2:
 //!
 //!   * `no df` — `instantiate_no_df` + two `generate_no_df` calls
@@ -27,7 +27,7 @@
 //!     exercises `Block_Cipher_df` and `BCC` on the instantiate path.
 //!
 //! For Hash_DRBG (SP 800-90A §10.1.1) and HMAC_DRBG (SP 800-90A
-//! §10.1.2) we exercise each approved SHA-2 digest (SHA-256, SHA-384,
+//! §10.1.2) the KATs exercise each approved SHA-2 digest (SHA-256, SHA-384,
 //! SHA-512) with `instantiate` + two `generate` calls. The Hash_DRBG
 //! path drives `Hash_df` (§10.3.1) and the `Hashgen` update loop; the
 //! HMAC_DRBG path drives the `HMAC_DRBG_Update` helper and the
@@ -43,7 +43,7 @@
 //! reseed-then-generate path via the `generate_pr` / `generate_df_pr`
 //! wrappers on each DRBG.
 //!
-//! That's 24 KATs total. FIPS 140-3 IG 10.3.A requires separate CASTs
+//! FIPS 140-3 IG 10.3.A requires separate CASTs
 //! for each implemented DRBG mechanism — HMAC_DRBG, CTR_DRBG and
 //! Hash_DRBG — and this set exceeds that; the `no df`
 //! KATs cover the core Update/Generate state machine, the `use df`
@@ -168,9 +168,9 @@ fn run_aes128_no_df() -> Result<(), SelfTestFailure> {
     drbg.instantiate_no_df_internal(&AES128_NODF_ENTROPY)
         .map_err(|_| SelfTestFailure)?;
     let mut out = [0u8; 64];
-    drbg.generate_no_df(None, &mut out)
+    drbg.generate_no_df_internal(None, &mut out)
         .map_err(|_| SelfTestFailure)?;
-    drbg.generate_no_df(None, &mut out)
+    drbg.generate_no_df_internal(None, &mut out)
         .map_err(|_| SelfTestFailure)?;
     if out != AES128_NODF_EXPECTED {
         return Err(SelfTestFailure);
@@ -183,9 +183,9 @@ fn run_aes192_no_df() -> Result<(), SelfTestFailure> {
     drbg.instantiate_no_df_internal(&AES192_NODF_ENTROPY)
         .map_err(|_| SelfTestFailure)?;
     let mut out = [0u8; 64];
-    drbg.generate_no_df(None, &mut out)
+    drbg.generate_no_df_internal(None, &mut out)
         .map_err(|_| SelfTestFailure)?;
-    drbg.generate_no_df(None, &mut out)
+    drbg.generate_no_df_internal(None, &mut out)
         .map_err(|_| SelfTestFailure)?;
     if out != AES192_NODF_EXPECTED {
         return Err(SelfTestFailure);
@@ -198,9 +198,9 @@ fn run_aes256_no_df() -> Result<(), SelfTestFailure> {
     drbg.instantiate_no_df_internal(&AES256_NODF_ENTROPY)
         .map_err(|_| SelfTestFailure)?;
     let mut out = [0u8; 64];
-    drbg.generate_no_df(None, &mut out)
+    drbg.generate_no_df_internal(None, &mut out)
         .map_err(|_| SelfTestFailure)?;
-    drbg.generate_no_df(None, &mut out)
+    drbg.generate_no_df_internal(None, &mut out)
         .map_err(|_| SelfTestFailure)?;
     if out != AES256_NODF_EXPECTED {
         return Err(SelfTestFailure);
@@ -213,9 +213,9 @@ fn run_aes128_df() -> Result<(), SelfTestFailure> {
     drbg.instantiate_df_internal(&AES128_DF_ENTROPY, &AES128_DF_NONCE, &[])
         .map_err(|_| SelfTestFailure)?;
     let mut out = [0u8; 64];
-    drbg.generate_df(None, &mut out)
+    drbg.generate_df_internal(None, &mut out)
         .map_err(|_| SelfTestFailure)?;
-    drbg.generate_df(None, &mut out)
+    drbg.generate_df_internal(None, &mut out)
         .map_err(|_| SelfTestFailure)?;
     if out != AES128_DF_EXPECTED {
         return Err(SelfTestFailure);
@@ -228,9 +228,9 @@ fn run_aes192_df() -> Result<(), SelfTestFailure> {
     drbg.instantiate_df_internal(&AES192_DF_ENTROPY, &AES192_DF_NONCE, &[])
         .map_err(|_| SelfTestFailure)?;
     let mut out = [0u8; 64];
-    drbg.generate_df(None, &mut out)
+    drbg.generate_df_internal(None, &mut out)
         .map_err(|_| SelfTestFailure)?;
-    drbg.generate_df(None, &mut out)
+    drbg.generate_df_internal(None, &mut out)
         .map_err(|_| SelfTestFailure)?;
     if out != AES192_DF_EXPECTED {
         return Err(SelfTestFailure);
@@ -327,9 +327,9 @@ fn run_aes256_df() -> Result<(), SelfTestFailure> {
     drbg.instantiate_df_internal(&AES256_DF_ENTROPY, &AES256_DF_NONCE, &[])
         .map_err(|_| SelfTestFailure)?;
     let mut out = [0u8; 64];
-    drbg.generate_df(None, &mut out)
+    drbg.generate_df_internal(None, &mut out)
         .map_err(|_| SelfTestFailure)?;
-    drbg.generate_df(None, &mut out)
+    drbg.generate_df_internal(None, &mut out)
         .map_err(|_| SelfTestFailure)?;
     if out != AES256_DF_EXPECTED {
         return Err(SelfTestFailure);
@@ -410,8 +410,10 @@ fn run_hash_sha256() -> Result<(), SelfTestFailure> {
     drbg.instantiate_internal(&SHA256_ENTROPY, &SHA256_NONCE, &[])
         .map_err(|_| SelfTestFailure)?;
     let mut out = [0u8; 128];
-    drbg.generate(None, &mut out).map_err(|_| SelfTestFailure)?;
-    drbg.generate(None, &mut out).map_err(|_| SelfTestFailure)?;
+    drbg.generate_internal(None, &mut out)
+        .map_err(|_| SelfTestFailure)?;
+    drbg.generate_internal(None, &mut out)
+        .map_err(|_| SelfTestFailure)?;
     if out != SHA256_EXPECTED {
         return Err(SelfTestFailure);
     }
@@ -423,8 +425,10 @@ fn run_hash_sha384() -> Result<(), SelfTestFailure> {
     drbg.instantiate_internal(&SHA384_ENTROPY, &SHA384_NONCE, &[])
         .map_err(|_| SelfTestFailure)?;
     let mut out = [0u8; 192];
-    drbg.generate(None, &mut out).map_err(|_| SelfTestFailure)?;
-    drbg.generate(None, &mut out).map_err(|_| SelfTestFailure)?;
+    drbg.generate_internal(None, &mut out)
+        .map_err(|_| SelfTestFailure)?;
+    drbg.generate_internal(None, &mut out)
+        .map_err(|_| SelfTestFailure)?;
     if out != SHA384_EXPECTED {
         return Err(SelfTestFailure);
     }
@@ -436,8 +440,10 @@ fn run_hash_sha512() -> Result<(), SelfTestFailure> {
     drbg.instantiate_internal(&SHA512_ENTROPY, &SHA512_NONCE, &[])
         .map_err(|_| SelfTestFailure)?;
     let mut out = [0u8; 256];
-    drbg.generate(None, &mut out).map_err(|_| SelfTestFailure)?;
-    drbg.generate(None, &mut out).map_err(|_| SelfTestFailure)?;
+    drbg.generate_internal(None, &mut out)
+        .map_err(|_| SelfTestFailure)?;
+    drbg.generate_internal(None, &mut out)
+        .map_err(|_| SelfTestFailure)?;
     if out != SHA512_EXPECTED {
         return Err(SelfTestFailure);
     }
@@ -449,8 +455,10 @@ fn run_hmac_sha256() -> Result<(), SelfTestFailure> {
     drbg.instantiate_internal(&HMAC_SHA256_ENTROPY, &HMAC_SHA256_NONCE, &[])
         .map_err(|_| SelfTestFailure)?;
     let mut out = [0u8; 128];
-    drbg.generate(None, &mut out).map_err(|_| SelfTestFailure)?;
-    drbg.generate(None, &mut out).map_err(|_| SelfTestFailure)?;
+    drbg.generate_internal(None, &mut out)
+        .map_err(|_| SelfTestFailure)?;
+    drbg.generate_internal(None, &mut out)
+        .map_err(|_| SelfTestFailure)?;
     if out != HMAC_SHA256_EXPECTED {
         return Err(SelfTestFailure);
     }
@@ -462,8 +470,10 @@ fn run_hmac_sha384() -> Result<(), SelfTestFailure> {
     drbg.instantiate_internal(&HMAC_SHA384_ENTROPY, &HMAC_SHA384_NONCE, &[])
         .map_err(|_| SelfTestFailure)?;
     let mut out = [0u8; 192];
-    drbg.generate(None, &mut out).map_err(|_| SelfTestFailure)?;
-    drbg.generate(None, &mut out).map_err(|_| SelfTestFailure)?;
+    drbg.generate_internal(None, &mut out)
+        .map_err(|_| SelfTestFailure)?;
+    drbg.generate_internal(None, &mut out)
+        .map_err(|_| SelfTestFailure)?;
     if out != HMAC_SHA384_EXPECTED {
         return Err(SelfTestFailure);
     }
@@ -475,8 +485,10 @@ fn run_hmac_sha512() -> Result<(), SelfTestFailure> {
     drbg.instantiate_internal(&HMAC_SHA512_ENTROPY, &HMAC_SHA512_NONCE, &[])
         .map_err(|_| SelfTestFailure)?;
     let mut out = [0u8; 256];
-    drbg.generate(None, &mut out).map_err(|_| SelfTestFailure)?;
-    drbg.generate(None, &mut out).map_err(|_| SelfTestFailure)?;
+    drbg.generate_internal(None, &mut out)
+        .map_err(|_| SelfTestFailure)?;
+    drbg.generate_internal(None, &mut out)
+        .map_err(|_| SelfTestFailure)?;
     if out != HMAC_SHA512_EXPECTED {
         return Err(SelfTestFailure);
     }
@@ -752,9 +764,9 @@ fn run_aes128_df_pr() -> Result<(), SelfTestFailure> {
     drbg.instantiate_df_internal(&AES128_DF_PR_ENTROPY, &AES128_DF_PR_NONCE, &[])
         .map_err(|_| SelfTestFailure)?;
     let mut out = [0u8; 64];
-    drbg.generate_df_pr(&AES128_DF_PR_ENTROPY_1, &[], &mut out)
+    drbg.generate_df_pr_internal(&AES128_DF_PR_ENTROPY_1, &[], &mut out)
         .map_err(|_| SelfTestFailure)?;
-    drbg.generate_df_pr(&AES128_DF_PR_ENTROPY_2, &[], &mut out)
+    drbg.generate_df_pr_internal(&AES128_DF_PR_ENTROPY_2, &[], &mut out)
         .map_err(|_| SelfTestFailure)?;
     if out != AES128_DF_PR_EXPECTED {
         return Err(SelfTestFailure);
@@ -767,9 +779,9 @@ fn run_aes192_df_pr() -> Result<(), SelfTestFailure> {
     drbg.instantiate_df_internal(&AES192_DF_PR_ENTROPY, &AES192_DF_PR_NONCE, &[])
         .map_err(|_| SelfTestFailure)?;
     let mut out = [0u8; 64];
-    drbg.generate_df_pr(&AES192_DF_PR_ENTROPY_1, &[], &mut out)
+    drbg.generate_df_pr_internal(&AES192_DF_PR_ENTROPY_1, &[], &mut out)
         .map_err(|_| SelfTestFailure)?;
-    drbg.generate_df_pr(&AES192_DF_PR_ENTROPY_2, &[], &mut out)
+    drbg.generate_df_pr_internal(&AES192_DF_PR_ENTROPY_2, &[], &mut out)
         .map_err(|_| SelfTestFailure)?;
     if out != AES192_DF_PR_EXPECTED {
         return Err(SelfTestFailure);
@@ -782,9 +794,9 @@ fn run_aes256_df_pr() -> Result<(), SelfTestFailure> {
     drbg.instantiate_df_internal(&AES256_DF_PR_ENTROPY, &AES256_DF_PR_NONCE, &[])
         .map_err(|_| SelfTestFailure)?;
     let mut out = [0u8; 64];
-    drbg.generate_df_pr(&AES256_DF_PR_ENTROPY_1, &[], &mut out)
+    drbg.generate_df_pr_internal(&AES256_DF_PR_ENTROPY_1, &[], &mut out)
         .map_err(|_| SelfTestFailure)?;
-    drbg.generate_df_pr(&AES256_DF_PR_ENTROPY_2, &[], &mut out)
+    drbg.generate_df_pr_internal(&AES256_DF_PR_ENTROPY_2, &[], &mut out)
         .map_err(|_| SelfTestFailure)?;
     if out != AES256_DF_PR_EXPECTED {
         return Err(SelfTestFailure);
@@ -797,9 +809,9 @@ fn run_hash_sha256_pr() -> Result<(), SelfTestFailure> {
     drbg.instantiate_internal(&HASH_SHA256_PR_ENTROPY, &HASH_SHA256_PR_NONCE, &[])
         .map_err(|_| SelfTestFailure)?;
     let mut out = [0u8; 128];
-    drbg.generate_pr(&HASH_SHA256_PR_ENTROPY_1, &[], &mut out)
+    drbg.generate_pr_internal(&HASH_SHA256_PR_ENTROPY_1, &[], &mut out)
         .map_err(|_| SelfTestFailure)?;
-    drbg.generate_pr(&HASH_SHA256_PR_ENTROPY_2, &[], &mut out)
+    drbg.generate_pr_internal(&HASH_SHA256_PR_ENTROPY_2, &[], &mut out)
         .map_err(|_| SelfTestFailure)?;
     if out != HASH_SHA256_PR_EXPECTED {
         return Err(SelfTestFailure);
@@ -812,9 +824,9 @@ fn run_hash_sha384_pr() -> Result<(), SelfTestFailure> {
     drbg.instantiate_internal(&HASH_SHA384_PR_ENTROPY, &HASH_SHA384_PR_NONCE, &[])
         .map_err(|_| SelfTestFailure)?;
     let mut out = [0u8; 192];
-    drbg.generate_pr(&HASH_SHA384_PR_ENTROPY_1, &[], &mut out)
+    drbg.generate_pr_internal(&HASH_SHA384_PR_ENTROPY_1, &[], &mut out)
         .map_err(|_| SelfTestFailure)?;
-    drbg.generate_pr(&HASH_SHA384_PR_ENTROPY_2, &[], &mut out)
+    drbg.generate_pr_internal(&HASH_SHA384_PR_ENTROPY_2, &[], &mut out)
         .map_err(|_| SelfTestFailure)?;
     if out != HASH_SHA384_PR_EXPECTED {
         return Err(SelfTestFailure);
@@ -827,9 +839,9 @@ fn run_hash_sha512_pr() -> Result<(), SelfTestFailure> {
     drbg.instantiate_internal(&HASH_SHA512_PR_ENTROPY, &HASH_SHA512_PR_NONCE, &[])
         .map_err(|_| SelfTestFailure)?;
     let mut out = [0u8; 256];
-    drbg.generate_pr(&HASH_SHA512_PR_ENTROPY_1, &[], &mut out)
+    drbg.generate_pr_internal(&HASH_SHA512_PR_ENTROPY_1, &[], &mut out)
         .map_err(|_| SelfTestFailure)?;
-    drbg.generate_pr(&HASH_SHA512_PR_ENTROPY_2, &[], &mut out)
+    drbg.generate_pr_internal(&HASH_SHA512_PR_ENTROPY_2, &[], &mut out)
         .map_err(|_| SelfTestFailure)?;
     if out != HASH_SHA512_PR_EXPECTED {
         return Err(SelfTestFailure);
@@ -842,9 +854,9 @@ fn run_hmac_sha256_pr() -> Result<(), SelfTestFailure> {
     drbg.instantiate_internal(&HMAC_SHA256_PR_ENTROPY, &HMAC_SHA256_PR_NONCE, &[])
         .map_err(|_| SelfTestFailure)?;
     let mut out = [0u8; 128];
-    drbg.generate_pr(&HMAC_SHA256_PR_ENTROPY_1, &[], &mut out)
+    drbg.generate_pr_internal(&HMAC_SHA256_PR_ENTROPY_1, &[], &mut out)
         .map_err(|_| SelfTestFailure)?;
-    drbg.generate_pr(&HMAC_SHA256_PR_ENTROPY_2, &[], &mut out)
+    drbg.generate_pr_internal(&HMAC_SHA256_PR_ENTROPY_2, &[], &mut out)
         .map_err(|_| SelfTestFailure)?;
     if out != HMAC_SHA256_PR_EXPECTED {
         return Err(SelfTestFailure);
@@ -857,9 +869,9 @@ fn run_hmac_sha384_pr() -> Result<(), SelfTestFailure> {
     drbg.instantiate_internal(&HMAC_SHA384_PR_ENTROPY, &HMAC_SHA384_PR_NONCE, &[])
         .map_err(|_| SelfTestFailure)?;
     let mut out = [0u8; 192];
-    drbg.generate_pr(&HMAC_SHA384_PR_ENTROPY_1, &[], &mut out)
+    drbg.generate_pr_internal(&HMAC_SHA384_PR_ENTROPY_1, &[], &mut out)
         .map_err(|_| SelfTestFailure)?;
-    drbg.generate_pr(&HMAC_SHA384_PR_ENTROPY_2, &[], &mut out)
+    drbg.generate_pr_internal(&HMAC_SHA384_PR_ENTROPY_2, &[], &mut out)
         .map_err(|_| SelfTestFailure)?;
     if out != HMAC_SHA384_PR_EXPECTED {
         return Err(SelfTestFailure);
@@ -872,9 +884,9 @@ fn run_hmac_sha512_pr() -> Result<(), SelfTestFailure> {
     drbg.instantiate_internal(&HMAC_SHA512_PR_ENTROPY, &HMAC_SHA512_PR_NONCE, &[])
         .map_err(|_| SelfTestFailure)?;
     let mut out = [0u8; 256];
-    drbg.generate_pr(&HMAC_SHA512_PR_ENTROPY_1, &[], &mut out)
+    drbg.generate_pr_internal(&HMAC_SHA512_PR_ENTROPY_1, &[], &mut out)
         .map_err(|_| SelfTestFailure)?;
-    drbg.generate_pr(&HMAC_SHA512_PR_ENTROPY_2, &[], &mut out)
+    drbg.generate_pr_internal(&HMAC_SHA512_PR_ENTROPY_2, &[], &mut out)
         .map_err(|_| SelfTestFailure)?;
     if out != HMAC_SHA512_PR_EXPECTED {
         return Err(SelfTestFailure);

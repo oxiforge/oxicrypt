@@ -39,9 +39,12 @@ use core::marker::PhantomData;
 use oxicrypt_aes::modes::BlockCipher;
 use oxicrypt_aes::{Aes128Key, Aes192Key, Aes256Key};
 use oxicrypt_module::{
-    Error, SelfTestStarted, Service, require_allowed, require_operational,
-    require_self_test_started_token,
+    Error, Rbg, RbgError, SelfTestStarted, Service, require_allowed, require_operational,
+    require_operational_for_output, require_self_test_started, require_self_test_started_token,
 };
+use oxicrypt_zeroize::Zeroizing;
+
+use crate::seed::get_entropy;
 
 /// AES block size in bytes (`outlen` in SP 800-90A terminology).
 const OUTLEN: usize = 16;
@@ -111,6 +114,74 @@ impl From<Error> for DrbgError {
     fn from(value: Error) -> Self {
         Self::Module(value)
     }
+}
+
+/// Maps a [`DrbgError`] onto the [`RbgError`] an [`Rbg`] reports.
+///
+/// `InputTooLong`, `InvalidSeedLength` and `EntropyInputTooShort` cannot
+/// arise from [`Rbg::fill`], which passes no input and whose seed path
+/// sets every length; they map to [`RbgError::RequestTooLong`]. The match
+/// has no wildcard, so a new [`DrbgError`] variant fails to compile here.
+pub fn rbg_error(e: DrbgError) -> RbgError {
+    match e {
+        DrbgError::Uninstantiated => RbgError::Uninstantiated,
+        DrbgError::ReseedRequired => RbgError::ReseedRequired,
+        DrbgError::RequestTooLong
+        | DrbgError::InputTooLong
+        | DrbgError::InvalidSeedLength
+        | DrbgError::EntropyInputTooShort => RbgError::RequestTooLong,
+        DrbgError::Module(Error::Rbg(e)) => e,
+        DrbgError::Module(_) => RbgError::NotOperational,
+    }
+}
+
+/// Bytes in each request a module-seeded instantiate or reseed makes of
+/// the seed path, and the entropy input it uses: the 256-bit security
+/// strength, which covers every DRBG type.
+pub(crate) const MODULE_DRAW_LEN: usize = 32;
+/// Bytes of the second instantiate request used as the nonce: half the
+/// 256-bit security strength (SP 800-90A Rev. 1 §8.6.7).
+pub(crate) const MODULE_NONCE_LEN: usize = 16;
+/// Bytes of entropy input and nonce a module-seeded instantiate uses.
+pub(crate) const MODULE_SEED_LEN: usize = MODULE_DRAW_LEN + MODULE_NONCE_LEN;
+
+/// A module-state check a generate runs at entry and again immediately
+/// before it writes output.
+pub(crate) type Gate = fn() -> Result<(), Error>;
+
+/// The body of a CTR_DRBG generate, run after the entry gate with the
+/// output gate as its re-check.
+type GenerateBody<F> = fn(&mut CtrDrbg<F>, Gate, Option<&[u8]>, &mut [u8]) -> Result<(), DrbgError>;
+
+/// One seed-path request, wiped on drop.
+pub(crate) type SeedDraw = Zeroizing<[u8; MODULE_DRAW_LEN]>;
+
+/// Draws the entropy input and the nonce of a module-seeded instantiate,
+/// as two requests of [`MODULE_DRAW_LEN`] bytes. The nonce is the leading
+/// [`MODULE_NONCE_LEN`] bytes of the second request; both buffers wipe on
+/// drop, so a failed second draw also wipes the first.
+pub(crate) fn draw_instantiate_seed() -> Result<(SeedDraw, SeedDraw), Error> {
+    let mut entropy = Zeroizing::new([0u8; MODULE_DRAW_LEN]);
+    get_entropy(&mut *entropy).map_err(Error::Rbg)?;
+    let mut nonce = Zeroizing::new([0u8; MODULE_DRAW_LEN]);
+    let second = get_entropy(&mut *nonce);
+    #[cfg(any(test, feature = "fault-injection"))]
+    let second = if crate::seam::take_second_draw_fault() {
+        oxicrypt_zeroize::zeroize(&mut *nonce);
+        oxicrypt_module::enter_error_state("entropy source");
+        Err(RbgError::EntropyUnavailable)
+    } else {
+        second
+    };
+    second.map_err(Error::Rbg)?;
+    Ok((entropy, nonce))
+}
+
+/// Draws one reseed entropy input of [`MODULE_DRAW_LEN`] bytes.
+pub(crate) fn draw_reseed_entropy() -> Result<SeedDraw, DrbgError> {
+    let mut entropy = Zeroizing::new([0u8; MODULE_DRAW_LEN]);
+    get_entropy(&mut *entropy).map_err(|e| DrbgError::Module(Error::Rbg(e)))?;
+    Ok(entropy)
 }
 
 impl core::fmt::Display for DrbgError {
@@ -243,6 +314,9 @@ pub struct CtrDrbg<F: CipherFactory> {
     reseed_counter: u64,
     /// Set to `true` after a successful Instantiate.
     instantiated: bool,
+    /// Set by [`CtrDrbg::instantiate_from_module`]: the instance reseeds
+    /// itself from the seed path at the reseed interval.
+    module_seeded: bool,
     _marker: PhantomData<F>,
 }
 
@@ -266,6 +340,20 @@ impl<F: CipherFactory> CtrDrbg<F> {
     /// Every AES key length is even, so the division is exact.
     #[allow(clippy::integer_division)]
     const MIN_NONCE_LEN: usize = F::KEY_LEN / 2;
+    /// The instantiated security strength in bits, `KEY_LEN * 8`.
+    const STRENGTH_BITS: u32 = {
+        let bits = F::KEY_LEN * 8;
+        assert!(bits <= 256);
+        bits as u32
+    };
+
+    /// The longest personalization string
+    /// [`Self::instantiate_from_module`] accepts: [`MAX_DF_INPUT`] less
+    /// the 32-byte entropy input and 16-byte nonce the module draws.
+    pub const MAX_MODULE_PERSONALIZATION: usize = MAX_DF_INPUT - MODULE_SEED_LEN;
+    /// The longest additional input [`Self::reseed_from_module`] accepts:
+    /// [`MAX_DF_INPUT`] less the 32-byte entropy input the module draws.
+    pub const MAX_MODULE_ADDITIONAL_INPUT: usize = MAX_DF_INPUT - MODULE_DRAW_LEN;
 
     /// Create an empty, uninstantiated CTR_DRBG slot.
     #[must_use]
@@ -275,8 +363,91 @@ impl<F: CipherFactory> CtrDrbg<F> {
             v: [0u8; OUTLEN],
             reseed_counter: 0,
             instantiated: false,
+            module_seeded: false,
             _marker: PhantomData,
         }
+    }
+
+    /// CTR_DRBG Instantiate seeded by the module, `use df` variant
+    /// (§10.2.1.3.2).
+    ///
+    /// Draws a 32-byte entropy input and a 16-byte nonce from the
+    /// module's seed path, as two 32-byte requests, and instantiates at
+    /// the AES key size's security strength. The instance reseeds itself
+    /// from the seed path when its reseed counter reaches the SP 800-90A
+    /// Table 3 interval.
+    ///
+    /// # Errors
+    ///
+    /// - [`Error::NotOperational`] unless the module is operational, and
+    ///   [`Error::AlgorithmRestricted`] when the active profile does not
+    ///   allow this DRBG. Both are checked before any draw.
+    /// - [`Error::InvalidInput`] when `personalization` is longer than
+    ///   [`Self::MAX_MODULE_PERSONALIZATION`], before any draw.
+    /// - [`Error::Rbg`] with the seed path's [`RbgError`] when a draw
+    ///   fails: `EntropyUnavailable` (the module has entered its error
+    ///   state), `Busy` (retry after a pause) or `NotOperational`. No
+    ///   instance is created.
+    pub fn instantiate_from_module(personalization: &[u8]) -> Result<Self, Error> {
+        require_operational()?;
+        require_allowed(F::DRBG_SERVICE)?;
+        if personalization.len() > Self::MAX_MODULE_PERSONALIZATION {
+            return Err(Error::InvalidInput);
+        }
+        let (entropy, nonce) = draw_instantiate_seed()?;
+        let mut drbg = Self::new();
+        drbg.instantiate_df_internal(&entropy[..], &nonce[..MODULE_NONCE_LEN], personalization)?;
+        drbg.module_seeded = true;
+        Ok(drbg)
+    }
+
+    /// CTR_DRBG Reseed seeded by the module, `use df` variant
+    /// (§10.2.1.4.2), with a 32-byte entropy input drawn from the seed
+    /// path.
+    ///
+    /// # Errors
+    ///
+    /// - [`Error::NotOperational`] and [`Error::AlgorithmRestricted`] as
+    ///   for [`Self::instantiate_from_module`].
+    /// - [`Error::Rbg`]`(`[`RbgError::Uninstantiated`]`)` on an
+    ///   uninstantiated instance.
+    /// - [`Error::InvalidInput`] when `additional_input` is longer than
+    ///   [`Self::MAX_MODULE_ADDITIONAL_INPUT`], before any draw.
+    /// - [`Error::Rbg`] with the seed path's [`RbgError`] when the draw
+    ///   fails.
+    ///
+    /// A refusal for `InvalidInput` or `Busy` leaves the instance
+    /// unchanged and usable.
+    pub fn reseed_from_module(&mut self, additional_input: &[u8]) -> Result<(), Error> {
+        require_operational()?;
+        require_allowed(F::DRBG_SERVICE)?;
+        if !self.instantiated {
+            return Err(Error::Rbg(RbgError::Uninstantiated));
+        }
+        if additional_input.len() > Self::MAX_MODULE_ADDITIONAL_INPUT {
+            return Err(Error::InvalidInput);
+        }
+        self.reseed_with_draw(additional_input)
+            .map_err(|e| Error::Rbg(rbg_error(e)))
+    }
+
+    /// Draws a reseed entropy input and reseeds with it.
+    fn reseed_with_draw(&mut self, additional_input: &[u8]) -> Result<(), DrbgError> {
+        let entropy = draw_reseed_entropy()?;
+        self.reseed_df(&entropy[..], additional_input)
+    }
+
+    /// The reseed a module-seeded instance runs at the reseed interval. The
+    /// profile was checked at instantiate, so only the module state is.
+    fn auto_reseed(&mut self) -> Result<(), DrbgError> {
+        require_operational()?;
+        self.reseed_with_draw(&[])
+    }
+
+    /// Sets the SP 800-90A reseed counter. A test seam.
+    #[cfg(any(test, feature = "fault-injection"))]
+    pub fn set_reseed_counter(&mut self, counter: u64) {
+        self.reseed_counter = counter;
     }
 
     /// CTR_DRBG Instantiate, `no df` variant (§10.2.1.3.1).
@@ -449,7 +620,46 @@ impl<F: CipherFactory> CtrDrbg<F> {
         additional_input: Option<&[u8]>,
         out: &mut [u8],
     ) -> Result<(), DrbgError> {
-        let result = self.generate_no_df_unwiped(additional_input, out);
+        self.generate_gated(
+            require_operational,
+            require_operational_for_output,
+            Self::generate_no_df_unwiped,
+            additional_input,
+            out,
+        )
+    }
+
+    /// [`Self::generate_no_df`] for the power-up self-tests, which run
+    /// while the module is in `SelfTest`: gated by
+    /// [`oxicrypt_module::require_self_test_started`] at entry and again
+    /// before output. Not a service.
+    pub(crate) fn generate_no_df_internal(
+        &mut self,
+        additional_input: Option<&[u8]>,
+        out: &mut [u8],
+    ) -> Result<(), DrbgError> {
+        self.generate_gated(
+            require_self_test_started,
+            require_self_test_started,
+            Self::generate_no_df_unwiped,
+            additional_input,
+            out,
+        )
+    }
+
+    /// Runs `entry`, then `body` with `output` as its re-check before
+    /// writing, and wipes `out` on any error.
+    fn generate_gated(
+        &mut self,
+        entry: Gate,
+        output: Gate,
+        body: GenerateBody<F>,
+        additional_input: Option<&[u8]>,
+        out: &mut [u8],
+    ) -> Result<(), DrbgError> {
+        let result = entry()
+            .map_err(DrbgError::Module)
+            .and_then(|()| body(self, output, additional_input, out));
         if result.is_err() {
             // A failed call leaves no generated bytes in the caller's buffer.
             oxicrypt_zeroize::zeroize(out);
@@ -460,6 +670,7 @@ impl<F: CipherFactory> CtrDrbg<F> {
     /// Body of [`Self::generate_no_df`]; the caller wipes `out` if it fails.
     fn generate_no_df_unwiped(
         &mut self,
+        output: Gate,
         additional_input: Option<&[u8]>,
         out: &mut [u8],
     ) -> Result<(), DrbgError> {
@@ -468,6 +679,9 @@ impl<F: CipherFactory> CtrDrbg<F> {
         }
         if out.len() > (1 << 16) {
             return Err(DrbgError::RequestTooLong);
+        }
+        if self.module_seeded && self.reseed_counter >= RESEED_INTERVAL {
+            self.auto_reseed()?;
         }
         if self.reseed_counter > RESEED_INTERVAL {
             return Err(DrbgError::ReseedRequired);
@@ -486,6 +700,9 @@ impl<F: CipherFactory> CtrDrbg<F> {
             None => false,
         };
 
+        #[cfg(any(test, feature = "fault-injection"))]
+        crate::seam::output_checkpoint();
+        output()?;
         self.generate_blocks(out)?;
 
         // Final Update with additional_input (or zeros if not provided).
@@ -508,17 +725,35 @@ impl<F: CipherFactory> CtrDrbg<F> {
         additional_input: Option<&[u8]>,
         out: &mut [u8],
     ) -> Result<(), DrbgError> {
-        let result = self.generate_df_unwiped(additional_input, out);
-        if result.is_err() {
-            // A failed call leaves no generated bytes in the caller's buffer.
-            oxicrypt_zeroize::zeroize(out);
-        }
-        result
+        self.generate_gated(
+            require_operational,
+            require_operational_for_output,
+            Self::generate_df_unwiped,
+            additional_input,
+            out,
+        )
+    }
+
+    /// [`Self::generate_df`] for the power-up self-tests, gated as
+    /// [`Self::generate_no_df_internal`] is. Not a service.
+    pub(crate) fn generate_df_internal(
+        &mut self,
+        additional_input: Option<&[u8]>,
+        out: &mut [u8],
+    ) -> Result<(), DrbgError> {
+        self.generate_gated(
+            require_self_test_started,
+            require_self_test_started,
+            Self::generate_df_unwiped,
+            additional_input,
+            out,
+        )
     }
 
     /// Body of [`Self::generate_df`]; the caller wipes `out` if it fails.
     fn generate_df_unwiped(
         &mut self,
+        output: Gate,
         additional_input: Option<&[u8]>,
         out: &mut [u8],
     ) -> Result<(), DrbgError> {
@@ -527,6 +762,9 @@ impl<F: CipherFactory> CtrDrbg<F> {
         }
         if out.len() > (1 << 16) {
             return Err(DrbgError::RequestTooLong);
+        }
+        if self.module_seeded && self.reseed_counter >= RESEED_INTERVAL {
+            self.auto_reseed()?;
         }
         if self.reseed_counter > RESEED_INTERVAL {
             return Err(DrbgError::ReseedRequired);
@@ -545,6 +783,9 @@ impl<F: CipherFactory> CtrDrbg<F> {
             None => false,
         };
 
+        #[cfg(any(test, feature = "fault-injection"))]
+        crate::seam::output_checkpoint();
+        output()?;
         self.generate_blocks(out)?;
 
         if !have_addl {
@@ -589,6 +830,18 @@ impl<F: CipherFactory> CtrDrbg<F> {
         self.generate_df(None, out)
     }
 
+    /// [`Self::generate_df_pr`] for the power-up self-tests, generating
+    /// through [`Self::generate_df_internal`]. Not a service.
+    pub(crate) fn generate_df_pr_internal(
+        &mut self,
+        entropy: &[u8],
+        additional_input: &[u8],
+        out: &mut [u8],
+    ) -> Result<(), DrbgError> {
+        self.reseed_df(entropy, additional_input)?;
+        self.generate_df_internal(None, out)
+    }
+
     /// Zeroise and mark the instance uninstantiated.
     ///
     /// `Key` and `V` are cleared with the volatile writes of
@@ -598,6 +851,7 @@ impl<F: CipherFactory> CtrDrbg<F> {
         oxicrypt_zeroize::zeroize(&mut self.v);
         self.reseed_counter = 0;
         self.instantiated = false;
+        self.module_seeded = false;
     }
 
     /// Health-test helper: force the reseed counter above the
@@ -734,6 +988,17 @@ impl<F: CipherFactory> CtrDrbg<F> {
             out_produced += take;
         }
         Ok(())
+    }
+}
+
+/// `fill` is [`CtrDrbg::generate_df`] with no additional input.
+impl<F: CipherFactory> Rbg for CtrDrbg<F> {
+    fn fill(&mut self, out: &mut [u8]) -> Result<(), RbgError> {
+        self.generate_df(None, out).map_err(rbg_error)
+    }
+
+    fn strength_bits(&self) -> u32 {
+        Self::STRENGTH_BITS
     }
 }
 
@@ -1277,4 +1542,149 @@ mod tests {
         assert_no_df_seedlen_enforced::<Aes192Factory>(40);
         assert_no_df_seedlen_enforced::<Aes256Factory>(48);
     }
+
+    #[test]
+    fn rbg_error_mapping_is_total() {
+        assert_eq!(
+            rbg_error(DrbgError::Uninstantiated),
+            RbgError::Uninstantiated
+        );
+        assert_eq!(
+            rbg_error(DrbgError::ReseedRequired),
+            RbgError::ReseedRequired
+        );
+        assert_eq!(
+            rbg_error(DrbgError::RequestTooLong),
+            RbgError::RequestTooLong
+        );
+        assert_eq!(
+            rbg_error(DrbgError::Module(Error::Rbg(RbgError::Busy))),
+            RbgError::Busy
+        );
+        assert_eq!(
+            rbg_error(DrbgError::Module(Error::InvalidInput)),
+            RbgError::NotOperational
+        );
+        assert_eq!(rbg_error(DrbgError::InputTooLong), RbgError::RequestTooLong);
+        assert_eq!(
+            rbg_error(DrbgError::InvalidSeedLength),
+            RbgError::RequestTooLong
+        );
+        assert_eq!(
+            rbg_error(DrbgError::EntropyInputTooShort),
+            RbgError::RequestTooLong
+        );
+    }
+
+    use std::sync::MutexGuard;
+
+    use crate::seam;
+
+    #[allow(
+        clippy::unnecessary_wraps,
+        reason = "the signature is the seam's draw type"
+    )]
+    fn fixed_draw(out: &mut [u8]) -> Result<(), RbgError> {
+        for (i, b) in out.iter_mut().enumerate() {
+            *b = (i as u8) ^ 0x5A;
+        }
+        Ok(())
+    }
+
+    /// Serializes the test, resets the seams, makes the module
+    /// operational and installs [`fixed_draw`].
+    fn seeded_module() -> MutexGuard<'static, ()> {
+        let guard = crate::test_support::serial();
+        seam::clear_all();
+        crate::test_support::start_module();
+        seam::set_get_entropy(fixed_draw);
+        guard
+    }
+
+    macro_rules! module_seeding_tests {
+        ($ty:ty, $rbg:ident, $inst:ident, $limits:ident, $bits:expr) => {
+            #[test]
+            fn $rbg() {
+                let _serial = seeded_module();
+                let mut a = <$ty>::instantiate_from_module(b"").unwrap();
+                let mut b = <$ty>::instantiate_from_module(b"").unwrap();
+                let mut c = <$ty>::instantiate_from_module(b"").unwrap();
+                let mut out_a = [0u8; 80];
+                let mut out_b = [0u8; 80];
+                let mut out_c = [0u8; 80];
+                a.fill(&mut out_a).unwrap();
+                b.fill(&mut out_b).unwrap();
+                c.generate_df(None, &mut out_c).unwrap();
+                assert!(out_a.iter().any(|&x| x != 0));
+                assert_eq!(out_a, out_b);
+                assert_eq!(out_a, out_c);
+                assert_eq!(a.strength_bits(), $bits);
+                let mut fresh = <$ty>::new();
+                let mut buf = [0xA5u8; 32];
+                assert_eq!(fresh.fill(&mut buf), Err(RbgError::Uninstantiated));
+                assert_eq!(buf, [0u8; 32]);
+                seam::clear_all();
+            }
+
+            #[test]
+            fn $inst() {
+                let _serial = seeded_module();
+                let before = seam::draw_count();
+                let mut drbg = <$ty>::instantiate_from_module(b"app").unwrap();
+                assert_eq!(seam::draw_count(), before + 2);
+                let mut out = [0u8; 32];
+                drbg.generate_df(None, &mut out).unwrap();
+                assert!(out.iter().any(|&x| x != 0));
+                seam::clear_all();
+            }
+
+            #[test]
+            fn $limits() {
+                let _serial = seeded_module();
+                let max_p = <$ty>::MAX_MODULE_PERSONALIZATION;
+                let max_a = <$ty>::MAX_MODULE_ADDITIONAL_INPUT;
+                assert_eq!(max_p, 144);
+                assert_eq!(max_a, 160);
+                let long = [0x11u8; 256];
+
+                let before = seam::draw_count();
+                let refused = <$ty>::instantiate_from_module(&long[..max_p + 1]);
+                assert_eq!(refused.err(), Some(Error::InvalidInput));
+                assert_eq!(seam::draw_count(), before);
+                let mut drbg = <$ty>::instantiate_from_module(&long[..max_p]).unwrap();
+
+                let before = seam::draw_count();
+                assert_eq!(
+                    drbg.reseed_from_module(&long[..max_a + 1]),
+                    Err(Error::InvalidInput)
+                );
+                assert_eq!(seam::draw_count(), before);
+                assert_eq!(drbg.reseed_from_module(&long[..max_a]), Ok(()));
+                assert_eq!(seam::draw_count(), before + 1);
+                seam::clear_all();
+            }
+        };
+    }
+
+    module_seeding_tests!(
+        CtrDrbgAes128,
+        rbg_trait_ctr_aes128,
+        instantiate_from_module_ctr_aes128,
+        input_limits_ctr_aes128,
+        128
+    );
+    module_seeding_tests!(
+        CtrDrbgAes192,
+        rbg_trait_ctr_aes192,
+        instantiate_from_module_ctr_aes192,
+        input_limits_ctr_aes192,
+        192
+    );
+    module_seeding_tests!(
+        CtrDrbgAes256,
+        rbg_trait_ctr_aes256,
+        instantiate_from_module_ctr_aes256,
+        input_limits_ctr_aes256,
+        256
+    );
 }

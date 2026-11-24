@@ -32,9 +32,15 @@
 use core::marker::PhantomData;
 
 use oxicrypt_hmac::{HmacSha256, HmacSha384, HmacSha512};
-use oxicrypt_module::{Error, Service, require_allowed, require_operational};
+use oxicrypt_module::{
+    Error, Rbg, RbgError, Service, require_allowed, require_operational,
+    require_operational_for_output, require_self_test_started,
+};
 
-use crate::ctr::DrbgError;
+use crate::ctr::{
+    DrbgError, Gate, MODULE_DRAW_LEN, MODULE_NONCE_LEN, MODULE_SEED_LEN, draw_instantiate_seed,
+    draw_reseed_entropy, rbg_error,
+};
 
 /// Maximum HMAC output length across supported algorithms (SHA-512).
 const MAX_OUTLEN: usize = 64;
@@ -51,6 +57,8 @@ const HMAC_DRBG_MAX_BITS_PER_REQ: usize = 1 << 16;
 /// strength SP 800-57 Part 1 assigns HMAC over SHA-256, SHA-384 and
 /// SHA-512, and the only strength this crate instantiates.
 const SECURITY_STRENGTH: usize = 32;
+/// The instantiated security strength in bits.
+const STRENGTH_BITS: u32 = (SECURITY_STRENGTH * 8) as u32;
 /// Minimum entropy input length in bytes for instantiate and reseed:
 /// the security strength (SP 800-90A Rev. 1 Table 2 `min_length`).
 const MIN_ENTROPY_LEN: usize = SECURITY_STRENGTH;
@@ -142,6 +150,9 @@ pub struct HmacDrbg<H: HmacAlg> {
     v: [u8; MAX_OUTLEN],
     reseed_counter: u64,
     instantiated: bool,
+    /// Set by [`HmacDrbg::instantiate_from_module`]: the instance reseeds
+    /// itself from the seed path at the reseed interval.
+    module_seeded: bool,
     _marker: PhantomData<H>,
 }
 
@@ -153,6 +164,15 @@ pub type HmacDrbgSha384 = HmacDrbg<HmacSha384Alg>;
 pub type HmacDrbgSha512 = HmacDrbg<HmacSha512Alg>;
 
 impl<H: HmacAlg> HmacDrbg<H> {
+    /// The longest personalization string
+    /// [`Self::instantiate_from_module`] accepts: [`HMAC_DRBG_MAX_PROVIDED`]
+    /// less the 32-byte entropy input and 16-byte nonce the module draws.
+    pub const MAX_MODULE_PERSONALIZATION: usize = HMAC_DRBG_MAX_PROVIDED - MODULE_SEED_LEN;
+    /// The longest additional input [`Self::reseed_from_module`] accepts:
+    /// [`HMAC_DRBG_MAX_PROVIDED`] less the 32-byte entropy input the module
+    /// draws.
+    pub const MAX_MODULE_ADDITIONAL_INPUT: usize = HMAC_DRBG_MAX_PROVIDED - MODULE_DRAW_LEN;
+
     /// Create an empty, uninstantiated HMAC_DRBG slot.
     #[must_use]
     pub const fn new() -> Self {
@@ -161,8 +181,89 @@ impl<H: HmacAlg> HmacDrbg<H> {
             v: [0u8; MAX_OUTLEN],
             reseed_counter: 0,
             instantiated: false,
+            module_seeded: false,
             _marker: PhantomData,
         }
+    }
+
+    /// HMAC_DRBG Instantiate seeded by the module — SP 800-90A §10.1.2.3.
+    ///
+    /// Draws a 32-byte entropy input and a 16-byte nonce from the
+    /// module's seed path, as two 32-byte requests, and instantiates at
+    /// the 256-bit security strength. The instance reseeds itself from
+    /// the seed path when its reseed counter reaches the SP 800-90A
+    /// Table 2 interval.
+    ///
+    /// # Errors
+    ///
+    /// - [`Error::NotOperational`] unless the module is operational, and
+    ///   [`Error::AlgorithmRestricted`] when the active profile does not
+    ///   allow this DRBG. Both are checked before any draw.
+    /// - [`Error::InvalidInput`] when `personalization` is longer than
+    ///   [`Self::MAX_MODULE_PERSONALIZATION`], before any draw.
+    /// - [`Error::Rbg`] with the seed path's [`RbgError`] when a draw
+    ///   fails: `EntropyUnavailable` (the module has entered its error
+    ///   state), `Busy` (retry after a pause) or `NotOperational`. No
+    ///   instance is created.
+    pub fn instantiate_from_module(personalization: &[u8]) -> Result<Self, Error> {
+        require_operational()?;
+        require_allowed(H::DRBG_SERVICE)?;
+        if personalization.len() > Self::MAX_MODULE_PERSONALIZATION {
+            return Err(Error::InvalidInput);
+        }
+        let (entropy, nonce) = draw_instantiate_seed()?;
+        let mut drbg = Self::new();
+        drbg.instantiate_internal(&entropy[..], &nonce[..MODULE_NONCE_LEN], personalization)?;
+        drbg.module_seeded = true;
+        Ok(drbg)
+    }
+
+    /// HMAC_DRBG Reseed seeded by the module — SP 800-90A §10.1.2.4, with
+    /// a 32-byte entropy input drawn from the seed path.
+    ///
+    /// # Errors
+    ///
+    /// - [`Error::NotOperational`] and [`Error::AlgorithmRestricted`] as
+    ///   for [`Self::instantiate_from_module`].
+    /// - [`Error::Rbg`]`(`[`RbgError::Uninstantiated`]`)` on an
+    ///   uninstantiated instance.
+    /// - [`Error::InvalidInput`] when `additional_input` is longer than
+    ///   [`Self::MAX_MODULE_ADDITIONAL_INPUT`], before any draw.
+    /// - [`Error::Rbg`] with the seed path's [`RbgError`] when the draw
+    ///   fails.
+    ///
+    /// A refusal for `InvalidInput` or `Busy` leaves the instance
+    /// unchanged and usable.
+    pub fn reseed_from_module(&mut self, additional_input: &[u8]) -> Result<(), Error> {
+        require_operational()?;
+        require_allowed(H::DRBG_SERVICE)?;
+        if !self.instantiated {
+            return Err(Error::Rbg(RbgError::Uninstantiated));
+        }
+        if additional_input.len() > Self::MAX_MODULE_ADDITIONAL_INPUT {
+            return Err(Error::InvalidInput);
+        }
+        self.reseed_with_draw(additional_input)
+            .map_err(|e| Error::Rbg(rbg_error(e)))
+    }
+
+    /// Draws a reseed entropy input and reseeds with it.
+    fn reseed_with_draw(&mut self, additional_input: &[u8]) -> Result<(), DrbgError> {
+        let entropy = draw_reseed_entropy()?;
+        self.reseed(&entropy[..], additional_input)
+    }
+
+    /// The reseed a module-seeded instance runs at the reseed interval. The
+    /// profile was checked at instantiate, so only the module state is.
+    fn auto_reseed(&mut self) -> Result<(), DrbgError> {
+        require_operational()?;
+        self.reseed_with_draw(&[])
+    }
+
+    /// Sets the SP 800-90A reseed counter. A test seam.
+    #[cfg(any(test, feature = "fault-injection"))]
+    pub fn set_reseed_counter(&mut self, counter: u64) {
+        self.reseed_counter = counter;
     }
 
     /// `HMAC_DRBG_Update(provided_data, Key, V)` — SP 800-90A §10.1.2.2.
@@ -340,7 +441,43 @@ impl<H: HmacAlg> HmacDrbg<H> {
         additional_input: Option<&[u8]>,
         out: &mut [u8],
     ) -> Result<(), DrbgError> {
-        let result = self.generate_unwiped(additional_input, out);
+        self.generate_gated(
+            require_operational,
+            require_operational_for_output,
+            additional_input,
+            out,
+        )
+    }
+
+    /// [`Self::generate`] for the power-up self-tests, which run while the
+    /// module is in `SelfTest`: gated by
+    /// [`oxicrypt_module::require_self_test_started`] at entry and again
+    /// before output. Not a service.
+    pub(crate) fn generate_internal(
+        &mut self,
+        additional_input: Option<&[u8]>,
+        out: &mut [u8],
+    ) -> Result<(), DrbgError> {
+        self.generate_gated(
+            require_self_test_started,
+            require_self_test_started,
+            additional_input,
+            out,
+        )
+    }
+
+    /// Runs `entry`, then the generate body with `output` as its re-check
+    /// before writing, and wipes `out` on any error.
+    fn generate_gated(
+        &mut self,
+        entry: Gate,
+        output: Gate,
+        additional_input: Option<&[u8]>,
+        out: &mut [u8],
+    ) -> Result<(), DrbgError> {
+        let result = entry()
+            .map_err(DrbgError::Module)
+            .and_then(|()| self.generate_unwiped(output, additional_input, out));
         if result.is_err() {
             // A failed call leaves no generated bytes in the caller's buffer.
             oxicrypt_zeroize::zeroize(out);
@@ -351,6 +488,7 @@ impl<H: HmacAlg> HmacDrbg<H> {
     /// Body of [`Self::generate`]; the caller wipes `out` if it fails.
     fn generate_unwiped(
         &mut self,
+        output: Gate,
         additional_input: Option<&[u8]>,
         out: &mut [u8],
     ) -> Result<(), DrbgError> {
@@ -359,6 +497,9 @@ impl<H: HmacAlg> HmacDrbg<H> {
         }
         if out.len() > HMAC_DRBG_MAX_BITS_PER_REQ {
             return Err(DrbgError::RequestTooLong);
+        }
+        if self.module_seeded && self.reseed_counter >= HMAC_DRBG_RESEED_INTERVAL {
+            self.auto_reseed()?;
         }
         if self.reseed_counter > HMAC_DRBG_RESEED_INTERVAL {
             return Err(DrbgError::ReseedRequired);
@@ -375,6 +516,9 @@ impl<H: HmacAlg> HmacDrbg<H> {
         let outlen = H::OUTLEN;
         let mut produced = 0usize;
         let mut v_tmp = [0u8; MAX_OUTLEN];
+        #[cfg(any(test, feature = "fault-injection"))]
+        crate::seam::output_checkpoint();
+        output()?;
         while produced < out.len() {
             v_tmp[..outlen].copy_from_slice(&self.v[..outlen]);
             let mut new_v = [0u8; MAX_OUTLEN];
@@ -410,6 +554,18 @@ impl<H: HmacAlg> HmacDrbg<H> {
         self.generate(None, out)
     }
 
+    /// [`Self::generate_pr`] for the power-up self-tests, generating
+    /// through [`Self::generate_internal`]. Not a service.
+    pub(crate) fn generate_pr_internal(
+        &mut self,
+        entropy: &[u8],
+        additional_input: &[u8],
+        out: &mut [u8],
+    ) -> Result<(), DrbgError> {
+        self.reseed(entropy, additional_input)?;
+        self.generate_internal(None, out)
+    }
+
     /// Zeroise the instance and mark it uninstantiated.
     ///
     /// `Key` and `V` are cleared with the volatile writes of
@@ -419,6 +575,7 @@ impl<H: HmacAlg> HmacDrbg<H> {
         oxicrypt_zeroize::zeroize(&mut self.v);
         self.reseed_counter = 0;
         self.instantiated = false;
+        self.module_seeded = false;
     }
 
     /// Health-test helper: force the reseed counter above the
@@ -428,6 +585,17 @@ impl<H: HmacAlg> HmacDrbg<H> {
     #[doc(hidden)]
     pub fn debug_force_reseed_ceiling(&mut self) {
         self.reseed_counter = HMAC_DRBG_RESEED_INTERVAL + 1;
+    }
+}
+
+/// `fill` is [`HmacDrbg::generate`] with no additional input.
+impl<H: HmacAlg> Rbg for HmacDrbg<H> {
+    fn fill(&mut self, out: &mut [u8]) -> Result<(), RbgError> {
+        self.generate(None, out).map_err(rbg_error)
+    }
+
+    fn strength_bits(&self) -> u32 {
+        STRENGTH_BITS
     }
 }
 
@@ -705,5 +873,226 @@ mod tests {
     fn hmac_drbg_sha512_enforces_minimum_entropy_and_nonce() {
         assert_minimums_enforced::<HmacSha512Alg>();
         assert_extras_and_precedence::<HmacSha512Alg>();
+    }
+
+    use std::sync::{Mutex, MutexGuard, PoisonError};
+    use std::vec::Vec;
+
+    use crate::seam;
+
+    /// The byte `i` of seed-path request number `call`.
+    fn pattern_byte(call: usize, i: usize) -> u8 {
+        (i as u8) ^ ((call as u8).wrapping_mul(0x40)) ^ 0x5A
+    }
+
+    #[allow(
+        clippy::unnecessary_wraps,
+        reason = "the signature is the seam's draw type"
+    )]
+    fn fixed_draw(out: &mut [u8]) -> Result<(), RbgError> {
+        for (i, b) in out.iter_mut().enumerate() {
+            *b = pattern_byte(0, i);
+        }
+        Ok(())
+    }
+
+    /// The sizes of the requests [`recording_draw`] has served.
+    static SIZES: Mutex<Vec<usize>> = Mutex::new(Vec::new());
+
+    fn sizes() -> MutexGuard<'static, Vec<usize>> {
+        SIZES.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// Records each request's size and fills request `n` with
+    /// `pattern_byte(n, _)`, counting from the last clear of [`SIZES`].
+    #[allow(
+        clippy::unnecessary_wraps,
+        reason = "the signature is the seam's draw type"
+    )]
+    fn recording_draw(out: &mut [u8]) -> Result<(), RbgError> {
+        let mut sizes = sizes();
+        let call = sizes.len();
+        sizes.push(out.len());
+        for (i, b) in out.iter_mut().enumerate() {
+            *b = pattern_byte(call, i);
+        }
+        Ok(())
+    }
+
+    fn pattern(call: usize) -> [u8; 32] {
+        core::array::from_fn(|i| pattern_byte(call, i))
+    }
+
+    /// Serializes the test, resets the seams, makes the module
+    /// operational and installs [`fixed_draw`].
+    fn seeded_module() -> MutexGuard<'static, ()> {
+        let guard = crate::test_support::serial();
+        seam::clear_all();
+        crate::test_support::start_module();
+        seam::set_get_entropy(fixed_draw);
+        guard
+    }
+
+    macro_rules! module_seeding_tests {
+        ($ty:ty, $rbg:ident, $inst:ident, $limits:ident, $add_max:expr) => {
+            #[test]
+            fn $rbg() {
+                let _serial = seeded_module();
+                let mut a = <$ty>::instantiate_from_module(b"").unwrap();
+                let mut b = <$ty>::instantiate_from_module(b"").unwrap();
+                let mut c = <$ty>::instantiate_from_module(b"").unwrap();
+                let mut out_a = [0u8; 80];
+                let mut out_b = [0u8; 80];
+                let mut out_c = [0u8; 80];
+                a.fill(&mut out_a).unwrap();
+                b.fill(&mut out_b).unwrap();
+                c.generate(None, &mut out_c).unwrap();
+                assert!(out_a.iter().any(|&x| x != 0));
+                assert_eq!(out_a, out_b);
+                assert_eq!(out_a, out_c);
+                assert_eq!(a.strength_bits(), 256);
+                let mut fresh = <$ty>::new();
+                let mut buf = [0xA5u8; 32];
+                assert_eq!(fresh.fill(&mut buf), Err(RbgError::Uninstantiated));
+                assert_eq!(buf, [0u8; 32]);
+                seam::clear_all();
+            }
+
+            #[test]
+            fn $inst() {
+                let _serial = seeded_module();
+                let before = seam::draw_count();
+                let mut drbg = <$ty>::instantiate_from_module(b"app").unwrap();
+                assert_eq!(seam::draw_count(), before + 2);
+                let mut out = [0u8; 32];
+                drbg.generate(None, &mut out).unwrap();
+                assert!(out.iter().any(|&x| x != 0));
+                seam::clear_all();
+            }
+
+            #[test]
+            fn $limits() {
+                let _serial = seeded_module();
+                let max_p = <$ty>::MAX_MODULE_PERSONALIZATION;
+                let max_a = <$ty>::MAX_MODULE_ADDITIONAL_INPUT;
+                assert_eq!(max_p, 720);
+                assert_eq!(max_a, $add_max);
+                let long = [0x11u8; 1024];
+
+                let before = seam::draw_count();
+                let refused = <$ty>::instantiate_from_module(&long[..max_p + 1]);
+                assert_eq!(refused.err(), Some(Error::InvalidInput));
+                assert_eq!(seam::draw_count(), before);
+                let mut drbg = <$ty>::instantiate_from_module(&long[..max_p]).unwrap();
+
+                let before = seam::draw_count();
+                assert_eq!(
+                    drbg.reseed_from_module(&long[..max_a + 1]),
+                    Err(Error::InvalidInput)
+                );
+                assert_eq!(seam::draw_count(), before);
+                assert_eq!(drbg.reseed_from_module(&long[..max_a]), Ok(()));
+                assert_eq!(seam::draw_count(), before + 1);
+                seam::clear_all();
+            }
+        };
+    }
+
+    module_seeding_tests!(
+        HmacDrbgSha256,
+        rbg_trait_hmac_sha256,
+        instantiate_from_module_hmac_sha256,
+        input_limits_hmac_sha256,
+        736
+    );
+    module_seeding_tests!(
+        HmacDrbgSha384,
+        rbg_trait_hmac_sha384,
+        instantiate_from_module_hmac_sha384,
+        input_limits_hmac_sha384,
+        736
+    );
+    module_seeding_tests!(
+        HmacDrbgSha512,
+        rbg_trait_hmac_sha512,
+        instantiate_from_module_hmac_sha512,
+        input_limits_hmac_sha512,
+        736
+    );
+
+    #[test]
+    fn seed_draws_are_sized_and_wiped() {
+        let _serial = seeded_module();
+        seam::set_get_entropy(recording_draw);
+        sizes().clear();
+        let mut drbg = HmacDrbgSha256::instantiate_from_module(b"perso").unwrap();
+        assert_eq!(*sizes(), [32, 32]);
+        sizes().clear();
+        drbg.reseed_from_module(b"").unwrap();
+        assert_eq!(*sizes(), [32]);
+
+        let (first, second) = (pattern(0), pattern(1));
+        let mut reference = HmacDrbgSha256::new();
+        reference
+            .instantiate_internal(&first, &second[..16], b"perso")
+            .unwrap();
+        reference.reseed(&pattern(0), b"").unwrap();
+        // Control: the whole second request as the nonce gives other output.
+        let mut whole = HmacDrbgSha256::new();
+        whole
+            .instantiate_internal(&first, &second, b"perso")
+            .unwrap();
+        whole.reseed(&pattern(0), b"").unwrap();
+
+        let mut out = [0u8; 64];
+        let mut expected = [0u8; 64];
+        let mut other = [0u8; 64];
+        drbg.generate(None, &mut out).unwrap();
+        reference.generate(None, &mut expected).unwrap();
+        whole.generate(None, &mut other).unwrap();
+        assert_eq!(out, expected);
+        assert_ne!(out, other);
+        seam::clear_all();
+    }
+
+    #[test]
+    fn auto_reseed_at_interval() {
+        let _serial = seeded_module();
+        let mut drbg = HmacDrbgSha256::instantiate_from_module(b"").unwrap();
+        drbg.set_reseed_counter(HMAC_DRBG_RESEED_INTERVAL);
+        let before = seam::draw_count();
+        let mut out = [0u8; 32];
+        drbg.fill(&mut out).unwrap();
+        assert_eq!(drbg.reseed_counter, 2);
+        assert_eq!(seam::draw_count(), before + 1);
+
+        // Control: a caller-seeded instance at the same count does not
+        // reseed.
+        let mut caller = HmacDrbgSha256::new();
+        caller
+            .instantiate_internal(&pattern(0), &pattern(1)[..16], b"")
+            .unwrap();
+        caller.set_reseed_counter(HMAC_DRBG_RESEED_INTERVAL);
+        let before = seam::draw_count();
+        caller.fill(&mut out).unwrap();
+        assert_eq!(caller.reseed_counter, HMAC_DRBG_RESEED_INTERVAL + 1);
+        assert_eq!(seam::draw_count(), before);
+        seam::clear_all();
+    }
+
+    #[test]
+    fn caller_seeded_reports_reseed_required() {
+        let _serial = crate::test_support::serial();
+        crate::test_support::start_module();
+        let mut drbg = HmacDrbgSha256::new();
+        drbg.instantiate_internal(&pattern(0), &pattern(1)[..16], b"")
+            .unwrap();
+        drbg.set_reseed_counter(HMAC_DRBG_RESEED_INTERVAL + 1);
+        let mut out = [0u8; 32];
+        assert_eq!(
+            drbg.generate(None, &mut out),
+            Err(DrbgError::ReseedRequired)
+        );
+        assert_eq!(drbg.fill(&mut out), Err(RbgError::ReseedRequired));
     }
 }

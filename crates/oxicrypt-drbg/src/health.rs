@@ -15,8 +15,6 @@
 //! The individual health checks are aggregated into one per-mechanism
 //! `SelfTestFailure`-returning function so they can be plugged into
 //! the power-up KAT runner alongside the value-level KATs.
-//!
-//! [`kat`]: crate::kat
 
 #![allow(clippy::indexing_slicing)]
 
@@ -26,9 +24,9 @@ use crate::ctr::{CtrDrbgAes128, DrbgError};
 use crate::hash::HashDrbgSha256;
 use crate::hmac::HmacDrbgSha256;
 
-/// Minimal entropy blob large enough for any of the mechanisms we
-/// drive here. Values are arbitrary (health tests do not need to
-/// match any published vector).
+/// Entropy input long enough for every mechanism these checks drive.
+/// The values are arbitrary: the health checks match no published
+/// vector.
 const ENTROPY_32: [u8; 32] = [0x5au8; 32];
 const NONCE_16: [u8; 16] = [0xa5u8; 16];
 
@@ -49,7 +47,7 @@ pub fn run_ctr_drbg_health() -> Result<(), SelfTestFailure> {
     let mut out = [0u8; 16];
 
     // Check (1): generate before instantiate.
-    match drbg.generate_df(None, &mut out) {
+    match drbg.generate_df_internal(None, &mut out) {
         Err(DrbgError::Uninstantiated) => {}
         _ => return Err(SelfTestFailure),
     }
@@ -60,20 +58,20 @@ pub fn run_ctr_drbg_health() -> Result<(), SelfTestFailure> {
     // `require_operational()` would reject the gated public API.
     drbg.instantiate_df_internal(&ENTROPY_32[..16], &NONCE_16[..8], &[])
         .map_err(|_| SelfTestFailure)?;
-    drbg.generate_df(None, &mut out)
+    drbg.generate_df_internal(None, &mut out)
         .map_err(|_| SelfTestFailure)?;
 
     // Check (3): force reseed-counter ceiling and confirm the DRBG
     // refuses to continue generating.
     drbg.debug_force_reseed_ceiling();
-    match drbg.generate_df(None, &mut out) {
+    match drbg.generate_df_internal(None, &mut out) {
         Err(DrbgError::ReseedRequired) => {}
         _ => return Err(SelfTestFailure),
     }
 
     // Check (4): uninstantiate clears state.
     drbg.uninstantiate();
-    match drbg.generate_df(None, &mut out) {
+    match drbg.generate_df_internal(None, &mut out) {
         Err(DrbgError::Uninstantiated) => {}
         _ => return Err(SelfTestFailure),
     }
@@ -87,7 +85,7 @@ pub fn run_hash_drbg_health() -> Result<(), SelfTestFailure> {
     let mut drbg = HashDrbgSha256::new();
     let mut out = [0u8; 16];
 
-    match drbg.generate(None, &mut out) {
+    match drbg.generate_internal(None, &mut out) {
         Err(DrbgError::Uninstantiated) => {}
         _ => return Err(SelfTestFailure),
     }
@@ -95,16 +93,17 @@ pub fn run_hash_drbg_health() -> Result<(), SelfTestFailure> {
     // Use `instantiate_internal` — runs during self-test, module not yet Operational.
     drbg.instantiate_internal(&ENTROPY_32, &NONCE_16, &[])
         .map_err(|_| SelfTestFailure)?;
-    drbg.generate(None, &mut out).map_err(|_| SelfTestFailure)?;
+    drbg.generate_internal(None, &mut out)
+        .map_err(|_| SelfTestFailure)?;
 
     drbg.debug_force_reseed_ceiling();
-    match drbg.generate(None, &mut out) {
+    match drbg.generate_internal(None, &mut out) {
         Err(DrbgError::ReseedRequired) => {}
         _ => return Err(SelfTestFailure),
     }
 
     drbg.uninstantiate();
-    match drbg.generate(None, &mut out) {
+    match drbg.generate_internal(None, &mut out) {
         Err(DrbgError::Uninstantiated) => {}
         _ => return Err(SelfTestFailure),
     }
@@ -118,7 +117,7 @@ pub fn run_hmac_drbg_health() -> Result<(), SelfTestFailure> {
     let mut drbg = HmacDrbgSha256::new();
     let mut out = [0u8; 16];
 
-    match drbg.generate(None, &mut out) {
+    match drbg.generate_internal(None, &mut out) {
         Err(DrbgError::Uninstantiated) => {}
         _ => return Err(SelfTestFailure),
     }
@@ -126,16 +125,17 @@ pub fn run_hmac_drbg_health() -> Result<(), SelfTestFailure> {
     // Use `instantiate_internal` — runs during self-test, module not yet Operational.
     drbg.instantiate_internal(&ENTROPY_32, &NONCE_16, &[])
         .map_err(|_| SelfTestFailure)?;
-    drbg.generate(None, &mut out).map_err(|_| SelfTestFailure)?;
+    drbg.generate_internal(None, &mut out)
+        .map_err(|_| SelfTestFailure)?;
 
     drbg.debug_force_reseed_ceiling();
-    match drbg.generate(None, &mut out) {
+    match drbg.generate_internal(None, &mut out) {
         Err(DrbgError::ReseedRequired) => {}
         _ => return Err(SelfTestFailure),
     }
 
     drbg.uninstantiate();
-    match drbg.generate(None, &mut out) {
+    match drbg.generate_internal(None, &mut out) {
         Err(DrbgError::Uninstantiated) => {}
         _ => return Err(SelfTestFailure),
     }

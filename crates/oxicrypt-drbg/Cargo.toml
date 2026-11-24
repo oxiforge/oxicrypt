@@ -43,6 +43,11 @@ name = "entropy_failure_os_generator"
 path = "tests/entropy_failure_os_generator.rs"
 required-features = ["fault-injection"]
 
+[[test]]
+name = "second_draw_failure"
+path = "tests/second_draw_failure.rs"
+required-features = ["fault-injection"]
+
 [package.metadata.lama]
 # Registry discovery (LAMA SPEC.md, "Package registry discovery"). Must be a
 # per-crate table: cargo strips [workspace] when it packages a member, so a

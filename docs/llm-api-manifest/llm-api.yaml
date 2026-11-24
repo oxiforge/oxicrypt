@@ -5095,6 +5095,78 @@ functions:
       fips_approved: true
       fips_gate: Operational
 
+  - name: "CtrDrbgAes256::instantiate_from_module"
+    module: oxicrypt-drbg
+    description: "Instantiates CTR_DRBG with AES-256 from the module's seed path with a personalization string of at most 144 bytes, and the instance then reseeds itself from the seed path at the reseed interval."
+    signature: "pub fn instantiate_from_module(personalization: &[u8]) -> Result<Self, Error>"
+    parameters:
+      - name: personalization
+        type: "&[u8]"
+        direction: in
+        description: Optional personalization string.
+        constraints:
+          valid_range: "0..=144 bytes (MAX_MODULE_PERSONALIZATION)"
+    returns:
+      type: "Result<Self, Error>"
+      description: "The instantiated DRBG on success."
+      error_variants:
+        - name: NotOperational
+          condition: "The module is not in Operational."
+        - name: AlgorithmRestricted
+          condition: "The algorithm is restricted in the module's current profile."
+        - name: InvalidInput
+          condition: "personalization.len() > 144, refused before any draw."
+        - name: Rbg
+          condition: "The seed path failed to supply the entropy input or nonce."
+    preconditions:
+      - description: The module is Operational.
+    postconditions:
+      - description: The DRBG is instantiated, with 32 bytes of entropy input and a 16-byte nonce drawn from the seed path.
+    thread_safety: not-thread-safe
+    side_effects:
+      - description: Draws two 32-byte requests from the module's seed path.
+    security:
+      constant_time: true
+      handles_secrets: true
+      fips_approved: true
+      fips_gate: Operational
+
+  - name: "CtrDrbgAes256::reseed_from_module"
+    module: oxicrypt-drbg
+    description: "Reseeds an instantiated CTR_DRBG with AES-256 from the module's seed path with additional input of at most 160 bytes."
+    signature: "pub fn reseed_from_module(&mut self, additional_input: &[u8]) -> Result<(), Error>"
+    parameters:
+      - name: additional_input
+        type: "&[u8]"
+        direction: in
+        description: Optional additional input.
+        constraints:
+          valid_range: "0..=160 bytes (MAX_MODULE_ADDITIONAL_INPUT)"
+    returns:
+      type: "Result<(), Error>"
+      description: "Ok when the DRBG was reseeded."
+      error_variants:
+        - name: NotOperational
+          condition: "The module is not in Operational."
+        - name: AlgorithmRestricted
+          condition: "The algorithm is restricted in the module's current profile."
+        - name: InvalidInput
+          condition: "additional_input.len() > 160, refused before any draw."
+        - name: Rbg
+          condition: "The seed path failed to supply the entropy input."
+    preconditions:
+      - description: The module is Operational.
+    postconditions:
+      - description: The DRBG state is replaced from 32 bytes of fresh entropy input and the reseed counter is reset.
+    thread_safety: not-thread-safe
+    side_effects:
+      - description: Draws 32 bytes from the module's seed path.
+    security:
+      constant_time: true
+      handles_secrets: true
+      fips_approved: true
+      fips_gate: Operational
+
   - name: entropy_on_demand_test
     module: oxicrypt-drbg
     description: "Runs the entropy source's on-demand test and a fill through the seed path, returns NotOperational without touching the entropy source unless the module is Operational, and enters the module error state when the test or the fill fails."
@@ -5107,6 +5179,24 @@ functions:
           condition: "The module is in any state but Operational; the entropy source is not touched."
         - name: Rbg
           condition: "EntropyUnavailable when the test or the fill fails (the module has then entered its error state), or Busy when the seed path's lock spin bound was exhausted."
+    thread_safety: thread-safe
+    security:
+      constant_time: false
+      handles_secrets: false
+      fips_approved: false
+
+  - name: rbg_error
+    module: oxicrypt-drbg
+    description: "Maps a DrbgError onto the shared random-bit-generator error type exhaustively: Uninstantiated and ReseedRequired map to their namesakes, RequestTooLong, InputTooLong, InvalidSeedLength and EntropyInputTooShort map to RequestTooLong, Module wrapping an Rbg error maps to that error, and any other Module error maps to NotOperational."
+    signature: "pub fn rbg_error(e: DrbgError) -> RbgError"
+    parameters:
+      - name: e
+        type: DrbgError
+        direction: in
+        description: The DRBG error to map.
+    returns:
+      type: RbgError
+      description: "The matching random-bit-generator error."
     thread_safety: thread-safe
     security:
       constant_time: false
@@ -20155,6 +20245,42 @@ constants:
     type: usize
     value: "4096"
     description: "The longest stream seed-stream=<hex> can install, in bytes; available with the fault-injection feature or in the crate's own tests."
+
+  - name: "HmacDrbg::MAX_MODULE_PERSONALIZATION"
+    module: oxicrypt-drbg
+    type: usize
+    value: "720"
+    description: "The longest personalization string HmacDrbg::instantiate_from_module accepts, 768 less the 48 bytes of entropy input and nonce the module draws."
+
+  - name: "HmacDrbg::MAX_MODULE_ADDITIONAL_INPUT"
+    module: oxicrypt-drbg
+    type: usize
+    value: "736"
+    description: "The longest additional input HmacDrbg::reseed_from_module accepts, 768 less the 32-byte entropy input the module draws."
+
+  - name: "HashDrbg::MAX_MODULE_PERSONALIZATION"
+    module: oxicrypt-drbg
+    type: usize
+    value: "720"
+    description: "The longest personalization string HashDrbg::instantiate_from_module accepts, 768 less the 48 bytes of entropy input and nonce the module draws."
+
+  - name: "HashDrbg::MAX_MODULE_ADDITIONAL_INPUT"
+    module: oxicrypt-drbg
+    type: usize
+    value: "680 for SHA-256, 624 for SHA-384 and SHA-512"
+    description: "The longest additional input HashDrbg::reseed_from_module accepts, 768 less 33 less SEEDLEN."
+
+  - name: "CtrDrbg::MAX_MODULE_PERSONALIZATION"
+    module: oxicrypt-drbg
+    type: usize
+    value: "144"
+    description: "The longest personalization string CtrDrbg::instantiate_from_module accepts, 192 less the 48 bytes of entropy input and nonce the module draws."
+
+  - name: "CtrDrbg::MAX_MODULE_ADDITIONAL_INPUT"
+    module: oxicrypt-drbg
+    type: usize
+    value: "160"
+    description: "The longest additional input CtrDrbg::reseed_from_module accepts, 192 less the 32-byte entropy input the module draws."
 
   - name: KATS
     module: oxicrypt-ecdsa

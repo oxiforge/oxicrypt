@@ -37,12 +37,18 @@
 
 use core::marker::PhantomData;
 
-use oxicrypt_module::{Error, Service, require_allowed, require_operational};
+use oxicrypt_module::{
+    Error, Rbg, RbgError, Service, require_allowed, require_operational,
+    require_operational_for_output, require_self_test_started,
+};
 use oxicrypt_sha::sha256::Sha256;
 use oxicrypt_sha::sha384::Sha384;
 use oxicrypt_sha::sha512::Sha512;
 
-use crate::ctr::DrbgError;
+use crate::ctr::{
+    DrbgError, Gate, MODULE_DRAW_LEN, MODULE_NONCE_LEN, MODULE_SEED_LEN, draw_instantiate_seed,
+    draw_reseed_entropy, rbg_error,
+};
 
 /// Maximum digest length across all supported algorithms (SHA-512).
 const MAX_OUTLEN: usize = 64;
@@ -64,6 +70,8 @@ const HASH_DRBG_RESEED_INTERVAL: u64 = 1u64 << 48;
 /// random bit generation, and the only strength this crate
 /// instantiates.
 const SECURITY_STRENGTH: usize = 32;
+/// The instantiated security strength in bits.
+const STRENGTH_BITS: u32 = (SECURITY_STRENGTH * 8) as u32;
 /// Minimum entropy input length in bytes for instantiate and reseed:
 /// the security strength (SP 800-90A Rev. 1 Table 2 `min_length`).
 const MIN_ENTROPY_LEN: usize = SECURITY_STRENGTH;
@@ -160,6 +168,9 @@ pub struct HashDrbg<H: HashAlg> {
     c: [u8; MAX_SEEDLEN],
     reseed_counter: u64,
     instantiated: bool,
+    /// Set by [`HashDrbg::instantiate_from_module`]: the instance reseeds
+    /// itself from the seed path at the reseed interval.
+    module_seeded: bool,
     _marker: PhantomData<H>,
 }
 
@@ -171,6 +182,16 @@ pub type HashDrbgSha384 = HashDrbg<Sha384Alg>;
 pub type HashDrbgSha512 = HashDrbg<Sha512Alg>;
 
 impl<H: HashAlg> HashDrbg<H> {
+    /// The longest personalization string
+    /// [`Self::instantiate_from_module`] accepts: [`HASH_DRBG_MAX_DF_INPUT`]
+    /// less the 32-byte entropy input and 16-byte nonce the module draws.
+    pub const MAX_MODULE_PERSONALIZATION: usize = HASH_DRBG_MAX_DF_INPUT - MODULE_SEED_LEN;
+    /// The longest additional input [`Self::reseed_from_module`] accepts:
+    /// [`HASH_DRBG_MAX_DF_INPUT`] less the reseed's `0x01 || V` prefix of
+    /// `1 + SEEDLEN` bytes and the 32-byte entropy input the module draws.
+    pub const MAX_MODULE_ADDITIONAL_INPUT: usize =
+        HASH_DRBG_MAX_DF_INPUT - 1 - H::SEEDLEN - MODULE_DRAW_LEN;
+
     /// Create an empty, uninstantiated Hash_DRBG slot.
     #[must_use]
     pub const fn new() -> Self {
@@ -179,8 +200,89 @@ impl<H: HashAlg> HashDrbg<H> {
             c: [0u8; MAX_SEEDLEN],
             reseed_counter: 0,
             instantiated: false,
+            module_seeded: false,
             _marker: PhantomData,
         }
+    }
+
+    /// Hash_DRBG Instantiate seeded by the module — SP 800-90A §10.1.1.2.
+    ///
+    /// Draws a 32-byte entropy input and a 16-byte nonce from the
+    /// module's seed path, as two 32-byte requests, and instantiates at
+    /// the 256-bit security strength. The instance reseeds itself from
+    /// the seed path when its reseed counter reaches the SP 800-90A
+    /// Table 2 interval.
+    ///
+    /// # Errors
+    ///
+    /// - [`Error::NotOperational`] unless the module is operational, and
+    ///   [`Error::AlgorithmRestricted`] when the active profile does not
+    ///   allow this DRBG. Both are checked before any draw.
+    /// - [`Error::InvalidInput`] when `personalization` is longer than
+    ///   [`Self::MAX_MODULE_PERSONALIZATION`], before any draw.
+    /// - [`Error::Rbg`] with the seed path's [`RbgError`] when a draw
+    ///   fails: `EntropyUnavailable` (the module has entered its error
+    ///   state), `Busy` (retry after a pause) or `NotOperational`. No
+    ///   instance is created.
+    pub fn instantiate_from_module(personalization: &[u8]) -> Result<Self, Error> {
+        require_operational()?;
+        require_allowed(H::DRBG_SERVICE)?;
+        if personalization.len() > Self::MAX_MODULE_PERSONALIZATION {
+            return Err(Error::InvalidInput);
+        }
+        let (entropy, nonce) = draw_instantiate_seed()?;
+        let mut drbg = Self::new();
+        drbg.instantiate_internal(&entropy[..], &nonce[..MODULE_NONCE_LEN], personalization)?;
+        drbg.module_seeded = true;
+        Ok(drbg)
+    }
+
+    /// Hash_DRBG Reseed seeded by the module — SP 800-90A §10.1.1.3, with
+    /// a 32-byte entropy input drawn from the seed path.
+    ///
+    /// # Errors
+    ///
+    /// - [`Error::NotOperational`] and [`Error::AlgorithmRestricted`] as
+    ///   for [`Self::instantiate_from_module`].
+    /// - [`Error::Rbg`]`(`[`RbgError::Uninstantiated`]`)` on an
+    ///   uninstantiated instance.
+    /// - [`Error::InvalidInput`] when `additional_input` is longer than
+    ///   [`Self::MAX_MODULE_ADDITIONAL_INPUT`], before any draw.
+    /// - [`Error::Rbg`] with the seed path's [`RbgError`] when the draw
+    ///   fails.
+    ///
+    /// A refusal for `InvalidInput` or `Busy` leaves the instance
+    /// unchanged and usable.
+    pub fn reseed_from_module(&mut self, additional_input: &[u8]) -> Result<(), Error> {
+        require_operational()?;
+        require_allowed(H::DRBG_SERVICE)?;
+        if !self.instantiated {
+            return Err(Error::Rbg(RbgError::Uninstantiated));
+        }
+        if additional_input.len() > Self::MAX_MODULE_ADDITIONAL_INPUT {
+            return Err(Error::InvalidInput);
+        }
+        self.reseed_with_draw(additional_input)
+            .map_err(|e| Error::Rbg(rbg_error(e)))
+    }
+
+    /// Draws a reseed entropy input and reseeds with it.
+    fn reseed_with_draw(&mut self, additional_input: &[u8]) -> Result<(), DrbgError> {
+        let entropy = draw_reseed_entropy()?;
+        self.reseed(&entropy[..], additional_input)
+    }
+
+    /// The reseed a module-seeded instance runs at the reseed interval. The
+    /// profile was checked at instantiate, so only the module state is.
+    fn auto_reseed(&mut self) -> Result<(), DrbgError> {
+        require_operational()?;
+        self.reseed_with_draw(&[])
+    }
+
+    /// Sets the SP 800-90A reseed counter. A test seam.
+    #[cfg(any(test, feature = "fault-injection"))]
+    pub fn set_reseed_counter(&mut self, counter: u64) {
+        self.reseed_counter = counter;
     }
 
     /// Hash_DRBG Instantiate — SP 800-90A §10.1.1.2.
@@ -300,7 +402,43 @@ impl<H: HashAlg> HashDrbg<H> {
         additional_input: Option<&[u8]>,
         out: &mut [u8],
     ) -> Result<(), DrbgError> {
-        let result = self.generate_unwiped(additional_input, out);
+        self.generate_gated(
+            require_operational,
+            require_operational_for_output,
+            additional_input,
+            out,
+        )
+    }
+
+    /// [`Self::generate`] for the power-up self-tests, which run while the
+    /// module is in `SelfTest`: gated by
+    /// [`oxicrypt_module::require_self_test_started`] at entry and again
+    /// before output. Not a service.
+    pub(crate) fn generate_internal(
+        &mut self,
+        additional_input: Option<&[u8]>,
+        out: &mut [u8],
+    ) -> Result<(), DrbgError> {
+        self.generate_gated(
+            require_self_test_started,
+            require_self_test_started,
+            additional_input,
+            out,
+        )
+    }
+
+    /// Runs `entry`, then the generate body with `output` as its re-check
+    /// before writing, and wipes `out` on any error.
+    fn generate_gated(
+        &mut self,
+        entry: Gate,
+        output: Gate,
+        additional_input: Option<&[u8]>,
+        out: &mut [u8],
+    ) -> Result<(), DrbgError> {
+        let result = entry()
+            .map_err(DrbgError::Module)
+            .and_then(|()| self.generate_unwiped(output, additional_input, out));
         if result.is_err() {
             // A failed call leaves no generated bytes in the caller's buffer.
             oxicrypt_zeroize::zeroize(out);
@@ -311,6 +449,7 @@ impl<H: HashAlg> HashDrbg<H> {
     /// Body of [`Self::generate`]; the caller wipes `out` if it fails.
     fn generate_unwiped(
         &mut self,
+        output: Gate,
         additional_input: Option<&[u8]>,
         out: &mut [u8],
     ) -> Result<(), DrbgError> {
@@ -319,6 +458,9 @@ impl<H: HashAlg> HashDrbg<H> {
         }
         if out.len() > HASH_DRBG_MAX_BITS_PER_REQ {
             return Err(DrbgError::RequestTooLong);
+        }
+        if self.module_seeded && self.reseed_counter >= HASH_DRBG_RESEED_INTERVAL {
+            self.auto_reseed()?;
         }
         if self.reseed_counter > HASH_DRBG_RESEED_INTERVAL {
             return Err(DrbgError::ReseedRequired);
@@ -341,6 +483,9 @@ impl<H: HashAlg> HashDrbg<H> {
         }
 
         // Step 3: returned_bits = Hashgen(requested, V)
+        #[cfg(any(test, feature = "fault-injection"))]
+        crate::seam::output_checkpoint();
+        output()?;
         self.hashgen(out)?;
 
         // Step 4: H = Hash(0x03 || V)
@@ -381,6 +526,18 @@ impl<H: HashAlg> HashDrbg<H> {
         self.generate(None, out)
     }
 
+    /// [`Self::generate_pr`] for the power-up self-tests, generating
+    /// through [`Self::generate_internal`]. Not a service.
+    pub(crate) fn generate_pr_internal(
+        &mut self,
+        entropy: &[u8],
+        additional_input: &[u8],
+        out: &mut [u8],
+    ) -> Result<(), DrbgError> {
+        self.reseed(entropy, additional_input)?;
+        self.generate_internal(None, out)
+    }
+
     /// Zeroise and mark the instance uninstantiated.
     ///
     /// `V` and `C` are cleared with the volatile writes of
@@ -390,6 +547,7 @@ impl<H: HashAlg> HashDrbg<H> {
         oxicrypt_zeroize::zeroize(&mut self.c);
         self.reseed_counter = 0;
         self.instantiated = false;
+        self.module_seeded = false;
     }
 
     /// Health-test helper: force the reseed counter above the
@@ -416,6 +574,17 @@ impl<H: HashAlg> HashDrbg<H> {
             increment_be(&mut data[..H::SEEDLEN]);
         }
         Ok(())
+    }
+}
+
+/// `fill` is [`HashDrbg::generate`] with no additional input.
+impl<H: HashAlg> Rbg for HashDrbg<H> {
+    fn fill(&mut self, out: &mut [u8]) -> Result<(), RbgError> {
+        self.generate(None, out).map_err(rbg_error)
+    }
+
+    fn strength_bits(&self) -> u32 {
+        STRENGTH_BITS
     }
 }
 
@@ -856,4 +1025,116 @@ mod tests {
         assert_minimums_enforced::<Sha512Alg>();
         assert_extras_and_precedence::<Sha512Alg>();
     }
+
+    use std::sync::MutexGuard;
+
+    use crate::seam;
+
+    #[allow(
+        clippy::unnecessary_wraps,
+        reason = "the signature is the seam's draw type"
+    )]
+    fn fixed_draw(out: &mut [u8]) -> Result<(), RbgError> {
+        for (i, b) in out.iter_mut().enumerate() {
+            *b = (i as u8) ^ 0x5A;
+        }
+        Ok(())
+    }
+
+    /// Serializes the test, resets the seams, makes the module
+    /// operational and installs [`fixed_draw`].
+    fn seeded_module() -> MutexGuard<'static, ()> {
+        let guard = crate::test_support::serial();
+        seam::clear_all();
+        crate::test_support::start_module();
+        seam::set_get_entropy(fixed_draw);
+        guard
+    }
+
+    macro_rules! module_seeding_tests {
+        ($ty:ty, $rbg:ident, $inst:ident, $limits:ident, $add_max:expr) => {
+            #[test]
+            fn $rbg() {
+                let _serial = seeded_module();
+                let mut a = <$ty>::instantiate_from_module(b"").unwrap();
+                let mut b = <$ty>::instantiate_from_module(b"").unwrap();
+                let mut c = <$ty>::instantiate_from_module(b"").unwrap();
+                let mut out_a = [0u8; 80];
+                let mut out_b = [0u8; 80];
+                let mut out_c = [0u8; 80];
+                a.fill(&mut out_a).unwrap();
+                b.fill(&mut out_b).unwrap();
+                c.generate(None, &mut out_c).unwrap();
+                assert!(out_a.iter().any(|&x| x != 0));
+                assert_eq!(out_a, out_b);
+                assert_eq!(out_a, out_c);
+                assert_eq!(a.strength_bits(), 256);
+                let mut fresh = <$ty>::new();
+                let mut buf = [0xA5u8; 32];
+                assert_eq!(fresh.fill(&mut buf), Err(RbgError::Uninstantiated));
+                assert_eq!(buf, [0u8; 32]);
+                seam::clear_all();
+            }
+
+            #[test]
+            fn $inst() {
+                let _serial = seeded_module();
+                let before = seam::draw_count();
+                let mut drbg = <$ty>::instantiate_from_module(b"app").unwrap();
+                assert_eq!(seam::draw_count(), before + 2);
+                let mut out = [0u8; 32];
+                drbg.generate(None, &mut out).unwrap();
+                assert!(out.iter().any(|&x| x != 0));
+                seam::clear_all();
+            }
+
+            #[test]
+            fn $limits() {
+                let _serial = seeded_module();
+                let max_p = <$ty>::MAX_MODULE_PERSONALIZATION;
+                let max_a = <$ty>::MAX_MODULE_ADDITIONAL_INPUT;
+                assert_eq!(max_p, 720);
+                assert_eq!(max_a, $add_max);
+                let long = [0x11u8; 1024];
+
+                let before = seam::draw_count();
+                let refused = <$ty>::instantiate_from_module(&long[..max_p + 1]);
+                assert_eq!(refused.err(), Some(Error::InvalidInput));
+                assert_eq!(seam::draw_count(), before);
+                let mut drbg = <$ty>::instantiate_from_module(&long[..max_p]).unwrap();
+
+                let before = seam::draw_count();
+                assert_eq!(
+                    drbg.reseed_from_module(&long[..max_a + 1]),
+                    Err(Error::InvalidInput)
+                );
+                assert_eq!(seam::draw_count(), before);
+                assert_eq!(drbg.reseed_from_module(&long[..max_a]), Ok(()));
+                assert_eq!(seam::draw_count(), before + 1);
+                seam::clear_all();
+            }
+        };
+    }
+
+    module_seeding_tests!(
+        HashDrbgSha256,
+        rbg_trait_hash_sha256,
+        instantiate_from_module_hash_sha256,
+        input_limits_hash_sha256,
+        680
+    );
+    module_seeding_tests!(
+        HashDrbgSha384,
+        rbg_trait_hash_sha384,
+        instantiate_from_module_hash_sha384,
+        input_limits_hash_sha384,
+        624
+    );
+    module_seeding_tests!(
+        HashDrbgSha512,
+        rbg_trait_hash_sha512,
+        instantiate_from_module_hash_sha512,
+        input_limits_hash_sha512,
+        624
+    );
 }

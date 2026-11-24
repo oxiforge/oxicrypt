@@ -17,6 +17,11 @@ use oxicrypt_module::{Error, RbgError, enter_error_state, require_operational};
 use oxicrypt_platform::{SpinCell, os_random};
 
 #[cfg(any(test, feature = "fault-injection"))]
+use oxicrypt_entropy::error::EntropyError;
+#[cfg(any(test, feature = "fault-injection"))]
+use oxicrypt_entropy::health::{HealthError, HealthTest};
+
+#[cfg(any(test, feature = "fault-injection"))]
 use crate::seam::{self, FaultClass};
 use crate::seed_table::{EnvRow, OsReason, Pipeline, ROWS, SeedChoice, SeedState};
 
@@ -50,21 +55,42 @@ pub(crate) enum SourceKind {
 /// The size of one conditioned block, in bytes.
 const BLOCK_LEN: usize = 32;
 
+/// `$op`'s result, or `Err($simulated)` in its place when a seam fault of
+/// `$class` is armed, so the error arm that follows classifies a simulated
+/// failure exactly as it classifies a real one.
+#[cfg(any(test, feature = "fault-injection"))]
+macro_rules! faulted {
+    ($class:ident, $simulated:expr, $op:expr) => {
+        if seam::take_fault(FaultClass::$class) {
+            Err($simulated)
+        } else {
+            $op
+        }
+    };
+}
+
+/// Without the seams, `$op`'s result unchanged.
+#[cfg(not(any(test, feature = "fault-injection")))]
+macro_rules! faulted {
+    ($class:ident, $simulated:expr, $op:expr) => {
+        $op
+    };
+}
+
 impl SeedSource for AssessedJitter<'_> {
     fn fill(&mut self, out: &mut [u8]) -> Result<(), RbgError> {
         for chunk in out.chunks_mut(BLOCK_LEN) {
-            #[cfg(any(test, feature = "fault-injection"))]
-            if seam::take_fault(FaultClass::ContinuousHealth) {
-                return Err(entropy_failure());
-            }
-            let mut block = self
-                .pipeline
-                .conditioned_block()
-                .map_err(|_| entropy_failure())?;
+            let block = faulted!(
+                ContinuousHealth,
+                EntropyError::Health(HealthError::Failed(HealthTest::Rct)),
+                self.pipeline.conditioned_block()
+            );
+            let mut block = block.map_err(|_| entropy_failure())?;
             for (dst, src) in chunk.iter_mut().zip(block.iter()) {
                 *dst = *src;
             }
             // Wiping the whole block also wipes the unused tail of the last.
+            // Unproven: no test fails when this wipe is removed.
             oxicrypt_zeroize::zeroize(&mut block);
         }
         Ok(())
@@ -77,10 +103,6 @@ impl SeedSource for AssessedJitter<'_> {
 
 impl SeedSource for OperatingSystem {
     fn fill(&mut self, out: &mut [u8]) -> Result<(), RbgError> {
-        #[cfg(any(test, feature = "fault-injection"))]
-        if seam::take_fault(FaultClass::OsGenerator) {
-            return Err(entropy_failure());
-        }
         os_random(out).map_err(|_| entropy_failure())
     }
 
@@ -172,17 +194,16 @@ fn start_jitter(row: &'static EnvRow) -> Result<Pipeline, Unstarted> {
     let source = JitterSource::new(timer, operational_config(row.timer)).map_err(timer_failure)?;
     let mut pipeline = EntropyPipeline::new(source, row.claimed_h, Alpha::DEFAULT)
         .map_err(|_| Unstarted::Failed(entropy_failure()))?;
-    #[cfg(any(test, feature = "fault-injection"))]
-    if seam::take_fault(FaultClass::ConditionerKat) {
-        return Err(Unstarted::Failed(entropy_failure()));
-    }
-    pipeline
-        .run_startup()
-        .map_err(|_| Unstarted::Failed(entropy_failure()))?;
-    #[cfg(any(test, feature = "fault-injection"))]
-    if seam::take_fault(FaultClass::StartupHealth) {
-        return Err(Unstarted::Failed(entropy_failure()));
-    }
+    let startup = faulted!(
+        ConditionerKat,
+        EntropyError::ConditionerKat,
+        faulted!(
+            StartupHealth,
+            EntropyError::Health(HealthError::Failed(HealthTest::Apt)),
+            pipeline.run_startup()
+        )
+    );
+    startup.map_err(|_| Unstarted::Failed(entropy_failure()))?;
     Ok(pipeline)
 }
 
@@ -310,10 +331,6 @@ fn fill_from(state: &mut SeedState, out: &mut [u8]) -> Result<(), RbgError> {
 /// Draws `out` from the seed path, deciding the path first if this is the
 /// process's first draw. Instantiate and reseed both draw through it. On
 /// error `out` is zeroized.
-#[allow(
-    dead_code,
-    reason = "the module-seeded instantiate and reseed forms call it"
-)]
 pub(crate) fn get_entropy(out: &mut [u8]) -> Result<(), RbgError> {
     let result = draw(out);
     if result.is_err() {
@@ -339,9 +356,10 @@ fn draw(out: &mut [u8]) -> Result<(), RbgError> {
 }
 
 /// The label of the decided seed path, or `"undecided"` when no draw has
-/// decided it yet or the cell is busy. Never decides the path.
-#[allow(dead_code, reason = "read by the module's status surfaces")]
-pub(crate) fn cached_label() -> &'static str {
+/// decided it yet or the cell is busy. Never decides the path; a status
+/// surface reports it beside a failure code so the caller learns which
+/// path the process had taken.
+pub fn seed_path_label() -> &'static str {
     SEED.lock().map_or("undecided", |guard| {
         guard
             .as_ref()
@@ -405,8 +423,6 @@ mod tests {
         reason = "test assertions panic by design"
     )]
 
-    use std::sync::{Mutex, MutexGuard, PoisonError};
-
     use oxicrypt_entropy::h::MinEntropy;
     use oxicrypt_module::RbgError;
 
@@ -416,14 +432,7 @@ mod tests {
     };
     use crate::seam::{self, FaultClass};
     use crate::seed_table::{EnvRow, OsReason, SeedChoice};
-
-    /// The seed cell and the seams are process-global, so tests that use
-    /// them run one at a time.
-    static SERIAL: Mutex<()> = Mutex::new(());
-
-    fn serial() -> MutexGuard<'static, ()> {
-        SERIAL.lock().unwrap_or_else(PoisonError::into_inner)
-    }
+    use crate::test_support::serial;
 
     /// A row no running target names, read by the raw counter.
     static TEST_ROWS: &[EnvRow] = &[EnvRow {
