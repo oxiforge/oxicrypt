@@ -48,6 +48,36 @@ name = "second_draw_failure"
 path = "tests/second_draw_failure.rs"
 required-features = ["fault-injection"]
 
+[[test]]
+name = "pipeline_global"
+path = "tests/pipeline_global.rs"
+required-features = ["fault-injection"]
+
+[[test]]
+name = "entropy_failure_startup"
+path = "tests/entropy_failure_startup.rs"
+required-features = ["fault-injection"]
+
+[[test]]
+name = "entropy_failure_conditioner_kat"
+path = "tests/entropy_failure_conditioner_kat.rs"
+required-features = ["fault-injection"]
+
+[[test]]
+name = "entropy_failure_continuous"
+path = "tests/entropy_failure_continuous.rs"
+required-features = ["fault-injection"]
+
+[[test]]
+name = "entropy_failure_on_demand"
+path = "tests/entropy_failure_on_demand.rs"
+required-features = ["fault-injection"]
+
+[[test]]
+name = "instantiate_before_operational"
+path = "tests/instantiate_before_operational.rs"
+required-features = ["fault-injection"]
+
 [package.metadata.lama]
 # Registry discovery (LAMA SPEC.md, "Package registry discovery"). Must be a
 # per-crate table: cargo strips [workspace] when it packages a member, so a

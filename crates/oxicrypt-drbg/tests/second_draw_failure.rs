@@ -1,5 +1,5 @@
 //! A failure of the second seed draw of a module-seeded instantiate is a
-//! module failure, and no instance is created. The module state is
+//! module failure, no instance is created, and both draws are wiped. The module state is
 //! process-global and its error state is terminal, so this test runs in a
 //! process of its own.
 
@@ -25,4 +25,7 @@ fn second_draw_failure_leaves_nothing() {
     assert_eq!(result.err(), Some(Error::Rbg(RbgError::EntropyUnavailable)));
     assert!(!is_operational());
     assert_eq!(seam::draw_count(), 2);
+    // The first draw and the failed second one were both wiped.
+    assert_eq!(seam::wiped_draw_count(), 2);
+    assert_eq!(seam::unwiped_draw_count(), 0);
 }

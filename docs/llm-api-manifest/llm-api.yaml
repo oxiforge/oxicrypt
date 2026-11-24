@@ -744,6 +744,11 @@ types:
     kind: struct
     description: An Rbg that serves a fixed byte string in order and returns RequestTooLong, consuming nothing, for a request the remaining bytes cannot serve in full; available with the fault-injection feature or in the crate's own tests.
 
+  - name: "seam::HeldSeedCell"
+    module: oxicrypt-drbg
+    kind: struct
+    description: A hold on the seed-path cell returned by seam::hold_seed_cell, released when dropped; available with the fault-injection feature or in the crate's own tests.
+
   - name: "seam::FaultClass"
     module: oxicrypt-drbg
     kind: enum
@@ -5267,6 +5272,45 @@ functions:
     returns:
       type: "()"
       description: "Nothing."
+    thread_safety: thread-safe
+    security:
+      constant_time: false
+      handles_secrets: false
+      fips_approved: false
+
+  - name: "seam::clear_get_entropy"
+    module: oxicrypt-drbg
+    description: "Removes the draw seam::set_get_entropy installed, so draws take the seed path again; available with the fault-injection feature or in the crate's own tests."
+    signature: "pub fn clear_get_entropy()"
+    returns:
+      type: "()"
+      description: "Nothing."
+    thread_safety: thread-safe
+    security:
+      constant_time: false
+      handles_secrets: false
+      fips_approved: false
+
+  - name: "seam::force_assessed_path"
+    module: oxicrypt-drbg
+    description: "Makes the next seed-path decision the assessed path under the first assessed row, independent of the running target's own match and timer; available with the fault-injection feature or in the crate's own tests."
+    signature: "pub fn force_assessed_path()"
+    returns:
+      type: "()"
+      description: "Nothing."
+    thread_safety: thread-safe
+    security:
+      constant_time: false
+      handles_secrets: false
+      fips_approved: false
+
+  - name: "seam::hold_seed_cell"
+    module: oxicrypt-drbg
+    description: "Takes and holds the seed-path cell's lock from the calling thread, so a concurrent draw reaches its spin bound and reports Busy; available with the fault-injection feature or in the crate's own tests."
+    signature: "pub fn hold_seed_cell() -> HeldSeedCell"
+    returns:
+      type: "HeldSeedCell"
+      description: "The hold; dropping it releases the cell."
     thread_safety: thread-safe
     security:
       constant_time: false

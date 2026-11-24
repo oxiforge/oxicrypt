@@ -24,7 +24,7 @@ use oxicrypt_module::RbgError;
 use oxicrypt_platform::{SpinCell, SpinGuard};
 
 use crate::seed;
-use crate::seed_table::{OsReason, SeedChoice};
+use crate::seed_table::{OsReason, ROWS, SeedChoice, SeedState};
 
 /// A replacement for the seed path's draw.
 pub type DrawFn = fn(&mut [u8]) -> Result<(), RbgError>;
@@ -129,6 +129,12 @@ pub fn set_get_entropy(draw: DrawFn) {
     *locked(&DRAW) = Some(draw);
 }
 
+/// Removes the draw [`set_get_entropy`] installed, so draws take the seed
+/// path again.
+pub fn clear_get_entropy() {
+    *locked(&DRAW) = None;
+}
+
 /// The installed replacement draw, if any.
 pub(crate) fn installed_draw() -> Option<DrawFn> {
     *locked(&DRAW)
@@ -163,6 +169,14 @@ pub fn force_operating_system_path() {
     force_seed_choice(SeedChoice::Os(OsReason::NoRow));
 }
 
+/// Makes the next seed-path decision the assessed path under the first
+/// assessed row, independent of the running target's own match and timer.
+pub fn force_assessed_path() {
+    if let Some(row) = ROWS.first() {
+        force_seed_choice(SeedChoice::Assessed(row));
+    }
+}
+
 pub(crate) fn take_forced_choice() -> Option<SeedChoice> {
     locked(&FORCED).take()
 }
@@ -177,11 +191,24 @@ pub(crate) fn timer_inadequate_forced() -> bool {
     TIMER_INADEQUATE.load(Ordering::SeqCst)
 }
 
+/// A hold on the seed-path cell, returned by [`hold_seed_cell`]; dropping
+/// it releases the cell.
+pub struct HeldSeedCell {
+    _guard: SpinGuard<'static, SeedState>,
+}
+
 /// Holds the seed-path cell, so that another thread's draw spins and then
 /// returns [`RbgError::Busy`].
+pub fn hold_seed_cell() -> HeldSeedCell {
+    HeldSeedCell {
+        _guard: locked(seed::seed_cell()),
+    }
+}
+
+/// [`hold_seed_cell`], under the name this crate's own tests use.
 #[cfg(test)]
-pub(crate) fn hold_lock() -> SpinGuard<'static, crate::seed_table::SeedState> {
-    locked(seed::seed_cell())
+pub(crate) fn hold_lock() -> HeldSeedCell {
+    hold_seed_cell()
 }
 
 /// Arms one failure of `class`, consumed by the next point that checks it.
