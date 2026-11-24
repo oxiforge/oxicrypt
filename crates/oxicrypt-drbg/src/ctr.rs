@@ -19,9 +19,57 @@
 //! * The reseed interval is hardcoded at 2^48, the maximum permitted
 //!   by SP 800-90A Table 3. Consumers are still free to reseed more
 //!   often.
-//! * This module does not talk to any entropy source. Callers must
-//!   feed in entropy bytes of the correct length, as is standard for
-//!   an ACVP-testable DRBG core.
+//!
+//! # Testing interfaces
+//!
+//! The forms that take the entropy input from the caller
+//! (`instantiate_no_df`, `instantiate_df`, `reseed_no_df`, `reseed_df`,
+//! `generate_no_df_pr` and `generate_df_pr`) exist only with the
+//! `testing-interfaces` feature, for the CAVP tests that supply the
+//! entropy input. Production code seeds through
+//! [`CtrDrbg::instantiate_from_module`] and reseeds through
+//! [`CtrDrbg::reseed_from_module`]. Without the feature none of the six
+//! compiles, and each block below is a `compile_fail` test; with the
+//! feature on, as a workspace build that includes the CAVP harness has it,
+//! each block is an ordinary doctest:
+//!
+#![cfg_attr(not(feature = "testing-interfaces"), doc = "```compile_fail")]
+#![cfg_attr(feature = "testing-interfaces", doc = "```")]
+//! let mut d = oxicrypt_drbg::CtrDrbgAes256::new();
+//! let _ = d.instantiate_no_df(&[0; 48]);
+//! ```
+//!
+#![cfg_attr(not(feature = "testing-interfaces"), doc = "```compile_fail")]
+#![cfg_attr(feature = "testing-interfaces", doc = "```")]
+//! let mut d = oxicrypt_drbg::CtrDrbgAes256::new();
+//! let _ = d.instantiate_df(&[0; 32], &[0; 16], &[]);
+//! ```
+//!
+#![cfg_attr(not(feature = "testing-interfaces"), doc = "```compile_fail")]
+#![cfg_attr(feature = "testing-interfaces", doc = "```")]
+//! let mut d = oxicrypt_drbg::CtrDrbgAes256::new();
+//! let _ = d.reseed_no_df(&[0; 48]);
+//! ```
+//!
+#![cfg_attr(not(feature = "testing-interfaces"), doc = "```compile_fail")]
+#![cfg_attr(feature = "testing-interfaces", doc = "```")]
+//! let mut d = oxicrypt_drbg::CtrDrbgAes256::new();
+//! let _ = d.reseed_df(&[0; 32], &[]);
+//! ```
+//!
+#![cfg_attr(not(feature = "testing-interfaces"), doc = "```compile_fail")]
+#![cfg_attr(feature = "testing-interfaces", doc = "```")]
+//! let mut d = oxicrypt_drbg::CtrDrbgAes256::new();
+//! let mut out = [0u8; 16];
+//! let _ = d.generate_no_df_pr(&[0; 48], &mut out);
+//! ```
+//!
+#![cfg_attr(not(feature = "testing-interfaces"), doc = "```compile_fail")]
+#![cfg_attr(feature = "testing-interfaces", doc = "```")]
+//! let mut d = oxicrypt_drbg::CtrDrbgAes256::new();
+//! let mut out = [0u8; 16];
+//! let _ = d.generate_df_pr(&[0; 32], &[], &mut out);
+//! ```
 
 #![allow(
     clippy::indexing_slicing,
@@ -51,7 +99,7 @@ const OUTLEN: usize = 16;
 /// Maximum key length across all supported variants (AES-256).
 const MAX_KEY_LEN: usize = 32;
 /// Maximum `seedlen` (`keylen + outlen`) across supported variants.
-const MAX_SEED_LEN: usize = MAX_KEY_LEN + OUTLEN; // 48
+const MAX_SEED_LEN: usize = MAX_KEY_LEN + OUTLEN;
 /// Upper bound on the length of any single byte string the DF is asked
 /// to process (`entropy || nonce || personalization_string`).
 ///
@@ -154,34 +202,64 @@ pub(crate) type Gate = fn() -> Result<(), Error>;
 type GenerateBody<F> = fn(&mut CtrDrbg<F>, Gate, Option<&[u8]>, &mut [u8]) -> Result<(), DrbgError>;
 
 /// One seed-path request, wiped on drop.
-pub(crate) type SeedDraw = Zeroizing<[u8; MODULE_DRAW_LEN]>;
+pub(crate) struct SeedDraw(Zeroizing<[u8; MODULE_DRAW_LEN]>);
 
-/// Draws the entropy input and the nonce of a module-seeded instantiate,
-/// as two requests of [`MODULE_DRAW_LEN`] bytes. The nonce is the leading
-/// [`MODULE_NONCE_LEN`] bytes of the second request; both buffers wipe on
+impl SeedDraw {
+    pub(crate) fn new() -> Self {
+        Self(Zeroizing::new([0u8; MODULE_DRAW_LEN]))
+    }
+}
+
+impl core::ops::Deref for SeedDraw {
+    type Target = [u8; MODULE_DRAW_LEN];
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl core::ops::DerefMut for SeedDraw {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
+}
+
+impl Drop for SeedDraw {
+    fn drop(&mut self) {
+        // Wiped here as well as by `Zeroizing`, so the test seam reads the
+        // bytes after a wipe: the inner wrapper's own wipe runs after this.
+        oxicrypt_zeroize::zeroize(self.0.as_mut_slice());
+        #[cfg(any(test, feature = "fault-injection"))]
+        crate::seam::record_draw_dropped(self.0.iter().all(|&b| b == 0));
+    }
+}
+
+/// Draws the entropy input and the nonce of a module-seeded instantiate
+/// into the caller's `entropy` and `nonce`, as two requests of
+/// [`MODULE_DRAW_LEN`] bytes. The nonce is the leading
+/// [`MODULE_NONCE_LEN`] bytes of the second request. Both buffers wipe on
 /// drop, so a failed second draw also wipes the first.
-pub(crate) fn draw_instantiate_seed() -> Result<(SeedDraw, SeedDraw), Error> {
-    let mut entropy = Zeroizing::new([0u8; MODULE_DRAW_LEN]);
-    get_entropy(&mut *entropy).map_err(Error::Rbg)?;
-    let mut nonce = Zeroizing::new([0u8; MODULE_DRAW_LEN]);
-    let second = get_entropy(&mut *nonce);
+pub(crate) fn draw_instantiate_seed(
+    entropy: &mut SeedDraw,
+    nonce: &mut SeedDraw,
+) -> Result<(), Error> {
+    get_entropy(entropy.as_mut_slice()).map_err(Error::Rbg)?;
+    let second = get_entropy(nonce.as_mut_slice());
     #[cfg(any(test, feature = "fault-injection"))]
     let second = if crate::seam::take_second_draw_fault() {
-        oxicrypt_zeroize::zeroize(&mut *nonce);
+        oxicrypt_zeroize::zeroize(nonce.as_mut_slice());
         oxicrypt_module::enter_error_state("entropy source");
         Err(RbgError::EntropyUnavailable)
     } else {
         second
     };
-    second.map_err(Error::Rbg)?;
-    Ok((entropy, nonce))
+    second.map_err(Error::Rbg)
 }
 
-/// Draws one reseed entropy input of [`MODULE_DRAW_LEN`] bytes.
-pub(crate) fn draw_reseed_entropy() -> Result<SeedDraw, DrbgError> {
-    let mut entropy = Zeroizing::new([0u8; MODULE_DRAW_LEN]);
-    get_entropy(&mut *entropy).map_err(|e| DrbgError::Module(Error::Rbg(e)))?;
-    Ok(entropy)
+/// Draws one reseed entropy input of [`MODULE_DRAW_LEN`] bytes into the
+/// caller's `entropy`.
+pub(crate) fn draw_reseed_entropy(entropy: &mut SeedDraw) -> Result<(), DrbgError> {
+    get_entropy(entropy.as_mut_slice()).map_err(|e| DrbgError::Module(Error::Rbg(e)))
 }
 
 impl core::fmt::Display for DrbgError {
@@ -268,7 +346,7 @@ impl CipherFactory for Aes128Factory {
     type Cipher = Aes128Key;
     fn from_key(key: &[u8]) -> Result<Self::Cipher, Error> {
         debug_assert_eq!(key.len(), Self::KEY_LEN);
-        let mut k = [0u8; 16];
+        let mut k = Zeroizing::new([0u8; 16]);
         k.copy_from_slice(&key[..16]);
         Aes128Key::new_internal(&k)
     }
@@ -281,7 +359,7 @@ impl CipherFactory for Aes192Factory {
     type Cipher = Aes192Key;
     fn from_key(key: &[u8]) -> Result<Self::Cipher, Error> {
         debug_assert_eq!(key.len(), Self::KEY_LEN);
-        let mut k = [0u8; 24];
+        let mut k = Zeroizing::new([0u8; 24]);
         k.copy_from_slice(&key[..24]);
         Aes192Key::new_internal(&k)
     }
@@ -294,7 +372,7 @@ impl CipherFactory for Aes256Factory {
     type Cipher = Aes256Key;
     fn from_key(key: &[u8]) -> Result<Self::Cipher, Error> {
         debug_assert_eq!(key.len(), Self::KEY_LEN);
-        let mut k = [0u8; 32];
+        let mut k = Zeroizing::new([0u8; 32]);
         k.copy_from_slice(&key[..32]);
         Aes256Key::new_internal(&k)
     }
@@ -394,7 +472,9 @@ impl<F: CipherFactory> CtrDrbg<F> {
         if personalization.len() > Self::MAX_MODULE_PERSONALIZATION {
             return Err(Error::InvalidInput);
         }
-        let (entropy, nonce) = draw_instantiate_seed()?;
+        let mut entropy = SeedDraw::new();
+        let mut nonce = SeedDraw::new();
+        draw_instantiate_seed(&mut entropy, &mut nonce)?;
         let mut drbg = Self::new();
         drbg.instantiate_df_internal(&entropy[..], &nonce[..MODULE_NONCE_LEN], personalization)?;
         drbg.module_seeded = true;
@@ -433,8 +513,9 @@ impl<F: CipherFactory> CtrDrbg<F> {
 
     /// Draws a reseed entropy input and reseeds with it.
     fn reseed_with_draw(&mut self, additional_input: &[u8]) -> Result<(), DrbgError> {
-        let entropy = draw_reseed_entropy()?;
-        self.reseed_df(&entropy[..], additional_input)
+        let mut entropy = SeedDraw::new();
+        draw_reseed_entropy(&mut entropy)?;
+        self.reseed_df_internal(&entropy[..], additional_input)
     }
 
     /// The reseed a module-seeded instance runs at the reseed interval. The
@@ -456,6 +537,11 @@ impl<F: CipherFactory> CtrDrbg<F> {
     /// and have length exactly `SEED_LEN` bytes. Callers using this
     /// variant are responsible for ensuring the entropy source
     /// provides full-entropy input of the required length.
+    ///
+    /// A testing interface for the CAVP tests, which supply the entropy
+    /// input: available only with the `testing-interfaces` feature.
+    /// Production code seeds through [`Self::instantiate_from_module`].
+    #[cfg(any(test, feature = "testing-interfaces"))]
     pub fn instantiate_no_df(&mut self, seed_material: &[u8]) -> Result<(), Error> {
         require_operational()?;
         require_allowed(F::DRBG_SERVICE)?;
@@ -476,7 +562,7 @@ impl<F: CipherFactory> CtrDrbg<F> {
         }
         self.v = [0u8; OUTLEN];
         // (Key, V) = CTR_DRBG_Update(seed_material, Key, V)
-        let mut provided = [0u8; MAX_SEED_LEN];
+        let mut provided = Zeroizing::new([0u8; MAX_SEED_LEN]);
         provided[..F::SEED_LEN].copy_from_slice(seed_material);
         self.update(&provided[..F::SEED_LEN])?;
         self.reseed_counter = 1;
@@ -501,6 +587,11 @@ impl<F: CipherFactory> CtrDrbg<F> {
     /// [`Error::InvalidInput`] even when one of them is also short. A
     /// refusal by any of these length checks leaves the DRBG
     /// uninstantiated.
+    ///
+    /// A testing interface for the CAVP tests, which supply the entropy
+    /// input: available only with the `testing-interfaces` feature.
+    /// Production code seeds through [`Self::instantiate_from_module`].
+    #[cfg(any(test, feature = "testing-interfaces"))]
     pub fn instantiate_df(
         &mut self,
         entropy: &[u8],
@@ -537,13 +628,13 @@ impl<F: CipherFactory> CtrDrbg<F> {
         if nonce.len() < Self::MIN_NONCE_LEN {
             return Err(Error::NonceTooShort);
         }
-        let mut seed_material = [0u8; MAX_DF_INPUT];
+        let mut seed_material = Zeroizing::new([0u8; MAX_DF_INPUT]);
         seed_material[..entropy.len()].copy_from_slice(entropy);
         seed_material[entropy.len()..entropy.len() + nonce.len()].copy_from_slice(nonce);
         let offset = entropy.len() + nonce.len();
         seed_material[offset..offset + personalization.len()].copy_from_slice(personalization);
 
-        let mut derived = [0u8; MAX_SEED_LEN];
+        let mut derived = Zeroizing::new([0u8; MAX_SEED_LEN]);
         self.block_cipher_df(&seed_material[..total], &mut derived[..F::SEED_LEN])
             .map_err(|e| match e {
                 DrbgError::Module(e) => e,
@@ -561,14 +652,27 @@ impl<F: CipherFactory> CtrDrbg<F> {
     }
 
     /// CTR_DRBG Reseed, `no df` variant (§10.2.1.4.1).
+    ///
+    /// A testing interface for the CAVP tests, which supply the entropy
+    /// input: available only with the `testing-interfaces` feature.
+    /// Production code seeds through [`Self::instantiate_from_module`] and
+    /// reseeds through [`Self::reseed_from_module`].
+    #[cfg(any(test, feature = "testing-interfaces"))]
     pub fn reseed_no_df(&mut self, seed_material: &[u8]) -> Result<(), DrbgError> {
+        self.reseed_no_df_internal(seed_material)
+    }
+
+    /// The `no df` reseed core. Only the testing interfaces reach it: the
+    /// module seeds and reseeds through the `use df` variant.
+    #[cfg(any(test, feature = "testing-interfaces"))]
+    pub(crate) fn reseed_no_df_internal(&mut self, seed_material: &[u8]) -> Result<(), DrbgError> {
         if !self.instantiated {
             return Err(DrbgError::Uninstantiated);
         }
         if seed_material.len() != F::SEED_LEN {
             return Err(DrbgError::InvalidSeedLength);
         }
-        let mut provided = [0u8; MAX_SEED_LEN];
+        let mut provided = Zeroizing::new([0u8; MAX_SEED_LEN]);
         provided[..F::SEED_LEN].copy_from_slice(seed_material);
         self.update(&provided[..F::SEED_LEN])?;
         self.reseed_counter = 1;
@@ -585,7 +689,23 @@ impl<F: CipherFactory> CtrDrbg<F> {
     /// [`DrbgError::EntropyInputTooShort`] when `entropy` is shorter than
     /// `KEY_LEN` bytes, the security strength (SP 800-90A Rev. 1 Table 3
     /// `min_length`). Additional input never counts toward the minimum.
+    ///
+    /// A testing interface for the CAVP tests, which supply the entropy
+    /// input: available only with the `testing-interfaces` feature.
+    /// Production code seeds through [`Self::instantiate_from_module`] and
+    /// reseeds through [`Self::reseed_from_module`].
+    #[cfg(any(test, feature = "testing-interfaces"))]
     pub fn reseed_df(&mut self, entropy: &[u8], additional_input: &[u8]) -> Result<(), DrbgError> {
+        self.reseed_df_internal(entropy, additional_input)
+    }
+
+    /// The `use df` reseed core, used by the module-seeded reseed and the
+    /// power-up self-tests.
+    pub(crate) fn reseed_df_internal(
+        &mut self,
+        entropy: &[u8],
+        additional_input: &[u8],
+    ) -> Result<(), DrbgError> {
         if !self.instantiated {
             return Err(DrbgError::Uninstantiated);
         }
@@ -599,12 +719,12 @@ impl<F: CipherFactory> CtrDrbg<F> {
         if entropy.len() < Self::MIN_ENTROPY_LEN {
             return Err(DrbgError::EntropyInputTooShort);
         }
-        let mut seed_material = [0u8; MAX_DF_INPUT];
+        let mut seed_material = Zeroizing::new([0u8; MAX_DF_INPUT]);
         seed_material[..entropy.len()].copy_from_slice(entropy);
         seed_material[entropy.len()..entropy.len() + additional_input.len()]
             .copy_from_slice(additional_input);
 
-        let mut derived = [0u8; MAX_SEED_LEN];
+        let mut derived = Zeroizing::new([0u8; MAX_SEED_LEN]);
         self.block_cipher_df(&seed_material[..total], &mut derived[..F::SEED_LEN])?;
         self.update(&derived[..F::SEED_LEN])?;
         self.reseed_counter = 1;
@@ -687,7 +807,7 @@ impl<F: CipherFactory> CtrDrbg<F> {
             return Err(DrbgError::ReseedRequired);
         }
 
-        let mut addl = [0u8; MAX_SEED_LEN];
+        let mut addl = Zeroizing::new([0u8; MAX_SEED_LEN]);
         let have_addl = match additional_input {
             Some(ai) => {
                 if ai.len() != F::SEED_LEN {
@@ -770,7 +890,7 @@ impl<F: CipherFactory> CtrDrbg<F> {
             return Err(DrbgError::ReseedRequired);
         }
 
-        let mut addl = [0u8; MAX_SEED_LEN];
+        let mut addl = Zeroizing::new([0u8; MAX_SEED_LEN]);
         let have_addl = match additional_input {
             Some(ai) => {
                 if ai.len() > MAX_DF_INPUT {
@@ -806,12 +926,18 @@ impl<F: CipherFactory> CtrDrbg<F> {
     /// §9.3.1 step 7.1/7.2 sequence where the additional input
     /// supplied by the caller is consumed by the reseed and the
     /// subsequent generate is invoked with a Null additional input.
+    ///
+    /// A testing interface for the CAVP tests, which supply the entropy
+    /// input: available only with the `testing-interfaces` feature.
+    /// Production code seeds through [`Self::instantiate_from_module`] and
+    /// reseeds through [`Self::reseed_from_module`].
+    #[cfg(any(test, feature = "testing-interfaces"))]
     pub fn generate_no_df_pr(
         &mut self,
         seed_material: &[u8],
         out: &mut [u8],
     ) -> Result<(), DrbgError> {
-        self.reseed_no_df(seed_material)?;
+        self.reseed_no_df_internal(seed_material)?;
         self.generate_no_df(None, out)
     }
 
@@ -820,25 +946,32 @@ impl<F: CipherFactory> CtrDrbg<F> {
     ///
     /// Equivalent to `reseed_df(entropy, additional_input)` followed
     /// by `generate_df(None, out)`.
+    ///
+    /// A testing interface for the CAVP tests, which supply the entropy
+    /// input: available only with the `testing-interfaces` feature.
+    /// Production code seeds through [`Self::instantiate_from_module`] and
+    /// reseeds through [`Self::reseed_from_module`].
+    #[cfg(any(test, feature = "testing-interfaces"))]
     pub fn generate_df_pr(
         &mut self,
         entropy: &[u8],
         additional_input: &[u8],
         out: &mut [u8],
     ) -> Result<(), DrbgError> {
-        self.reseed_df(entropy, additional_input)?;
+        self.reseed_df_internal(entropy, additional_input)?;
         self.generate_df(None, out)
     }
 
-    /// [`Self::generate_df_pr`] for the power-up self-tests, generating
-    /// through [`Self::generate_df_internal`]. Not a service.
+    /// The prediction-resistant `use df` generate for the power-up
+    /// self-tests: [`Self::reseed_df_internal`], then
+    /// [`Self::generate_df_internal`]. Not a service.
     pub(crate) fn generate_df_pr_internal(
         &mut self,
         entropy: &[u8],
         additional_input: &[u8],
         out: &mut [u8],
     ) -> Result<(), DrbgError> {
-        self.reseed_df(entropy, additional_input)?;
+        self.reseed_df_internal(entropy, additional_input)?;
         self.generate_df_internal(None, out)
     }
 
@@ -874,11 +1007,12 @@ impl<F: CipherFactory> CtrDrbg<F> {
         debug_assert_eq!(provided_data.len(), F::SEED_LEN);
         let started = require_self_test_started_token()?;
         let cipher = F::from_key(&self.key[..F::KEY_LEN])?;
-        let mut temp = [0u8; MAX_SEED_LEN];
+        let mut temp = Zeroizing::new([0u8; MAX_SEED_LEN]);
         let mut produced = 0usize;
         while produced < F::SEED_LEN {
             increment_counter(&mut self.v);
-            let mut block = self.v;
+            let mut block = Zeroizing::new([0u8; OUTLEN]);
+            block.copy_from_slice(&self.v);
             cipher.encrypt_block_with(&started, &mut block);
             let take = core::cmp::min(OUTLEN, F::SEED_LEN - produced);
             temp[produced..produced + take].copy_from_slice(&block[..take]);
@@ -903,7 +1037,8 @@ impl<F: CipherFactory> CtrDrbg<F> {
         let mut produced = 0usize;
         while produced < out.len() {
             increment_counter(&mut self.v);
-            let mut block = self.v;
+            let mut block = Zeroizing::new([0u8; OUTLEN]);
+            block.copy_from_slice(&self.v);
             cipher.encrypt_block_with(&started, &mut block);
             let take = core::cmp::min(OUTLEN, out.len() - produced);
             out[produced..produced + take].copy_from_slice(&block[..take]);
@@ -925,9 +1060,7 @@ impl<F: CipherFactory> CtrDrbg<F> {
         debug_assert!(no_bits_return_bytes <= MAX_SEED_LEN);
 
         // S = L || N || input || 0x80, padded to outlen multiple.
-        // Scratch: OUTLEN (IV) + header(8) + input(<=MAX_DF_INPUT)
-        // + 1 (0x80) + pad(<OUTLEN), rounded to whole blocks.
-        let mut s_buf = [0u8; DF_SCRATCH_LEN];
+        let mut s_buf = Zeroizing::new([0u8; DF_SCRATCH_LEN]);
         // s_buf[0..16] is IV (filled later per iteration).
         let mut idx = OUTLEN;
         // L (4 bytes BE) = input length
@@ -958,7 +1091,8 @@ impl<F: CipherFactory> CtrDrbg<F> {
         let k_cipher = F::from_key(&k[..F::KEY_LEN])?;
 
         // temp = BCC outputs, length = keylen + outlen
-        let mut temp = [0u8; MAX_SEED_LEN];
+        let mut temp = Zeroizing::new([0u8; MAX_SEED_LEN]);
+        let mut block = Zeroizing::new([0u8; OUTLEN]);
         let mut produced = 0usize;
         let mut i: u32 = 0;
         let target = F::SEED_LEN; // produce keylen + outlen
@@ -968,7 +1102,7 @@ impl<F: CipherFactory> CtrDrbg<F> {
             for b in &mut s_buf[4..OUTLEN] {
                 *b = 0;
             }
-            let block = bcc(&k_cipher, &started, &s_buf[..total_bcc_in]);
+            bcc(&k_cipher, &started, &s_buf[..total_bcc_in], &mut block);
             let take = core::cmp::min(OUTLEN, target - produced);
             temp[produced..produced + take].copy_from_slice(&block[..take]);
             produced += take;
@@ -977,7 +1111,7 @@ impl<F: CipherFactory> CtrDrbg<F> {
 
         // K' = leftmost(temp, keylen), X = select(temp, keylen, outlen)
         let k2_cipher = F::from_key(&temp[..F::KEY_LEN])?;
-        let mut x = [0u8; OUTLEN];
+        let mut x = Zeroizing::new([0u8; OUTLEN]);
         x.copy_from_slice(&temp[F::KEY_LEN..F::KEY_LEN + OUTLEN]);
 
         let mut out_produced = 0usize;
@@ -1015,19 +1149,19 @@ impl<F: CipherFactory> Drop for CtrDrbg<F> {
     }
 }
 
-/// BCC — SP 800-90A §10.3.3. `data` length must be a multiple of 16.
-fn bcc<B: BlockCipher>(cipher: &B, started: &SelfTestStarted, data: &[u8]) -> [u8; OUTLEN] {
+/// BCC — SP 800-90A §10.3.3, written into `out`, which holds the chaining
+/// value throughout. `data` length must be a multiple of 16.
+fn bcc<B: BlockCipher>(cipher: &B, started: &SelfTestStarted, data: &[u8], out: &mut [u8; OUTLEN]) {
     debug_assert_eq!(data.len() % OUTLEN, 0);
-    let mut chaining = [0u8; OUTLEN];
+    *out = [0u8; OUTLEN];
     let mut i = 0usize;
     while i < data.len() {
         for j in 0..OUTLEN {
-            chaining[j] ^= data[i + j];
+            out[j] ^= data[i + j];
         }
-        cipher.encrypt_block_with(started, &mut chaining);
+        cipher.encrypt_block_with(started, out);
         i += OUTLEN;
     }
-    chaining
 }
 
 /// Increment a 16-byte counter as a big-endian 128-bit integer,
@@ -1073,7 +1207,6 @@ mod tests {
         }
     }
 
-    // ---------------- AES-128 no df CAVP Count=0 ----------------
     #[test]
     fn cavp_ctr_drbg_aes128_no_df_count0() {
         crate::test_support::start_module();
@@ -1090,7 +1223,6 @@ mod tests {
         assert_eq!(out, expected);
     }
 
-    // ---------------- AES-192 no df CAVP Count=0 ----------------
     #[test]
     fn cavp_ctr_drbg_aes192_no_df_count0() {
         crate::test_support::start_module();
@@ -1108,7 +1240,6 @@ mod tests {
         assert_eq!(out, expected);
     }
 
-    // ---------------- AES-256 no df CAVP Count=0 ----------------
     #[test]
     fn cavp_ctr_drbg_aes256_no_df_count0() {
         crate::test_support::start_module();
@@ -1126,7 +1257,6 @@ mod tests {
         assert_eq!(out, expected);
     }
 
-    // ---------------- AES-128 use df CAVP Count=0 ----------------
     #[test]
     fn cavp_ctr_drbg_aes128_df_count0() {
         crate::test_support::start_module();
@@ -1143,7 +1273,6 @@ mod tests {
         assert_eq!(out, expected);
     }
 
-    // ---------------- AES-192 use df CAVP Count=0 ----------------
     #[test]
     fn cavp_ctr_drbg_aes192_df_count0() {
         crate::test_support::start_module();
@@ -1160,7 +1289,6 @@ mod tests {
         assert_eq!(out, expected);
     }
 
-    // ---------------- AES-256 use df CAVP Count=0 ----------------
     #[test]
     fn cavp_ctr_drbg_aes256_df_count0() {
         crate::test_support::start_module();
@@ -1687,4 +1815,75 @@ mod tests {
         input_limits_ctr_aes256,
         256
     );
+
+    type Body = fn(&mut CtrDrbgAes256, Option<&[u8]>, &mut [u8]) -> Result<(), DrbgError>;
+
+    /// Both generate bodies, by name.
+    const BODIES: [(&str, Body); 2] = [
+        ("df", CtrDrbgAes256::generate_df),
+        ("no df", CtrDrbgAes256::generate_no_df),
+    ];
+
+    #[test]
+    fn auto_reseed_at_interval() {
+        let _serial = seeded_module();
+        let mut drbg = CtrDrbgAes256::instantiate_from_module(b"").unwrap();
+        let mut out = [0u8; 32];
+        for (name, body) in BODIES {
+            drbg.set_reseed_counter(RESEED_INTERVAL);
+            let before = seam::draw_count();
+            body(&mut drbg, None, &mut out).unwrap();
+            assert_eq!(drbg.reseed_counter, 2, "{name}");
+            assert_eq!(seam::draw_count(), before + 1, "{name}");
+        }
+
+        // Control: a caller-seeded instance at the same count does not
+        // reseed, through either body.
+        let mut caller = CtrDrbgAes256::new();
+        caller
+            .instantiate_df_internal(&[0x11; 32], &[0x22; 16], b"")
+            .unwrap();
+        for (name, body) in BODIES {
+            caller.set_reseed_counter(RESEED_INTERVAL);
+            let before = seam::draw_count();
+            body(&mut caller, None, &mut out).unwrap();
+            assert_eq!(caller.reseed_counter, RESEED_INTERVAL + 1, "{name}");
+            assert_eq!(seam::draw_count(), before, "{name}");
+        }
+        seam::clear_all();
+    }
+
+    /// `body` admits a caller-seeded instance at the reseed interval and
+    /// refuses it one past with `ReseedRequired`, leaving no output in the
+    /// caller's buffer.
+    fn assert_reseed_bound(name: &str, body: Body) {
+        let _serial = seeded_module();
+        let mut caller = CtrDrbgAes256::new();
+        caller
+            .instantiate_df_internal(&[0x11; 32], &[0x22; 16], b"")
+            .unwrap();
+        let mut out = [0xa5u8; 32];
+
+        caller.set_reseed_counter(RESEED_INTERVAL);
+        assert_eq!(body(&mut caller, None, &mut out), Ok(()), "{name}");
+        assert_eq!(caller.reseed_counter, RESEED_INTERVAL + 1, "{name}");
+        out = [0xa5u8; 32];
+        assert_eq!(
+            body(&mut caller, None, &mut out),
+            Err(DrbgError::ReseedRequired),
+            "{name}"
+        );
+        assert_eq!(out, [0u8; 32], "{name}");
+        seam::clear_all();
+    }
+
+    #[test]
+    fn generate_df_reseed_bound() {
+        assert_reseed_bound("df", CtrDrbgAes256::generate_df);
+    }
+
+    #[test]
+    fn generate_no_df_reseed_bound() {
+        assert_reseed_bound("no df", CtrDrbgAes256::generate_no_df);
+    }
 }

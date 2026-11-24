@@ -12,7 +12,6 @@
 //! Nothing here is production code — it's a scratchpad for learning
 //! the API surface.
 
-// Crate-root re-exports — no submodule navigation needed.
 use oxicrypt_sha::{sha256, Sha256};
 use oxicrypt_sha::sha256::{BLOCK_SIZE as SHA256_BLOCK_SIZE, DIGEST_SIZE as SHA256_DIGEST_SIZE};
 use oxicrypt_ecdsa::{EcdsaP256PrivateKey, verify as ecdsa_verify};
@@ -36,12 +35,10 @@ fn main() {
     println!();
 
     // ── 1. Module initialization ────────────────────────────────
-    // The module must reach "Operational" state before any crypto
-    // function will work. In the real acvp-harness, initialize_with_tests()
-    // runs the real integrity group plus all 139 algorithm KATs. Here we
-    // pass the unsigned-binary stub and an empty test list to skip
-    // straight to Operational, since the playground binary isn't signed
-    // and we just want to poke at APIs.
+    // The module must reach the Operational state before any cryptographic
+    // function works. A signed binary passes the real integrity group and
+    // every algorithm self-test; the unsigned playground passes the stub and
+    // an empty test list.
     println!("─── 1. Module initialization ───");
     match oxicrypt_module::initialize_with_tests(UNSIGNED_TEST_BINARY, &[]) {
         Ok(()) => {}
@@ -58,16 +55,14 @@ fn main() {
     println!("─── 2. SHA-256 hash ───");
     let message = b"Hello from the oxicrypt playground!";
 
-    // One-shot convenience function:
     let digest = sha256(message).expect("sha256");
     println!("  Input:  \"{}\"", std::str::from_utf8(message).unwrap());
     println!("  SHA-256: {}", hex(&digest));
 
-    // Streaming API:
     let mut hasher = Sha256::new().expect("sha256 new");
     hasher.update(b"Hello from ");
     hasher.update(b"the oxicrypt playground!");
-    let digest2 = hasher.finalize();
+    let digest2 = hasher.finalize().expect("sha256 finalize");
     assert_eq!(digest, digest2, "one-shot and streaming must match");
     println!("  Streaming matches one-shot: ✓");
     println!();
@@ -81,7 +76,7 @@ fn main() {
         SHA256_DIGEST_SIZE,
     >::new(key).expect("hmac new");
     mac.update(message);
-    let tag = mac.finalize();
+    let tag = mac.finalize().expect("hmac finalize");
     println!("  Key:     \"{}\"", std::str::from_utf8(key).unwrap());
     println!("  Message: \"{}\"", std::str::from_utf8(message).unwrap());
     println!("  HMAC:    {}", hex(&tag));
@@ -103,7 +98,6 @@ fn main() {
     println!("  Ciphertext: {}", hex(&ciphertext));
     println!("  Tag:        {}", hex(&tag_out));
 
-    // Decrypt and verify:
     let mut recovered = vec![0u8; ciphertext.len()];
     oxicrypt_aes::gcm_decrypt(&cipher, &iv, aad, &ciphertext, &tag_out, &mut recovered)
         .expect("gcm decrypt");
@@ -113,26 +107,21 @@ fn main() {
 
     // ── 5. DRBG (HMAC_DRBG with SHA-256) ────────────────────────
     println!("─── 5. HMAC_DRBG-SHA-256 ───");
-    let mut drbg = oxicrypt_drbg::HmacDrbgSha256::default();
-    // In production, entropy comes from the OS. For the playground
-    // we use a fixed seed so the output is reproducible.
-    let entropy = [0xAA; 32];
-    let nonce = [0xBB; 16];
-    drbg.instantiate(&entropy, &nonce, b"playground-personalization")
-        .expect("drbg instantiate");
+    // The module draws the entropy input and nonce from its own seed
+    // path; the caller supplies only the personalization string.
+    let mut drbg =
+        oxicrypt_drbg::HmacDrbgSha256::instantiate_from_module(b"playground-personalization")
+            .expect("drbg instantiate");
     let mut random_bytes = [0u8; 32];
     drbg.generate(None, &mut random_bytes).expect("drbg generate");
-    println!("  Entropy:    {}", hex(&entropy));
-    println!("  Nonce:      {}", hex(&nonce));
     println!("  Output:     {}", hex(&random_bytes));
     println!();
 
     // ── 6. ECDSA P-256 sign + verify ────────────────────────────
     println!("─── 6. ECDSA P-256 (sign + verify) ───");
-    // Generate a keypair using the DRBG:
     let ecdsa_key = EcdsaP256PrivateKey::generate(&mut drbg)
         .expect("ecdsa keygen");
-    let pub_key = ecdsa_key.public_key();
+    let pub_key = ecdsa_key.public_key().expect("ecdsa public key");
     println!("  Public key: {}", hex(&pub_key[..33]));
     println!("              {}...", hex(&pub_key[33..49]));
 
@@ -167,24 +156,23 @@ fn main() {
 
     // ── 8. ECDH P-256 key agreement ─────────────────────────────
     println!("─── 8. ECDH P-256 (key agreement) ───");
-    // Alice and Bob each generate a keypair:
     let alice = EcdsaP256PrivateKey::generate(&mut drbg)
         .expect("alice keygen");
     let bob = EcdsaP256PrivateKey::generate(&mut drbg)
         .expect("bob keygen");
-    println!("  Alice pub:  {}...", hex(&alice.public_key()[..24]));
-    println!("  Bob pub:    {}...", hex(&bob.public_key()[..24]));
+    let alice_pub = alice.public_key().expect("alice public key");
+    let bob_pub = bob.public_key().expect("bob public key");
+    println!("  Alice pub:  {}...", hex(&alice_pub[..24]));
+    println!("  Bob pub:    {}...", hex(&bob_pub[..24]));
 
-    // Each side computes the shared secret from their private key
-    // and the other's public key:
     let secret_ab = oxicrypt_ecdh::compute_shared_secret_p256(
         alice.private_scalar().expect("private scalar"),
-        &bob.public_key(),
+        &bob_pub,
     ).expect("ecdh alice→bob");
 
     let secret_ba = oxicrypt_ecdh::compute_shared_secret_p256(
         bob.private_scalar().expect("private scalar"),
-        &alice.public_key(),
+        &alice_pub,
     ).expect("ecdh bob→alice");
 
     assert_eq!(secret_ab, secret_ba, "shared secrets must match");

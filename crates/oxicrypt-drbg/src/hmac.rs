@@ -18,6 +18,37 @@
 //! [`oxicrypt_module::require_self_test_started`] admits the call: in
 //! `Operational`, or in `SelfTest` on the thread running the power-up
 //! self-tests.
+//!
+//! # Testing interfaces
+//!
+//! The forms that take the entropy input from the caller
+//! (`instantiate`, `reseed` and `generate_pr`) exist only with the
+//! `testing-interfaces` feature, for the CAVP tests that supply the
+//! entropy input. Production code seeds through
+//! [`HmacDrbg::instantiate_from_module`] and reseeds through
+//! [`HmacDrbg::reseed_from_module`]. Without the feature none of the
+//! three compiles, and each block below is a `compile_fail` test; with the
+//! feature on, as a workspace build that includes the CAVP harness has it,
+//! each block is an ordinary doctest:
+//!
+#![cfg_attr(not(feature = "testing-interfaces"), doc = "```compile_fail")]
+#![cfg_attr(feature = "testing-interfaces", doc = "```")]
+//! let mut d = oxicrypt_drbg::HmacDrbgSha256::new();
+//! let _ = d.instantiate(&[0; 32], &[0; 16], &[]);
+//! ```
+//!
+#![cfg_attr(not(feature = "testing-interfaces"), doc = "```compile_fail")]
+#![cfg_attr(feature = "testing-interfaces", doc = "```")]
+//! let mut d = oxicrypt_drbg::HmacDrbgSha256::new();
+//! let _ = d.reseed(&[0; 32], &[]);
+//! ```
+//!
+#![cfg_attr(not(feature = "testing-interfaces"), doc = "```compile_fail")]
+#![cfg_attr(feature = "testing-interfaces", doc = "```")]
+//! let mut d = oxicrypt_drbg::HmacDrbgSha256::new();
+//! let mut out = [0u8; 32];
+//! let _ = d.generate_pr(&[0; 32], &[], &mut out);
+//! ```
 
 #![allow(
     clippy::indexing_slicing,
@@ -38,8 +69,8 @@ use oxicrypt_module::{
 };
 
 use crate::ctr::{
-    DrbgError, Gate, MODULE_DRAW_LEN, MODULE_NONCE_LEN, MODULE_SEED_LEN, draw_instantiate_seed,
-    draw_reseed_entropy, rbg_error,
+    DrbgError, Gate, MODULE_DRAW_LEN, MODULE_NONCE_LEN, MODULE_SEED_LEN, SeedDraw,
+    draw_instantiate_seed, draw_reseed_entropy, rbg_error,
 };
 
 /// Maximum HMAC output length across supported algorithms (SHA-512).
@@ -110,8 +141,8 @@ impl HmacAlg for HmacSha256Alg {
         for p in parts {
             h.update(p);
         }
-        let tag = h.finalize()?;
-        out[..32].copy_from_slice(&tag);
+        let tag = oxicrypt_zeroize::Zeroizing::new(h.finalize()?);
+        out[..32].copy_from_slice(&tag[..]);
         Ok(())
     }
 }
@@ -124,8 +155,8 @@ impl HmacAlg for HmacSha384Alg {
         for p in parts {
             h.update(p);
         }
-        let tag = h.finalize()?;
-        out[..48].copy_from_slice(&tag);
+        let tag = oxicrypt_zeroize::Zeroizing::new(h.finalize()?);
+        out[..48].copy_from_slice(&tag[..]);
         Ok(())
     }
 }
@@ -138,8 +169,8 @@ impl HmacAlg for HmacSha512Alg {
         for p in parts {
             h.update(p);
         }
-        let tag = h.finalize()?;
-        out[..64].copy_from_slice(&tag);
+        let tag = oxicrypt_zeroize::Zeroizing::new(h.finalize()?);
+        out[..64].copy_from_slice(&tag[..]);
         Ok(())
     }
 }
@@ -211,7 +242,9 @@ impl<H: HmacAlg> HmacDrbg<H> {
         if personalization.len() > Self::MAX_MODULE_PERSONALIZATION {
             return Err(Error::InvalidInput);
         }
-        let (entropy, nonce) = draw_instantiate_seed()?;
+        let mut entropy = SeedDraw::new();
+        let mut nonce = SeedDraw::new();
+        draw_instantiate_seed(&mut entropy, &mut nonce)?;
         let mut drbg = Self::new();
         drbg.instantiate_internal(&entropy[..], &nonce[..MODULE_NONCE_LEN], personalization)?;
         drbg.module_seeded = true;
@@ -249,8 +282,9 @@ impl<H: HmacAlg> HmacDrbg<H> {
 
     /// Draws a reseed entropy input and reseeds with it.
     fn reseed_with_draw(&mut self, additional_input: &[u8]) -> Result<(), DrbgError> {
-        let entropy = draw_reseed_entropy()?;
-        self.reseed(&entropy[..], additional_input)
+        let mut entropy = SeedDraw::new();
+        draw_reseed_entropy(&mut entropy)?;
+        self.reseed_internal(&entropy[..], additional_input)
     }
 
     /// The reseed a module-seeded instance runs at the reseed interval. The
@@ -274,14 +308,9 @@ impl<H: HmacAlg> HmacDrbg<H> {
         let outlen = H::OUTLEN;
         // Step 1: K = HMAC(K, V || 0x00 || provided_data)
         let sep0 = [0x00u8];
-        let mut new_key = [0u8; MAX_OUTLEN];
-        let v_slice = {
-            // Separate the &self field borrow into a stack copy so
-            // we can mutate self.key below.
-            let mut tmp = [0u8; MAX_OUTLEN];
-            tmp[..outlen].copy_from_slice(&self.v[..outlen]);
-            tmp
-        };
+        let mut new_key = oxicrypt_zeroize::Zeroizing::new([0u8; MAX_OUTLEN]);
+        let mut v_slice = oxicrypt_zeroize::Zeroizing::new([0u8; MAX_OUTLEN]);
+        v_slice[..outlen].copy_from_slice(&self.v[..outlen]);
         let pd_empty: &[u8] = &[];
         let pd = provided_data.unwrap_or(pd_empty);
         H::mac(
@@ -292,7 +321,7 @@ impl<H: HmacAlg> HmacDrbg<H> {
         self.key[..outlen].copy_from_slice(&new_key[..outlen]);
 
         // Step 2: V = HMAC(K, V)
-        let mut new_v = [0u8; MAX_OUTLEN];
+        let mut new_v = oxicrypt_zeroize::Zeroizing::new([0u8; MAX_OUTLEN]);
         H::mac(
             &self.key[..outlen],
             &[&v_slice[..outlen]],
@@ -307,11 +336,8 @@ impl<H: HmacAlg> HmacDrbg<H> {
 
         // Step 4: K = HMAC(K, V || 0x01 || provided_data)
         let sep1 = [0x01u8];
-        let v_slice2 = {
-            let mut tmp = [0u8; MAX_OUTLEN];
-            tmp[..outlen].copy_from_slice(&self.v[..outlen]);
-            tmp
-        };
+        let mut v_slice2 = oxicrypt_zeroize::Zeroizing::new([0u8; MAX_OUTLEN]);
+        v_slice2[..outlen].copy_from_slice(&self.v[..outlen]);
         H::mac(
             &self.key[..outlen],
             &[&v_slice2[..outlen], &sep1, pd],
@@ -342,6 +368,11 @@ impl<H: HmacAlg> HmacDrbg<H> {
     /// [`Error::InvalidInput`] even when one of them is also short. A
     /// refusal by any of these length checks leaves the DRBG
     /// uninstantiated.
+    ///
+    /// A testing interface for the CAVP tests, which supply the entropy
+    /// input: available only with the `testing-interfaces` feature.
+    /// Production code seeds through [`Self::instantiate_from_module`].
+    #[cfg(any(test, feature = "testing-interfaces"))]
     pub fn instantiate(
         &mut self,
         entropy: &[u8],
@@ -385,17 +416,15 @@ impl<H: HmacAlg> HmacDrbg<H> {
             self.v[i] = 0x01;
         }
         // seed_material = entropy || nonce || pers
-        let mut seed_material = [0u8; HMAC_DRBG_MAX_PROVIDED];
+        let mut seed_material = oxicrypt_zeroize::Zeroizing::new([0u8; HMAC_DRBG_MAX_PROVIDED]);
         seed_material[..entropy.len()].copy_from_slice(entropy);
         seed_material[entropy.len()..entropy.len() + nonce.len()].copy_from_slice(nonce);
         let off = entropy.len() + nonce.len();
         seed_material[off..off + personalization.len()].copy_from_slice(personalization);
         // (Key, V) = Update(seed_material, Key, V)
         let seed = &seed_material[..total];
-        // NB: provided_data is never Null for instantiate since seed
-        // is always constructed (possibly length 0). Per the spec,
-        // an empty-but-present provided_data still runs the full
-        // two-round update; we reflect that by passing Some(&[]).
+        // On instantiate `provided_data` is the seed material, never
+        // Null, so the update runs both rounds (§10.1.2.2 step 3).
         self.update(Some(seed))?;
         self.reseed_counter = 1;
         self.instantiated = true;
@@ -412,7 +441,23 @@ impl<H: HmacAlg> HmacDrbg<H> {
     /// `entropy` is shorter than 32 bytes, the 256-bit security strength
     /// (SP 800-90A Rev. 1 Table 2 `min_length`). Additional input never
     /// counts toward the minimum.
+    ///
+    /// A testing interface for the CAVP tests, which supply the entropy
+    /// input: available only with the `testing-interfaces` feature.
+    /// Production code seeds through [`Self::instantiate_from_module`] and
+    /// reseeds through [`Self::reseed_from_module`].
+    #[cfg(any(test, feature = "testing-interfaces"))]
     pub fn reseed(&mut self, entropy: &[u8], additional_input: &[u8]) -> Result<(), DrbgError> {
+        self.reseed_internal(entropy, additional_input)
+    }
+
+    /// The reseed core, used by the module-seeded reseed and the power-up
+    /// self-tests.
+    pub(crate) fn reseed_internal(
+        &mut self,
+        entropy: &[u8],
+        additional_input: &[u8],
+    ) -> Result<(), DrbgError> {
         if !self.instantiated {
             return Err(DrbgError::Uninstantiated);
         }
@@ -426,7 +471,7 @@ impl<H: HmacAlg> HmacDrbg<H> {
         if entropy.len() < MIN_ENTROPY_LEN {
             return Err(DrbgError::EntropyInputTooShort);
         }
-        let mut seed_material = [0u8; HMAC_DRBG_MAX_PROVIDED];
+        let mut seed_material = oxicrypt_zeroize::Zeroizing::new([0u8; HMAC_DRBG_MAX_PROVIDED]);
         seed_material[..entropy.len()].copy_from_slice(entropy);
         seed_material[entropy.len()..entropy.len() + additional_input.len()]
             .copy_from_slice(additional_input);
@@ -515,13 +560,13 @@ impl<H: HmacAlg> HmacDrbg<H> {
         // Step 3/4: produce bytes by V = HMAC(K, V).
         let outlen = H::OUTLEN;
         let mut produced = 0usize;
-        let mut v_tmp = [0u8; MAX_OUTLEN];
+        let mut v_tmp = oxicrypt_zeroize::Zeroizing::new([0u8; MAX_OUTLEN]);
         #[cfg(any(test, feature = "fault-injection"))]
         crate::seam::output_checkpoint();
         output()?;
         while produced < out.len() {
             v_tmp[..outlen].copy_from_slice(&self.v[..outlen]);
-            let mut new_v = [0u8; MAX_OUTLEN];
+            let mut new_v = oxicrypt_zeroize::Zeroizing::new([0u8; MAX_OUTLEN]);
             H::mac(
                 &self.key[..outlen],
                 &[&v_tmp[..outlen]],
@@ -544,25 +589,32 @@ impl<H: HmacAlg> HmacDrbg<H> {
     ///
     /// Equivalent to `reseed(entropy, additional_input)` followed by
     /// `generate(None, out)`.
+    ///
+    /// A testing interface for the CAVP tests, which supply the entropy
+    /// input: available only with the `testing-interfaces` feature.
+    /// Production code seeds through [`Self::instantiate_from_module`] and
+    /// reseeds through [`Self::reseed_from_module`].
+    #[cfg(any(test, feature = "testing-interfaces"))]
     pub fn generate_pr(
         &mut self,
         entropy: &[u8],
         additional_input: &[u8],
         out: &mut [u8],
     ) -> Result<(), DrbgError> {
-        self.reseed(entropy, additional_input)?;
+        self.reseed_internal(entropy, additional_input)?;
         self.generate(None, out)
     }
 
-    /// [`Self::generate_pr`] for the power-up self-tests, generating
-    /// through [`Self::generate_internal`]. Not a service.
+    /// The prediction-resistant generate for the power-up self-tests:
+    /// [`Self::reseed_internal`], then [`Self::generate_internal`]. Not a
+    /// service.
     pub(crate) fn generate_pr_internal(
         &mut self,
         entropy: &[u8],
         additional_input: &[u8],
         out: &mut [u8],
     ) -> Result<(), DrbgError> {
-        self.reseed(entropy, additional_input)?;
+        self.reseed_internal(entropy, additional_input)?;
         self.generate_internal(None, out)
     }
 
@@ -1025,11 +1077,17 @@ mod tests {
         let _serial = seeded_module();
         seam::set_get_entropy(recording_draw);
         sizes().clear();
+        let wiped = seam::wiped_draw_count();
         let mut drbg = HmacDrbgSha256::instantiate_from_module(b"perso").unwrap();
         assert_eq!(*sizes(), [32, 32]);
+        // Both requests were wiped when the instantiate returned, the second
+        // in full, including the 16 bytes beyond the nonce.
+        assert_eq!(seam::wiped_draw_count(), wiped + 2);
         sizes().clear();
         drbg.reseed_from_module(b"").unwrap();
         assert_eq!(*sizes(), [32]);
+        assert_eq!(seam::wiped_draw_count(), wiped + 3);
+        assert_eq!(seam::unwiped_draw_count(), 0);
 
         let (first, second) = (pattern(0), pattern(1));
         let mut reference = HmacDrbgSha256::new();

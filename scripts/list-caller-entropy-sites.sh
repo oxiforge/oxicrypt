@@ -17,6 +17,9 @@
 #   - target/ directories;
 #   - files under a crate's tests/ that its Cargo.toml lists as a [[test]]
 #     with required-features;
+#   - a call to the bare `instantiate` or `reseed` with fewer arguments than
+#     the caller-entropy form takes (3 and 2), which is a module-seeded form of
+#     the same name on another crate's handle type;
 #   - code under #[cfg(test)]: the item the attribute applies to, found by
 #     brace matching that skips comments, strings and character literals, a
 #     file whose first attribute is #![cfg(test)], and the file a
@@ -209,14 +212,44 @@ for path in files:
     excluded |= {os.path.normpath(p) for p in loaded}
     scanned[path] = (src, ranges)
 
+def argument_count(masked, open_paren):
+    """The number of arguments in the call whose `(` is at `open_paren`."""
+    depth, count, saw_text, i, n = 0, 0, False, open_paren, len(masked)
+    while i < n:
+        c = masked[i]
+        if c in "([{":
+            depth += 1
+        elif c in ")]}":
+            depth -= 1
+            if depth == 0:
+                return count + 1 if saw_text else 0
+        elif c == "," and depth == 1:
+            count += 1
+        elif depth >= 1 and not c.isspace():
+            saw_text = True
+        i += 1
+    return 0
+
+
+# The bare names `instantiate` and `reseed` are also the names of the
+# one-argument module-seeded forms on other crates' handle types, so they
+# count only at the caller-entropy arity: instantiate(entropy, nonce,
+# personalization) and reseed(entropy, additional_input). The suffixed
+# forms are matched by name.
+MIN_ARGS = {"instantiate": 3, "reseed": 2}
+
 for path, (src, ranges) in scanned.items():
     if os.path.normpath(path) in excluded:
         continue
     rel = os.path.relpath(path, ROOT)
-    for number, line in enumerate(src.splitlines(), 1):
-        if not PATTERN.search(line):
-            continue
+    masked = mask(src)
+    lines = src.splitlines()
+    for m in PATTERN.finditer(masked):
+        number = masked.count("\n", 0, m.start()) + 1
         if any(first <= number <= last for first, last in ranges):
             continue
-        print(f"{rel}:{number}: {line.strip()}")
+        needed = MIN_ARGS.get(m.group(1))
+        if needed is not None and argument_count(masked, m.end() - 1) < needed:
+            continue
+        print(f"{rel}:{number}: {lines[number - 1].strip()}")
 PY

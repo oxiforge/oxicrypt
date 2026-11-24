@@ -15,8 +15,10 @@ name = "oxicrypt-drbg"
 version = "0.26.1"
 dependencies = [
  "oxicrypt-aes",
+ "oxicrypt-entropy",
  "oxicrypt-hmac",
  "oxicrypt-module",
+ "oxicrypt-platform",
  "oxicrypt-sha",
  "oxicrypt-zeroize",
 ]
@@ -48,6 +50,16 @@ dependencies = [
  "oxicrypt-drbg",
  "oxicrypt-module",
  "oxicrypt-sha",
+ "oxicrypt-zeroize",
+]
+
+[[package]]
+name = "oxicrypt-entropy"
+version = "0.26.1"
+dependencies = [
+ "oxicrypt-module",
+ "oxicrypt-sha",
+ "oxicrypt-timer",
  "oxicrypt-zeroize",
 ]
 
@@ -95,6 +107,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "oxicrypt-platform"
+version = "0.26.1"
+dependencies = [
+ "oxicrypt-zeroize",
+]
+
+[[package]]
 name = "oxicrypt-rsa"
 version = "0.26.1"
 dependencies = [
@@ -115,6 +134,10 @@ dependencies = [
 
 [[package]]
 name = "oxicrypt-test-vectors"
+version = "0.26.1"
+
+[[package]]
+name = "oxicrypt-timer"
 version = "0.26.1"
 
 [[package]]

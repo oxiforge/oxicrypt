@@ -30,12 +30,18 @@ oxicrypt-platform = { workspace = true }
 [target.'cfg(any(target_arch = "x86_64", target_arch = "aarch64"))'.dependencies]
 oxicrypt-entropy = { workspace = true, features = ["raw-counter"] }
 
+# This crate's own tests compile `seam`, which queues simulated generator
+# results through the platform crate's seams.
+[dev-dependencies]
+oxicrypt-platform = { path = "../oxicrypt-platform", features = ["fault-injection"] }
+
 [features]
 default = []
 # Test seams in `oxicrypt_drbg::seam` and the `oxicrypt_drbg::testing`
 # fixed-stream generator, plus the platform crate's own seams.
 fault-injection = ["oxicrypt-platform/fault-injection"]
-# The caller-entropy instantiate and reseed forms used by the CAVP tests.
+# The caller-entropy instantiate, reseed and prediction-resistant generate
+# forms used by the CAVP tests.
 testing-interfaces = []
 
 [[test]]
@@ -76,6 +82,21 @@ required-features = ["fault-injection"]
 [[test]]
 name = "instantiate_before_operational"
 path = "tests/instantiate_before_operational.rs"
+required-features = ["fault-injection"]
+
+[[test]]
+name = "output_recheck_hash"
+path = "tests/output_recheck_hash.rs"
+required-features = ["fault-injection"]
+
+[[test]]
+name = "output_recheck_ctr"
+path = "tests/output_recheck_ctr.rs"
+required-features = ["fault-injection"]
+
+[[test]]
+name = "output_recheck_ctr_no_df"
+path = "tests/output_recheck_ctr_no_df.rs"
 required-features = ["fault-injection"]
 
 [package.metadata.lama]

@@ -21,7 +21,9 @@ path = "src/main.rs"
 oxicrypt-aes = { workspace = true }
 oxicrypt-cmac = { workspace = true }
 oxicrypt-dh = { workspace = true }
-oxicrypt-drbg = { workspace = true }
+# The CAVP DRBG vectors supply the entropy input, so the harness needs the
+# caller-entropy forms.
+oxicrypt-drbg = { workspace = true, features = ["testing-interfaces"] }
 oxicrypt-ecdh = { workspace = true }
 oxicrypt-ecdsa = { workspace = true }
 oxicrypt-eddsa = { workspace = true }

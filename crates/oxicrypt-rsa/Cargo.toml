@@ -21,6 +21,12 @@ oxicrypt-module = { workspace = true }
 oxicrypt-sha = { workspace = true }
 oxicrypt-zeroize = { workspace = true }
 
+# Dev-only: one pinned key-generation test seeds its generator from fixed
+# entropy, which needs the caller-entropy DRBG forms. A dev-dependency
+# compiles no shipped code.
+[dev-dependencies]
+oxicrypt-drbg = { path = "../oxicrypt-drbg", features = ["testing-interfaces"] }
+
 [package.metadata.lama]
 # Registry discovery (LAMA SPEC.md, "Package registry discovery"). Must be a
 # per-crate table: cargo strips [workspace] when it packages a member, so a

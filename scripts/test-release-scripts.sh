@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Tests check-release-tag.sh, attach-draft.sh, release-archive-check.sh and
-# android-device-check.sh against fixtures.
+# Tests check-release-tag.sh, attach-draft.sh, release-archive-check.sh,
+# android-device-check.sh and list-caller-entropy-sites.sh against fixtures.
 #
 #   test-release-scripts.sh
 #
@@ -454,10 +454,14 @@ mkdir -p "$T/ffi"
     echo '    return 0;'
     echo '}'
 } > "$T/ffi/stub.c"
-ffi_archive one 1
+# The stand-in carries the ABI number the README names, read from the source
+# that defines it, so a version bump moves this fixture with it.
+ABI="$(sed -nE 's/.*OXI_ABI_VERSION: i32 = ([0-9]+);.*/\1/p' "$HERE/../crates/oxicrypt-ffi/src/abi_version.rs")"
+[ -n "$ABI" ] || { echo "test-release-scripts: cannot read OXI_ABI_VERSION" >&2; exit 2; }
+ffi_archive one "$ABI"
 ffi_archive eight 8
 expect "archive library: the README's examples pass against the stand-in" 0 \
-    "ok: the README's C and Python examples run against liboxicrypt_ffi.so.1 from the extracted archive" \
+    "ok: the README's C and Python examples run against liboxicrypt_ffi.so.$ABI from the extracted archive" \
     archive_check library "$T/ffi/one/oxicrypt-ffi-v9.9.9-linux-x86_64.tar.gz"
 out_initfail="$(STUB_OXI_INIT_FAILS=1 archive_check library "$T/ffi/one/oxicrypt-ffi-v9.9.9-linux-x86_64.tar.gz" 2>&1)" \
     && status=0 || status=$?
@@ -467,20 +471,20 @@ check "archive library: a failing oxi_init fails the C example" \
 check "archive library: a failing oxi_init fails the Python example" \
     grep -qxF "FAILED: the README's Python example exited 1" <<<"$out_initfail"
 expect "archive library: a bundle without the README's library name refused" 1 \
-    "FAILED: the README's Python example loads liboxicrypt_ffi.so.1, which the bundle does not hold" \
+    "FAILED: the README's Python example loads liboxicrypt_ffi.so.$ABI, which the bundle does not hold" \
     archive_check library "$T/ffi/eight/oxicrypt-ffi-v9.9.9-linux-x86_64.tar.gz"
 mkdir -p "$T/ffi/linked/oxicrypt-ffi-v9.9.9-linux-x86_64"
-ln -s "$T/ffi/one/oxicrypt-ffi-v9.9.9-linux-x86_64/liboxicrypt_ffi.so.1" "$T/ffi/linked/oxicrypt-ffi-v9.9.9-linux-x86_64/liboxicrypt_ffi.so.1"
+ln -s "$T/ffi/one/oxicrypt-ffi-v9.9.9-linux-x86_64/liboxicrypt_ffi.so.$ABI" "$T/ffi/linked/oxicrypt-ffi-v9.9.9-linux-x86_64/liboxicrypt_ffi.so.$ABI"
 tar -czf "$T/ffi/linked/oxicrypt-ffi-v9.9.9-linux-x86_64.tar.gz" -C "$T/ffi/linked" oxicrypt-ffi-v9.9.9-linux-x86_64
 expect "archive library: a versioned library that is a link out of the bundle refused" 1 \
-    "FAILED: liboxicrypt_ffi.so.1 is a symbolic link out of the bundle" \
+    "FAILED: liboxicrypt_ffi.so.$ABI is a symbolic link out of the bundle" \
     archive_check library "$T/ffi/linked/oxicrypt-ffi-v9.9.9-linux-x86_64.tar.gz"
 
 # ffi_variant <name>: a copy of the `one` bundle under $T/ffi/<name>, which
 # the caller changes and packs with ffi_pack <name>.
 ffi_variant() { mkdir -p "$T/ffi/$1"; cp -a "$T/ffi/one/oxicrypt-ffi-v9.9.9-linux-x86_64" "$T/ffi/$1/"; }
 ffi_pack() { tar -czf "$T/ffi/$1/oxicrypt-ffi-v9.9.9-linux-x86_64.tar.gz" -C "$T/ffi/$1" oxicrypt-ffi-v9.9.9-linux-x86_64; }
-cp "$T/ffi/one/oxicrypt-ffi-v9.9.9-linux-x86_64/liboxicrypt_ffi.so.1" "$T/ffi/outside.so"
+cp "$T/ffi/one/oxicrypt-ffi-v9.9.9-linux-x86_64/liboxicrypt_ffi.so.$ABI" "$T/ffi/outside.so"
 ffi_variant alias
 ln -sfn "$T/ffi/outside.so" "$T/ffi/alias/oxicrypt-ffi-v9.9.9-linux-x86_64/liboxicrypt_ffi.so"
 ffi_pack alias
@@ -501,7 +505,7 @@ expect "archive library: a two-link chain ending out of the bundle refused" 1 \
     "FAILED: liboxicrypt_ffi.so is a symbolic link out of the bundle" \
     archive_check library "$T/ffi/chain/oxicrypt-ffi-v9.9.9-linux-x86_64.tar.gz"
 ffi_variant two
-cp "$T/ffi/two/oxicrypt-ffi-v9.9.9-linux-x86_64/liboxicrypt_ffi.so.1" "$T/ffi/two/oxicrypt-ffi-v9.9.9-linux-x86_64/liboxicrypt_ffi.so.2"
+cp "$T/ffi/two/oxicrypt-ffi-v9.9.9-linux-x86_64/liboxicrypt_ffi.so.$ABI" "$T/ffi/two/oxicrypt-ffi-v9.9.9-linux-x86_64/liboxicrypt_ffi.so.$((ABI + 1))"
 ffi_pack two
 expect "archive library: two shared libraries refused" 1 \
     "FAILED: oxicrypt-ffi-v9.9.9-linux-x86_64 holds more than one shared library" \
@@ -510,7 +514,7 @@ ffi_variant header
 ln -sfn oxicrypt.h "$T/ffi/header/oxicrypt-ffi-v9.9.9-linux-x86_64/liboxicrypt_ffi.so"
 ffi_pack header
 expect "archive library: the unversioned alias linking to another file in the bundle refused" 1 \
-    "FAILED: liboxicrypt_ffi.so links to oxicrypt.h, not to liboxicrypt_ffi.so.1" \
+    "FAILED: liboxicrypt_ffi.so links to oxicrypt.h, not to liboxicrypt_ffi.so.$ABI" \
     archive_check library "$T/ffi/header/oxicrypt-ffi-v9.9.9-linux-x86_64.tar.gz"
 
 # A PATH holding only what the scripts call hides every toolchain.
@@ -723,7 +727,7 @@ fake_bundle() {
     head -c 64 /dev/zero >> "$1/$2"
     tar -czf "$1.tar.gz" -C "$(dirname "$1")" "$(basename "$1")"
 }
-mkdir -p "$T/pestub" "$T/readobjstub" "$T/machostub" "$T/nonm" "$T/noreadelf"
+mkdir -p "$T/pestub" "$T/readobjstub" "$T/machostub" "$T/elfstub" "$T/nonm" "$T/noreadelf"
 fake_bundle "$T/fake/oxicrypt-ffi-v9.9.9-windows-x86_64" oxicrypt_ffi.dll 4d5a9000
 fake_bundle "$T/fake/oxicrypt-ffi-v9.9.9-macos-aarch64" liboxicrypt_ffi.1.dylib cffaedfe
 fake_bundle "$T/fake/oxicrypt-ffi-v9.9.9-linux-aarch64" liboxicrypt_ffi.so.9 68656c6c
@@ -742,17 +746,47 @@ printf '\tvma:  Hint/Ord Member-Name Bound-To\n'
 printf '\t2a0c\t  123  WSAStartup\n'
 printf '\t2a14\t    7  <none>\n'
 printf '\n'
+# The exported names are $STUB_PE_EXPORTS, separated by spaces.
+printf 'The Export Tables (interpreted .rdata section contents)\n\n'
+printf 'Export Address Table -- Ordinal Base 1\n'
+printf '\t          Ordinal  Address  Type\n'
+printf '\t[   0] +base[   1] 00001000 Export RVA\n'
+printf '\n'
+printf '[Ordinal/Name Pointer] Table -- Ordinal Base 1\n'
+printf '\t          Ordinal   Hint Name\n'
+i=0
+for name in ${STUB_PE_EXPORTS:-oxi_sha256}; do
+    printf '\t[%4d] +base[%4d]  %04x %s\n' "$i" "$((i + 1))" "$i" "$name"
+    i=$((i + 1))
+done
+printf '\n'
 STUB
+# The --coff-exports listing is the one llvm-readobj 21 prints for a DLL; the
+# exported names are $STUB_READOBJ_EXPORTS, separated by spaces.
 cat > "$T/readobjstub/llvm-readobj" <<'STUB'
 #!/usr/bin/env bash
-printf 'File: %s\nFormat: COFF-x86-64\nArch: x86_64\nAddressSize: 64bit\n' "${@: -1}"
-printf 'Import {\n  Name: KERNEL32.dll\n  ImportLookupTableRVA: 0x22000\n  ImportAddressTableRVA: 0x22500\n'
-printf '  Symbol: CreateFileW (6)\n  Symbol:  (5)\n}\n'
+printf '\nFile: %s\nFormat: COFF-x86-64\nArch: x86_64\nAddressSize: 64bit\n' "${@: -1}"
+case "$1" in
+    --coff-imports)
+        printf 'Import {\n  Name: KERNEL32.dll\n  ImportLookupTableRVA: 0x22000\n  ImportAddressTableRVA: 0x22500\n'
+        printf '  Symbol: CreateFileW (6)\n  Symbol:  (5)\n}\n' ;;
+    --coff-exports)
+        i=1
+        for name in ${STUB_READOBJ_EXPORTS:-oxi_sha256}; do
+            printf 'Export {\n  Ordinal: %d\n  Name: %s\n  RVA: 0x%x\n}\n' "$i" "$name" "$((0x1000 + i))"
+            i=$((i + 1))
+        done ;;
+    *) exit 3 ;;
+esac
 STUB
+# The exports `nm -g -U` lists are $STUB_NM_EXPORTS, one per line.
 cat > "$T/machostub/nm" <<'STUB'
 #!/usr/bin/env bash
-[ "$1 $2 $3" = "-u -arch arm64" ] || exit 3
-printf '_free\n_malloc\n'
+case "$1 $2 $3 $4" in
+    "-u -arch arm64 "*) printf '_free\n_malloc\n' ;;
+    "-g -U -arch arm64") printf '%b' "${STUB_NM_EXPORTS:-_oxi_sha256\n}" ;;
+    *) exit 3 ;;
+esac
 STUB
 cat > "$T/machostub/otool" <<'STUB'
 #!/usr/bin/env bash
@@ -763,15 +797,64 @@ case "$1" in
         printf '\t/usr/lib/libSystem.B.dylib (compatibility version 1.0.0, current version 1351.0.0)\n' ;;
 esac
 STUB
+# The exports `nm -D --defined-only` lists are $STUB_NM_EXPORTS, one per
+# line; every other call goes to the nm at $STUB_REAL_NM.
+cat > "$T/elfstub/nm" <<'STUB'
+#!/usr/bin/env bash
+case "$1 $2" in
+    "-D --defined-only") printf '%b' "${STUB_NM_EXPORTS:-0000000000001100 T oxi_sha256\n}" ;;
+    *) exec "$STUB_REAL_NM" "$@" ;;
+esac
+STUB
 printf '#!/usr/bin/env bash\n' > "$T/nonm/nm"
 printf '#!/usr/bin/env bash\n' > "$T/noreadelf/readelf"
-chmod +x "$T/pestub/"* "$T/readobjstub/"* "$T/machostub/"* "$T/nonm/"* "$T/noreadelf/"*
+chmod +x "$T/pestub/"* "$T/readobjstub/"* "$T/machostub/"* "$T/elfstub/"* "$T/nonm/"* "$T/noreadelf/"*
 check "archive imports: objdump's listing normalised, ordinals included" [ "$(imports_listed "$T/fake/oxicrypt-ffi-v9.9.9-windows-x86_64.tar.gz" "$T/pestub:$PATH")" = \
     "$(printf '%s\n' kernel32.dll!CreateFileW kernel32.dll!ordinal-5 'needs kernel32.dll' 'needs ws2_32.dll' ws2_32.dll!WSAStartup ws2_32.dll!ordinal-7)" ]
 check "archive imports: llvm-readobj's listing normalised, ordinals included" [ "$(imports_listed "$T/fake/oxicrypt-ffi-v9.9.9-windows-x86_64.tar.gz" "$T/readobjstub:$T/minpath")" = \
     "$(printf '%s\n' kernel32.dll!CreateFileW kernel32.dll!ordinal-5 'needs kernel32.dll')" ]
 check "archive imports: nm -u and otool listings normalised" [ "$(imports_listed "$T/fake/oxicrypt-ffi-v9.9.9-macos-aarch64.tar.gz" "$T/machostub:$PATH")" = \
     "$(printf '%s\n' _free _malloc 'needs /usr/lib/libSystem.B.dylib')" ]
+mkdir -p "$T/allow/macho"
+printf '_free\n_malloc\nneeds /usr/lib/libSystem.B.dylib\n' > "$T/allow/macho/macho-macos-aarch64.txt"
+expect "archive imports: a library exporting no test symbol passes" 0 \
+    "ok: liboxicrypt_ffi.1.dylib imports only what $T/allow/macho/macho-macos-aarch64.txt allows (3 imports)" \
+    env PATH="$T/machostub:$PATH" "$HERE/release-archive-check.sh" imports \
+    "$T/fake/oxicrypt-ffi-v9.9.9-macos-aarch64.tar.gz" "$T/allow/macho"
+expect "archive imports: a library exporting an oxi_test_ symbol refused" 1 \
+    "FAILED: liboxicrypt_ffi.1.dylib exports the test symbol oxi_test_probe" \
+    env STUB_NM_EXPORTS='_oxi_sha256\n_oxi_test_probe\n' PATH="$T/machostub:$PATH" \
+    "$HERE/release-archive-check.sh" imports "$T/fake/oxicrypt-ffi-v9.9.9-macos-aarch64.tar.gz" "$T/allow/macho"
+expect "archive imports: an ELF library exporting no test symbol passes" 0 \
+    "ok: liboxicrypt_ffi.so.9 imports only what $T/allow/exact/elf-linux-x86_64.txt allows" \
+    env STUB_REAL_NM="$(command -v nm)" PATH="$T/elfstub:$PATH" \
+    "$HERE/release-archive-check.sh" imports "$IMP.tar.gz" "$T/allow/exact"
+expect "archive imports: an ELF library exporting an oxi_test_ symbol refused" 1 \
+    "FAILED: liboxicrypt_ffi.so.9 exports the test symbol oxi_test_probe" \
+    env STUB_NM_EXPORTS='0000000000001100 T oxi_sha256\n0000000000001200 T oxi_test_probe\n' \
+    STUB_REAL_NM="$(command -v nm)" PATH="$T/elfstub:$PATH" \
+    "$HERE/release-archive-check.sh" imports "$IMP.tar.gz" "$T/allow/exact"
+mkdir -p "$T/allow/pe"
+printf '%s\n' kernel32.dll!CreateFileW kernel32.dll!ordinal-5 'needs kernel32.dll' 'needs ws2_32.dll' \
+    ws2_32.dll!WSAStartup ws2_32.dll!ordinal-7 > "$T/allow/pe/pe-windows-x86_64.txt"
+expect "archive imports: a PE library exporting no test symbol passes" 0 \
+    "ok: oxicrypt_ffi.dll imports only what $T/allow/pe/pe-windows-x86_64.txt allows (6 imports)" \
+    env PATH="$T/pestub:$PATH" "$HERE/release-archive-check.sh" imports \
+    "$T/fake/oxicrypt-ffi-v9.9.9-windows-x86_64.tar.gz" "$T/allow/pe"
+expect "archive imports: a PE library exporting an oxi_test_ symbol refused" 1 \
+    "FAILED: oxicrypt_ffi.dll exports the test symbol oxi_test_probe" \
+    env STUB_PE_EXPORTS='oxi_sha256 oxi_test_probe' PATH="$T/pestub:$PATH" \
+    "$HERE/release-archive-check.sh" imports "$T/fake/oxicrypt-ffi-v9.9.9-windows-x86_64.tar.gz" "$T/allow/pe"
+mkdir -p "$T/allow/readobj"
+printf '%s\n' kernel32.dll!CreateFileW kernel32.dll!ordinal-5 'needs kernel32.dll' > "$T/allow/readobj/pe-windows-x86_64.txt"
+expect "archive imports: a PE library exporting no test symbol passes under llvm-readobj" 0 \
+    "ok: oxicrypt_ffi.dll imports only what $T/allow/readobj/pe-windows-x86_64.txt allows (3 imports)" \
+    env STUB_READOBJ_EXPORTS='oxi_sha256 oxi_version' PATH="$T/readobjstub:$T/minpath" \
+    "$HERE/release-archive-check.sh" imports "$T/fake/oxicrypt-ffi-v9.9.9-windows-x86_64.tar.gz" "$T/allow/readobj"
+expect "archive imports: a PE library exporting an oxi_test_ symbol refused under llvm-readobj" 1 \
+    "FAILED: oxicrypt_ffi.dll exports the test symbol oxi_test_probe" \
+    env STUB_READOBJ_EXPORTS='oxi_sha256 oxi_test_probe' PATH="$T/readobjstub:$T/minpath" \
+    "$HERE/release-archive-check.sh" imports "$T/fake/oxicrypt-ffi-v9.9.9-windows-x86_64.tar.gz" "$T/allow/readobj"
 expect "archive imports: an unknown format refused" 1 "FAILED: liboxicrypt_ffi.so.9 starts with 68656c6c, which is not ELF, PE or Mach-O" \
     archive_check imports "$T/fake/oxicrypt-ffi-v9.9.9-linux-aarch64.tar.gz" "$T/allow/exact"
 expect "archive imports: a platform the name does not give refused" 1 \
@@ -996,6 +1079,8 @@ printf '[package]\nname = "fixture"\n' > "$SITES/fixture/Cargo.toml"
 cat > "$SITES/fixture/src/lib.rs" <<'EOF'
 pub fn seed(drbg: &mut Drbg) {
     drbg.instantiate(&[0; 32], &[0; 16], b"outside");
+    drbg.instantiate(b"module seeded, one argument");
+    drbg.reseed(b"module seeded, one argument");
 }
 
 #[cfg(test)]

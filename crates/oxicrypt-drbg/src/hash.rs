@@ -2,9 +2,10 @@
 //!
 //! Implements Hash_DRBG over the approved SHA-2 digests covered by
 //! this module: SHA-256 (`seedlen = 440`), SHA-384 (`seedlen = 888`),
-//! and SHA-512 (`seedlen = 888`). Prediction resistance is supported
-//! via the `reseed` + `generate` pattern; the implementation is pure
-//! state — it does not talk to any entropy source.
+//! and SHA-512 (`seedlen = 888`). The module seeds every instance:
+//! [`HashDrbg::instantiate_from_module`] draws the entropy input and nonce
+//! from the module's seed path, and [`HashDrbg::reseed_from_module`] draws
+//! fresh entropy input from it.
 //!
 //! The derivation function `Hash_df` from §10.3.1 is implemented
 //! internally; no external KDF is used.
@@ -23,6 +24,37 @@
 //!   exported by `oxicrypt-sha`, which skip the operational gate so that
 //!   DRBG self-tests can run during `SelfTest`, and refuse in every state
 //!   other than `SelfTest` and `Operational`.
+//!
+//! # Testing interfaces
+//!
+//! The forms that take the entropy input from the caller
+//! (`instantiate`, `reseed` and `generate_pr`) exist only with the
+//! `testing-interfaces` feature, for the CAVP tests that supply the
+//! entropy input. Production code seeds through
+//! [`HashDrbg::instantiate_from_module`] and reseeds through
+//! [`HashDrbg::reseed_from_module`]. Without the feature none of the
+//! three compiles, and each block below is a `compile_fail` test; with the
+//! feature on, as a workspace build that includes the CAVP harness has it,
+//! each block is an ordinary doctest:
+//!
+#![cfg_attr(not(feature = "testing-interfaces"), doc = "```compile_fail")]
+#![cfg_attr(feature = "testing-interfaces", doc = "```")]
+//! let mut d = oxicrypt_drbg::HashDrbgSha256::new();
+//! let _ = d.instantiate(&[0; 32], &[0; 16], &[]);
+//! ```
+//!
+#![cfg_attr(not(feature = "testing-interfaces"), doc = "```compile_fail")]
+#![cfg_attr(feature = "testing-interfaces", doc = "```")]
+//! let mut d = oxicrypt_drbg::HashDrbgSha256::new();
+//! let _ = d.reseed(&[0; 32], &[]);
+//! ```
+//!
+#![cfg_attr(not(feature = "testing-interfaces"), doc = "```compile_fail")]
+#![cfg_attr(feature = "testing-interfaces", doc = "```")]
+//! let mut d = oxicrypt_drbg::HashDrbgSha256::new();
+//! let mut out = [0u8; 32];
+//! let _ = d.generate_pr(&[0; 32], &[], &mut out);
+//! ```
 
 #![allow(
     clippy::indexing_slicing,
@@ -46,8 +78,8 @@ use oxicrypt_sha::sha384::Sha384;
 use oxicrypt_sha::sha512::Sha512;
 
 use crate::ctr::{
-    DrbgError, Gate, MODULE_DRAW_LEN, MODULE_NONCE_LEN, MODULE_SEED_LEN, draw_instantiate_seed,
-    draw_reseed_entropy, rbg_error,
+    DrbgError, Gate, MODULE_DRAW_LEN, MODULE_NONCE_LEN, MODULE_SEED_LEN, SeedDraw,
+    draw_instantiate_seed, draw_reseed_entropy, rbg_error,
 };
 
 /// Maximum digest length across all supported algorithms (SHA-512).
@@ -230,7 +262,9 @@ impl<H: HashAlg> HashDrbg<H> {
         if personalization.len() > Self::MAX_MODULE_PERSONALIZATION {
             return Err(Error::InvalidInput);
         }
-        let (entropy, nonce) = draw_instantiate_seed()?;
+        let mut entropy = SeedDraw::new();
+        let mut nonce = SeedDraw::new();
+        draw_instantiate_seed(&mut entropy, &mut nonce)?;
         let mut drbg = Self::new();
         drbg.instantiate_internal(&entropy[..], &nonce[..MODULE_NONCE_LEN], personalization)?;
         drbg.module_seeded = true;
@@ -268,8 +302,9 @@ impl<H: HashAlg> HashDrbg<H> {
 
     /// Draws a reseed entropy input and reseeds with it.
     fn reseed_with_draw(&mut self, additional_input: &[u8]) -> Result<(), DrbgError> {
-        let entropy = draw_reseed_entropy()?;
-        self.reseed(&entropy[..], additional_input)
+        let mut entropy = SeedDraw::new();
+        draw_reseed_entropy(&mut entropy)?;
+        self.reseed_internal(&entropy[..], additional_input)
     }
 
     /// The reseed a module-seeded instance runs at the reseed interval. The
@@ -298,6 +333,11 @@ impl<H: HashAlg> HashDrbg<H> {
     /// [`Error::InvalidInput`] even when one of them is also short. A
     /// refusal by any of these length checks leaves the DRBG
     /// uninstantiated.
+    ///
+    /// A testing interface for the CAVP tests, which supply the entropy
+    /// input: available only with the `testing-interfaces` feature.
+    /// Production code seeds through [`Self::instantiate_from_module`].
+    #[cfg(any(test, feature = "testing-interfaces"))]
     pub fn instantiate(
         &mut self,
         entropy: &[u8],
@@ -361,7 +401,23 @@ impl<H: HashAlg> HashDrbg<H> {
     /// `entropy` is shorter than 32 bytes, the 256-bit security strength
     /// (SP 800-90A Rev. 1 Table 2 `min_length`). Additional input never
     /// counts toward the minimum.
+    ///
+    /// A testing interface for the CAVP tests, which supply the entropy
+    /// input: available only with the `testing-interfaces` feature.
+    /// Production code seeds through [`Self::instantiate_from_module`] and
+    /// reseeds through [`Self::reseed_from_module`].
+    #[cfg(any(test, feature = "testing-interfaces"))]
     pub fn reseed(&mut self, entropy: &[u8], additional_input: &[u8]) -> Result<(), DrbgError> {
+        self.reseed_internal(entropy, additional_input)
+    }
+
+    /// The reseed core, used by the module-seeded reseed and the power-up
+    /// self-tests.
+    pub(crate) fn reseed_internal(
+        &mut self,
+        entropy: &[u8],
+        additional_input: &[u8],
+    ) -> Result<(), DrbgError> {
         if !self.instantiated {
             return Err(DrbgError::Uninstantiated);
         }
@@ -496,8 +552,6 @@ impl<H: HashAlg> HashDrbg<H> {
         // Step 5: V = (V + H + C + reseed_counter) mod 2^(8*SEEDLEN)
         add_into_be(&mut self.v[..H::SEEDLEN], &h[..H::OUTLEN]);
         let c_copy_len = H::SEEDLEN;
-        // Borrow gymnastics: copy C into a temp to avoid aliased borrow
-        // of &self in add_into_be.
         let mut c_tmp = Wiped([0u8; MAX_SEEDLEN]);
         c_tmp[..c_copy_len].copy_from_slice(&self.c[..c_copy_len]);
         add_into_be(&mut self.v[..H::SEEDLEN], &c_tmp[..c_copy_len]);
@@ -516,25 +570,32 @@ impl<H: HashAlg> HashDrbg<H> {
     /// sequence where the additional input is consumed by the reseed
     /// and the subsequent generate is invoked with a Null additional
     /// input.
+    ///
+    /// A testing interface for the CAVP tests, which supply the entropy
+    /// input: available only with the `testing-interfaces` feature.
+    /// Production code seeds through [`Self::instantiate_from_module`] and
+    /// reseeds through [`Self::reseed_from_module`].
+    #[cfg(any(test, feature = "testing-interfaces"))]
     pub fn generate_pr(
         &mut self,
         entropy: &[u8],
         additional_input: &[u8],
         out: &mut [u8],
     ) -> Result<(), DrbgError> {
-        self.reseed(entropy, additional_input)?;
+        self.reseed_internal(entropy, additional_input)?;
         self.generate(None, out)
     }
 
-    /// [`Self::generate_pr`] for the power-up self-tests, generating
-    /// through [`Self::generate_internal`]. Not a service.
+    /// The prediction-resistant generate for the power-up self-tests:
+    /// [`Self::reseed_internal`], then [`Self::generate_internal`]. Not a
+    /// service.
     pub(crate) fn generate_pr_internal(
         &mut self,
         entropy: &[u8],
         additional_input: &[u8],
         out: &mut [u8],
     ) -> Result<(), DrbgError> {
-        self.reseed(entropy, additional_input)?;
+        self.reseed_internal(entropy, additional_input)?;
         self.generate_internal(None, out)
     }
 
@@ -1137,4 +1198,61 @@ mod tests {
         input_limits_hash_sha512,
         624
     );
+
+    #[test]
+    fn auto_reseed_at_interval() {
+        let _serial = seeded_module();
+        let mut drbg = HashDrbgSha256::instantiate_from_module(b"").unwrap();
+        drbg.set_reseed_counter(HASH_DRBG_RESEED_INTERVAL);
+        let before = seam::draw_count();
+        let mut out = [0u8; 32];
+        drbg.fill(&mut out).unwrap();
+        assert_eq!(drbg.reseed_counter, 2);
+        assert_eq!(seam::draw_count(), before + 1);
+
+        // Control: a caller-seeded instance at the same count does not
+        // reseed.
+        let mut caller = HashDrbgSha256::new();
+        caller
+            .instantiate_internal(&[0x11; 32], &[0x22; 16], b"")
+            .unwrap();
+        caller.set_reseed_counter(HASH_DRBG_RESEED_INTERVAL);
+        let before = seam::draw_count();
+        caller.fill(&mut out).unwrap();
+        assert_eq!(caller.reseed_counter, HASH_DRBG_RESEED_INTERVAL + 1);
+        assert_eq!(seam::draw_count(), before);
+        seam::clear_all();
+    }
+
+    /// The generate body the prediction-resistant generate runs admits a
+    /// caller-seeded instance at the reseed interval and refuses it one
+    /// past, with no output left in the caller's buffer. The
+    /// prediction-resistant generate reseeds first, so the same counter
+    /// does not refuse it.
+    #[test]
+    fn generate_pr_internal_reseed_bound() {
+        let _serial = seeded_module();
+        let mut drbg = HashDrbgSha256::new();
+        drbg.instantiate_internal(&[0x11; 32], &[0x22; 16], b"")
+            .unwrap();
+        let mut out = [0xa5u8; 32];
+
+        drbg.set_reseed_counter(HASH_DRBG_RESEED_INTERVAL);
+        assert_eq!(drbg.generate_internal(None, &mut out), Ok(()));
+        assert_eq!(drbg.reseed_counter, HASH_DRBG_RESEED_INTERVAL + 1);
+        out = [0xa5u8; 32];
+        assert_eq!(
+            drbg.generate_internal(None, &mut out),
+            Err(DrbgError::ReseedRequired)
+        );
+        assert_eq!(out, [0u8; 32]);
+
+        assert_eq!(
+            drbg.generate_pr_internal(&[0x33; 32], b"", &mut out),
+            Ok(())
+        );
+        assert_eq!(drbg.reseed_counter, 2);
+        assert_ne!(out, [0u8; 32]);
+        seam::clear_all();
+    }
 }
