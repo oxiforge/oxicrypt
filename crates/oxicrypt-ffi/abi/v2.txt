@@ -28,31 +28,22 @@ oxi_aes256_kwp_wrap(const OxiAes256Key *, const uint8_t *, uintptr_t, uint8_t *)
 oxi_aes256_new(OxiAes256Key **, const uint8_t *) -> int
 oxi_ctr_drbg_aes128_free(OxiCtrDrbgAes128 *) -> void
 oxi_ctr_drbg_aes128_generate_df(OxiCtrDrbgAes128 *, const uint8_t *, uintptr_t, uint8_t *, uintptr_t) -> int
-oxi_ctr_drbg_aes128_generate_no_df(OxiCtrDrbgAes128 *, const uint8_t *, uintptr_t, uint8_t *, uintptr_t) -> int
-oxi_ctr_drbg_aes128_instantiate_df(OxiCtrDrbgAes128 *, const uint8_t *, uintptr_t, const uint8_t *, uintptr_t, const uint8_t *, uintptr_t) -> int
-oxi_ctr_drbg_aes128_instantiate_no_df(OxiCtrDrbgAes128 *, const uint8_t *, uintptr_t) -> int
+oxi_ctr_drbg_aes128_instantiate_from_module(OxiCtrDrbgAes128 *, const uint8_t *, uintptr_t) -> int
 oxi_ctr_drbg_aes128_new(OxiCtrDrbgAes128 **) -> int
 oxi_ctr_drbg_aes128_new_rbg(OxiDrbg **) -> int
-oxi_ctr_drbg_aes128_reseed_df(OxiCtrDrbgAes128 *, const uint8_t *, uintptr_t, const uint8_t *, uintptr_t) -> int
-oxi_ctr_drbg_aes128_reseed_no_df(OxiCtrDrbgAes128 *, const uint8_t *, uintptr_t) -> int
+oxi_ctr_drbg_aes128_reseed_from_module(OxiCtrDrbgAes128 *, const uint8_t *, uintptr_t) -> int
 oxi_ctr_drbg_aes192_free(OxiCtrDrbgAes192 *) -> void
 oxi_ctr_drbg_aes192_generate_df(OxiCtrDrbgAes192 *, const uint8_t *, uintptr_t, uint8_t *, uintptr_t) -> int
-oxi_ctr_drbg_aes192_generate_no_df(OxiCtrDrbgAes192 *, const uint8_t *, uintptr_t, uint8_t *, uintptr_t) -> int
-oxi_ctr_drbg_aes192_instantiate_df(OxiCtrDrbgAes192 *, const uint8_t *, uintptr_t, const uint8_t *, uintptr_t, const uint8_t *, uintptr_t) -> int
-oxi_ctr_drbg_aes192_instantiate_no_df(OxiCtrDrbgAes192 *, const uint8_t *, uintptr_t) -> int
+oxi_ctr_drbg_aes192_instantiate_from_module(OxiCtrDrbgAes192 *, const uint8_t *, uintptr_t) -> int
 oxi_ctr_drbg_aes192_new(OxiCtrDrbgAes192 **) -> int
 oxi_ctr_drbg_aes192_new_rbg(OxiDrbg **) -> int
-oxi_ctr_drbg_aes192_reseed_df(OxiCtrDrbgAes192 *, const uint8_t *, uintptr_t, const uint8_t *, uintptr_t) -> int
-oxi_ctr_drbg_aes192_reseed_no_df(OxiCtrDrbgAes192 *, const uint8_t *, uintptr_t) -> int
+oxi_ctr_drbg_aes192_reseed_from_module(OxiCtrDrbgAes192 *, const uint8_t *, uintptr_t) -> int
 oxi_ctr_drbg_aes256_free(OxiCtrDrbgAes256 *) -> void
 oxi_ctr_drbg_aes256_generate_df(OxiCtrDrbgAes256 *, const uint8_t *, uintptr_t, uint8_t *, uintptr_t) -> int
-oxi_ctr_drbg_aes256_generate_no_df(OxiCtrDrbgAes256 *, const uint8_t *, uintptr_t, uint8_t *, uintptr_t) -> int
-oxi_ctr_drbg_aes256_instantiate_df(OxiCtrDrbgAes256 *, const uint8_t *, uintptr_t, const uint8_t *, uintptr_t, const uint8_t *, uintptr_t) -> int
-oxi_ctr_drbg_aes256_instantiate_no_df(OxiCtrDrbgAes256 *, const uint8_t *, uintptr_t) -> int
+oxi_ctr_drbg_aes256_instantiate_from_module(OxiCtrDrbgAes256 *, const uint8_t *, uintptr_t) -> int
 oxi_ctr_drbg_aes256_new(OxiCtrDrbgAes256 **) -> int
 oxi_ctr_drbg_aes256_new_rbg(OxiDrbg **) -> int
-oxi_ctr_drbg_aes256_reseed_df(OxiCtrDrbgAes256 *, const uint8_t *, uintptr_t, const uint8_t *, uintptr_t) -> int
-oxi_ctr_drbg_aes256_reseed_no_df(OxiCtrDrbgAes256 *, const uint8_t *, uintptr_t) -> int
+oxi_ctr_drbg_aes256_reseed_from_module(OxiCtrDrbgAes256 *, const uint8_t *, uintptr_t) -> int
 oxi_dh3072_compute_shared_secret(const uint8_t *, const uint8_t *, uint8_t *) -> int
 oxi_dh3072_generate_keypair(OxiHmacDrbgSha256 *, uint8_t *, uint8_t *) -> int
 oxi_drbg_free(OxiDrbg *) -> void
@@ -84,22 +75,22 @@ oxi_ed25519_verify(const uint8_t *, const uint8_t *, uintptr_t, const uint8_t *)
 oxi_entropy_on_demand_test(const char **) -> int
 oxi_hash_drbg_sha256_free(OxiHashDrbgSha256 *) -> void
 oxi_hash_drbg_sha256_generate(OxiHashDrbgSha256 *, const uint8_t *, uintptr_t, uint8_t *, uintptr_t) -> int
-oxi_hash_drbg_sha256_instantiate(OxiHashDrbgSha256 *, const uint8_t *, uintptr_t, const uint8_t *, uintptr_t, const uint8_t *, uintptr_t) -> int
+oxi_hash_drbg_sha256_instantiate_from_module(OxiHashDrbgSha256 *, const uint8_t *, uintptr_t) -> int
 oxi_hash_drbg_sha256_new(OxiHashDrbgSha256 **) -> int
 oxi_hash_drbg_sha256_new_rbg(OxiDrbg **) -> int
-oxi_hash_drbg_sha256_reseed(OxiHashDrbgSha256 *, const uint8_t *, uintptr_t, const uint8_t *, uintptr_t) -> int
+oxi_hash_drbg_sha256_reseed_from_module(OxiHashDrbgSha256 *, const uint8_t *, uintptr_t) -> int
 oxi_hash_drbg_sha384_free(OxiHashDrbgSha384 *) -> void
 oxi_hash_drbg_sha384_generate(OxiHashDrbgSha384 *, const uint8_t *, uintptr_t, uint8_t *, uintptr_t) -> int
-oxi_hash_drbg_sha384_instantiate(OxiHashDrbgSha384 *, const uint8_t *, uintptr_t, const uint8_t *, uintptr_t, const uint8_t *, uintptr_t) -> int
+oxi_hash_drbg_sha384_instantiate_from_module(OxiHashDrbgSha384 *, const uint8_t *, uintptr_t) -> int
 oxi_hash_drbg_sha384_new(OxiHashDrbgSha384 **) -> int
 oxi_hash_drbg_sha384_new_rbg(OxiDrbg **) -> int
-oxi_hash_drbg_sha384_reseed(OxiHashDrbgSha384 *, const uint8_t *, uintptr_t, const uint8_t *, uintptr_t) -> int
+oxi_hash_drbg_sha384_reseed_from_module(OxiHashDrbgSha384 *, const uint8_t *, uintptr_t) -> int
 oxi_hash_drbg_sha512_free(OxiHashDrbgSha512 *) -> void
 oxi_hash_drbg_sha512_generate(OxiHashDrbgSha512 *, const uint8_t *, uintptr_t, uint8_t *, uintptr_t) -> int
-oxi_hash_drbg_sha512_instantiate(OxiHashDrbgSha512 *, const uint8_t *, uintptr_t, const uint8_t *, uintptr_t, const uint8_t *, uintptr_t) -> int
+oxi_hash_drbg_sha512_instantiate_from_module(OxiHashDrbgSha512 *, const uint8_t *, uintptr_t) -> int
 oxi_hash_drbg_sha512_new(OxiHashDrbgSha512 **) -> int
 oxi_hash_drbg_sha512_new_rbg(OxiDrbg **) -> int
-oxi_hash_drbg_sha512_reseed(OxiHashDrbgSha512 *, const uint8_t *, uintptr_t, const uint8_t *, uintptr_t) -> int
+oxi_hash_drbg_sha512_reseed_from_module(OxiHashDrbgSha512 *, const uint8_t *, uintptr_t) -> int
 oxi_hkdf_sha256_expand(const uint8_t *, const uint8_t *, uintptr_t, uint8_t *, uintptr_t) -> int
 oxi_hkdf_sha256_extract(const uint8_t *, uintptr_t, const uint8_t *, uintptr_t, uint8_t *) -> int
 oxi_hkdf_sha384_expand(const uint8_t *, const uint8_t *, uintptr_t, uint8_t *, uintptr_t) -> int
@@ -108,22 +99,22 @@ oxi_hkdf_sha512_expand(const uint8_t *, const uint8_t *, uintptr_t, uint8_t *, u
 oxi_hkdf_sha512_extract(const uint8_t *, uintptr_t, const uint8_t *, uintptr_t, uint8_t *) -> int
 oxi_hmac_drbg_sha256_free(OxiHmacDrbgSha256 *) -> void
 oxi_hmac_drbg_sha256_generate(OxiHmacDrbgSha256 *, const uint8_t *, uintptr_t, uint8_t *, uintptr_t) -> int
-oxi_hmac_drbg_sha256_instantiate(OxiHmacDrbgSha256 *, const uint8_t *, uintptr_t, const uint8_t *, uintptr_t, const uint8_t *, uintptr_t) -> int
+oxi_hmac_drbg_sha256_instantiate_from_module(OxiHmacDrbgSha256 *, const uint8_t *, uintptr_t) -> int
 oxi_hmac_drbg_sha256_new(OxiHmacDrbgSha256 **) -> int
 oxi_hmac_drbg_sha256_new_rbg(OxiDrbg **) -> int
-oxi_hmac_drbg_sha256_reseed(OxiHmacDrbgSha256 *, const uint8_t *, uintptr_t, const uint8_t *, uintptr_t) -> int
+oxi_hmac_drbg_sha256_reseed_from_module(OxiHmacDrbgSha256 *, const uint8_t *, uintptr_t) -> int
 oxi_hmac_drbg_sha384_free(OxiHmacDrbgSha384 *) -> void
 oxi_hmac_drbg_sha384_generate(OxiHmacDrbgSha384 *, const uint8_t *, uintptr_t, uint8_t *, uintptr_t) -> int
-oxi_hmac_drbg_sha384_instantiate(OxiHmacDrbgSha384 *, const uint8_t *, uintptr_t, const uint8_t *, uintptr_t, const uint8_t *, uintptr_t) -> int
+oxi_hmac_drbg_sha384_instantiate_from_module(OxiHmacDrbgSha384 *, const uint8_t *, uintptr_t) -> int
 oxi_hmac_drbg_sha384_new(OxiHmacDrbgSha384 **) -> int
 oxi_hmac_drbg_sha384_new_rbg(OxiDrbg **) -> int
-oxi_hmac_drbg_sha384_reseed(OxiHmacDrbgSha384 *, const uint8_t *, uintptr_t, const uint8_t *, uintptr_t) -> int
+oxi_hmac_drbg_sha384_reseed_from_module(OxiHmacDrbgSha384 *, const uint8_t *, uintptr_t) -> int
 oxi_hmac_drbg_sha512_free(OxiHmacDrbgSha512 *) -> void
 oxi_hmac_drbg_sha512_generate(OxiHmacDrbgSha512 *, const uint8_t *, uintptr_t, uint8_t *, uintptr_t) -> int
-oxi_hmac_drbg_sha512_instantiate(OxiHmacDrbgSha512 *, const uint8_t *, uintptr_t, const uint8_t *, uintptr_t, const uint8_t *, uintptr_t) -> int
+oxi_hmac_drbg_sha512_instantiate_from_module(OxiHmacDrbgSha512 *, const uint8_t *, uintptr_t) -> int
 oxi_hmac_drbg_sha512_new(OxiHmacDrbgSha512 **) -> int
 oxi_hmac_drbg_sha512_new_rbg(OxiDrbg **) -> int
-oxi_hmac_drbg_sha512_reseed(OxiHmacDrbgSha512 *, const uint8_t *, uintptr_t, const uint8_t *, uintptr_t) -> int
+oxi_hmac_drbg_sha512_reseed_from_module(OxiHmacDrbgSha512 *, const uint8_t *, uintptr_t) -> int
 oxi_hmac_sha256(const uint8_t *, uintptr_t, const uint8_t *, uintptr_t, uint8_t *) -> int
 oxi_hmac_sha384(const uint8_t *, uintptr_t, const uint8_t *, uintptr_t, uint8_t *) -> int
 oxi_hmac_sha3_224(const uint8_t *, uintptr_t, const uint8_t *, uintptr_t, uint8_t *) -> int

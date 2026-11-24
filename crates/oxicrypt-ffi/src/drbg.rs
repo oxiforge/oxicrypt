@@ -1,158 +1,385 @@
-//! C ABI for SP 800-90A DRBGs.
+//! C ABI for the nine SP 800-90A DRBGs as typed handles, seeded by the
+//! module.
 //!
-//! The **HMAC-SHA-256** variant of HMAC_DRBG is the one the rest of
-//! the C ABI takes as a parameter (ECDSA `generate` / `sign_sha*`,
-//! ECDH `generate`, RSA sign / OAEP / keygen, DH-3072 keygen). The
-//! other 8 variants (HMAC-SHA-384/512, Hash-SHA-256/384/512,
-//! CTR-AES-128/192/256 with `_df` and `_no_df`) are exposed with
-//! per-variant names, not enum dispatch.
+//! Each DRBG has its own handle type and functions: HMAC_DRBG with
+//! SHA-256, SHA-384 and SHA-512, Hash_DRBG with the same three hashes, and
+//! CTR_DRBG with AES-128, AES-192 and AES-256. The HMAC_DRBG-SHA-256 handle
+//! is the one the rest of the C ABI takes as a parameter (ECDSA, ECDH, RSA
+//! and DH key generation and signing).
 //!
 //! # Lifecycle
 //!
 //! ```text
-//!   oxi_hmac_drbg_sha256_new(out_handle)
-//!     → returns OxiResult::Ok and *out_handle = <heap handle>
+//!   oxi_hmac_drbg_sha256_new(&handle)
+//!     → an uninstantiated handle
 //!
-//!   oxi_hmac_drbg_sha256_instantiate(handle, entropy, nonce, perso)
-//!     → seeds (K, V), sets reseed_counter = 1, transitions to instantiated
+//!   oxi_hmac_drbg_sha256_instantiate_from_module(handle, perso, perso_len)
+//!     → instantiates from the module's seed path and records the
+//!       calling process's id
 //!
-//!   oxi_hmac_drbg_sha256_generate(handle, additional_input, out)
-//!     → produces bytes, advances (K, V), increments reseed_counter
-//!     → if reseed_counter > SP 800-90A Table 3 reseed_interval,
-//!       returns OxiResult::ReseedRequired = 9 (caller must reseed
-//!       and retry)
+//!   oxi_hmac_drbg_sha256_generate(handle, additional, additional_len, out, out_len)
+//!     → output; the DRBG reseeds itself from the seed path when it
+//!       reaches the SP 800-90A reseed interval
 //!
-//!   oxi_hmac_drbg_sha256_reseed(handle, entropy, additional_input)
-//!     → re-seeds (K, V), resets reseed_counter to 1
+//!   oxi_hmac_drbg_sha256_reseed_from_module(handle, additional, additional_len)
+//!     → an explicit reseed from the seed path
 //!
 //!   oxi_hmac_drbg_sha256_free(handle)
-//!     → NULL-safe; reclaims the heap handle. Drop fires Zeroize on
-//!       the upstream HmacDrbgSha256 so (K, V) are zeroed.
+//!     → NULL-safe; the DRBG state is zeroized as it is dropped
 //! ```
 //!
-//! # Entropy plumbing
+//! The caller supplies no entropy. A CTR_DRBG handle is always instantiated
+//! through the derivation function, so its generate function is
+//! `_generate_df`.
 //!
-//! The module does NOT bundle an entropy source. Per
-//! `oxicrypt_drbg::lib.rs` upstream design: every entropy-consuming
-//! call (`instantiate`, `reseed`, `generate_pr`) takes the entropy
-//! input as a caller-supplied byte buffer; the C ABI faithfully
-//! mirrors this. Callers source entropy from an SP 800-90A-conformant
-//! source (`/dev/urandom` on Linux, BCryptGenRandom on Windows,
-//! `Security.framework` on macOS, or a hardware TRNG). This is the
-//! same convention as every other PQ / classical caller-seeded
-//! surface in the FFI (Ed25519, ML-DSA-87, ML-KEM-1024,
-//! SLH-DSA-256s, LMS, XMSS).
+//! # Check order
 //!
-//! Prediction-resistance (`generate_pr`) is NOT exposed, because
-//! SP 800-90A §9.3.1 step 7 specifies it as
-//! `reseed(entropy, ai)` followed by `generate(None, out)` — callers
-//! can compose this trivially. Skipping reduces the surface from 5
-//! to 4 method types per variant.
+//! `_instantiate_from_module`, `_reseed_from_module` and `_generate` check
+//! in the order the shared `OxiDrbg` handle uses, and return the first
+//! failure:
 //!
-//! # Error codes
+//! 1. A NULL handle returns `NullPointer = 10`. An optional input of
+//!    `_instantiate_from_module` or `_reseed_from_module` that is NULL with
+//!    a non-zero length, or longer than `isize::MAX`, returns
+//!    `InvalidInput = 5`. `_generate` returns `NullPointer = 10` for a NULL
+//!    output or additional input with a non-zero length, and
+//!    `InvalidInput = 5` for additional input longer than `isize::MAX`.
+//! 2. A module that is not operational returns `NotOperational = 1`.
+//! 3. A DRBG the active profile does not allow returns
+//!    `AlgorithmRestricted = 6`.
+//! 4. A handle instantiated by another process returns `InvalidInput = 5`.
+//!    `_instantiate_from_module` skips this check and the next: it takes
+//!    over a handle inherited across fork and replaces its state.
+//! 5. A handle never instantiated with `_instantiate_from_module` returns
+//!    `Uninstantiated = 8`.
+//! 6. An input the DRBG would refuse returns `InvalidInput = 5`.
+//! 7. The operation itself returns the DRBG's own codes, among them
+//!    `OutputTooLong = 12` (`_generate` refuses a request above 65536 bytes
+//!    before allocating it), `Busy = 32` (the seed path was held too long)
+//!    and `EntropyUnavailable = 33`. A handle seeded by the module reseeds
+//!    itself, so `ReseedRequired = 9` never occurs.
 //!
-//! `AlgorithmRestricted` can surface only from `_instantiate`, where
-//! the upstream gates fire. `NotOperational` can surface from all
-//! three: `_reseed` and `_generate` build their hash, HMAC or AES
-//! primitive through the upstream `new_internal` constructors, which
-//! refuse once the module has entered its error state, so a handle
-//! stops producing output after a failure.
-//!
-//! | Upstream | OxiResult | Surfaceable from |
-//! |---|---|---|
-//! | `Err(Module(NotOperational))` | `NotOperational = 1` | all three |
-//! | `Err(Module(AlgorithmRestricted))` | `AlgorithmRestricted = 6` | `_instantiate` only |
-//! | `Err(Module(InvalidInput))` | `InvalidInput = 5` | `_instantiate` only (total seed > 768 bytes) |
-//! | `Err(Module(EntropyInputTooShort))` | `EntropyInputTooShort = 29` | `_instantiate` only (not CTR_DRBG `_no_df`) |
-//! | `Err(Module(NonceTooShort))` | `NonceTooShort = 30` | `_instantiate` only (not CTR_DRBG `_no_df`) |
-//! | `Err(DrbgError::EntropyInputTooShort)` | `EntropyInputTooShort = 29` | `_reseed` only (not CTR_DRBG `_no_df`) |
-//! | `Err(DrbgError::Uninstantiated)` | `Uninstantiated = 8` | `_reseed`, `_generate` |
-//! | `Err(DrbgError::ReseedRequired)` | `ReseedRequired = 9` | `_generate` only |
-//! | `Err(DrbgError::InputTooLong)` | `InvalidInput = 5` | `_reseed`, `_generate` |
-//! | `Err(DrbgError::RequestTooLong)` | `OutputTooLong = 12` | `_generate` only (out_len > 2^19 bits) |
-//! | NULL handle / NULL output | `NullPointer = 10` | all three (FFI-layer guard) |
-//!
-//! Slots `8` and `9` exist in the `OxiResult` enum in `error.rs`
-//! because collapsing them to `InvalidInput = 5` would prevent
-//! callers from
-//! distinguishing "I need to call instantiate" from "I need to
-//! reseed" from "my input is malformed" — three distinct recovery
-//! paths per SP 800-90A.
+//! Output is written only on success.
 //!
 //! # Thread-safety contract
 //!
-//! `OxiHmacDrbgSha256` is a per-call-mutating handle: every
-//! `_instantiate`, `_reseed`, and `_generate` call advances the
-//! internal `(K, V, reseed_counter)` state. Rust enforces
-//! exclusive access at the call site via the `&mut self`
-//! projection in `OxiHandle::as_mut`, but the C ABI cannot
-//! enforce this across threads: two C threads racing on the same
-//! `*mut OxiHmacDrbgSha256` pointer would create a data race and
-//! is undefined behaviour. **Caller MUST serialize all
-//! `oxi_hmac_drbg_sha256_*` calls on a given handle pointer
-//! externally** (mutex, single-threaded ownership, or equivalent
-//! discipline). The same contract applies to every DRBG handle in
-//! this file. AES handles are read-only-from-C and the HBS
-//! byte-buffer surface side-steps the issue by passing state
-//! through the function signature.
+//! Every call on a typed handle advances its DRBG's state, and the handle
+//! has no busy flag: two C threads calling into the same handle at once is
+//! a data race and undefined behaviour. **Callers MUST serialise all calls
+//! on one handle** (a mutex, single-threaded ownership, or an equivalent
+//! discipline). The shared `OxiDrbg` handle detects concurrent use instead.
+//!
+//! # Fork
+//!
+//! A handle records the id of the process that instantiated it. After fork,
+//! the child's copy returns `InvalidInput = 5` from every call that reaches
+//! the DRBG until the child calls `_instantiate_from_module` on it, so
+//! parent and child never produce the same output. A process id reused
+//! after the parent exits is not detected.
 //!
 //! # Handle lifecycle invariant
 //!
 //! `OxiHmacDrbgSha256` follows the same opaque-handle pattern as
 //! `OxiAes256Key` (see `aes.rs`). The internal state lives on the
 //! heap; the caller holds a `*mut OxiHmacDrbgSha256` and MUST pair
-//! every `_new` with a `_free`. Distinct from the LMS / XMSS
-//! byte-buffer pass-through: DRBG state is process-local (not
-//! durably persisted across reboots), so the handle pattern is the
-//! right shape; HBS keys carried a different one-write-per-leaf
-//! invariant that the byte-buffer surface enforced structurally.
+//! every `_new` with a `_free`.
 
-use crate::error::{OxiResult as R, status_drbg, status_module};
+use crate::error::{OxiResult as R, status_module};
 use crate::handle::OxiHandle;
+use crate::rbg::{MAX_REQUEST_BYTES, write_out};
 use core::ffi::c_int;
+use core::sync::atomic::Ordering;
 use oxicrypt_drbg::{
-    CtrDrbgAes128, CtrDrbgAes192, CtrDrbgAes256, HashDrbgSha256, HashDrbgSha384, HashDrbgSha512,
-    HmacDrbgSha256, HmacDrbgSha384, HmacDrbgSha512,
+    CtrDrbgAes128, CtrDrbgAes192, CtrDrbgAes256, DrbgError, HashDrbgSha256, HashDrbgSha384,
+    HashDrbgSha512, HmacDrbgSha256, HmacDrbgSha384, HmacDrbgSha512,
 };
+use oxicrypt_module::{Error, Service};
 
-/// Runs a generate call into a private buffer and copies the bytes into the
-/// caller's buffer only once the call has succeeded, so a failed call never
-/// writes generated bytes there. The private buffer is wiped either way.
-fn staged(
-    out: &mut [u8],
-    generate: impl FnOnce(&mut [u8]) -> Result<(), oxicrypt_drbg::DrbgError>,
-) -> c_int {
-    let mut buf = vec![0u8; out.len()];
-    let result = generate(&mut buf);
-    if result.is_ok() {
-        out.copy_from_slice(&buf);
+/// The calling process's id as a handle records it. It is never 0, so a
+/// recorded 0 always means the handle was never instantiated, including on
+/// a target without process ids.
+fn current_process() -> u64 {
+    oxicrypt_platform::process_id().max(1)
+}
+
+/// One of the nine typed DRBG handles, each holding its DRBG in an
+/// [`OxiHandle`].
+pub(crate) trait TypedDrbg {
+    /// The DRBG the handle holds.
+    type Inner;
+    /// The handle's state: the DRBG and the process id recorded when it was
+    /// instantiated.
+    fn handle(&mut self) -> &mut OxiHandle<Self::Inner>;
+}
+
+/// Reaches the DRBG a typed handle holds, the one path every function that
+/// uses a typed handle's DRBG takes.
+///
+/// It returns, in this order, `NullPointer` for a NULL `h`, `InvalidInput`
+/// for a handle instantiated by another process (a copy inherited across
+/// fork), and `Uninstantiated` for a handle never instantiated with
+/// `_instantiate_from_module`.
+///
+/// Its callers place the module checks in one of two ways:
+///
+/// - `_reseed_from_module` and `_generate` check their pointers, then run
+///   `require_operational` and `require_allowed`, then call this. A module
+///   that is not operational returns `NotOperational = 1` from them
+///   whatever the handle's state.
+/// - The key generation, signing and encryption functions that take a
+///   typed handle (ECDH, ECDSA, RSA and DH) check their pointers, call
+///   this, and then call the service, which runs `require_operational`
+///   and `require_allowed` itself before it draws from the DRBG. A module
+///   that is not operational returns `NotOperational = 1` from them only
+///   for a handle this process instantiated; a handle from another process
+///   returns `InvalidInput = 5` and one never instantiated returns
+///   `Uninstantiated = 8` first.
+///
+/// # Safety
+///
+/// `h` must be NULL or a live handle that nothing else reaches while the
+/// returned borrow is used. The `'static` lifetime is not a promise: the
+/// caller must not use the borrow after the C call it serves returns.
+pub(crate) unsafe fn typed_drbg_access<H: TypedDrbg>(
+    h: *mut H,
+) -> Result<&'static mut H::Inner, R> {
+    if h.is_null() {
+        return Err(R::NullPointer);
     }
+    // SAFETY: `h` is non-NULL and, by contract, a live handle nothing else
+    // reaches during the call.
+    let handle: *mut OxiHandle<H::Inner> = unsafe { (*h).handle() };
+    // SAFETY: as above; the caller confines the borrow to the call it serves.
+    let handle = unsafe { &mut *handle };
+    let recorded = handle.pid.load(Ordering::Acquire);
+    if recorded != 0 && recorded != current_process() {
+        return Err(R::InvalidInput);
+    }
+    if recorded == 0 {
+        return Err(R::Uninstantiated);
+    }
+    handle.as_mut().ok_or(R::Internal)
+}
+
+/// Borrows an optional caller input, which may be NULL only with length 0.
+/// A NULL pointer with a non-zero length, or a length above `isize::MAX`,
+/// returns `InvalidInput`.
+///
+/// # Safety
+///
+/// A non-NULL `ptr` must be valid for reads of `len` bytes for `'a`.
+unsafe fn optional_input<'a>(ptr: *const u8, len: usize) -> Result<&'a [u8], R> {
+    if len > isize::MAX.unsigned_abs() || (ptr.is_null() && len > 0) {
+        return Err(R::InvalidInput);
+    }
+    if len == 0 {
+        return Ok(&[]);
+    }
+    // SAFETY: `ptr` is non-NULL here and the caller guarantees it is valid
+    // for `len` bytes; `len` is at most `isize::MAX`.
+    Ok(unsafe { core::slice::from_raw_parts(ptr, len) })
+}
+
+/// The body of every `_instantiate_from_module` function. Checks the handle,
+/// the personalization string, the module state and the profile, then builds
+/// a new instance with `instantiate`. On success it replaces the handle's
+/// DRBG and records the calling process's id; on failure the handle is
+/// unchanged.
+///
+/// # Safety
+///
+/// `h` must be NULL or a live handle nothing else reaches during the call.
+/// A non-NULL `perso` must be valid for reads of `perso_len` bytes.
+unsafe fn instantiate_typed<H: TypedDrbg>(
+    h: *mut H,
+    perso: *const u8,
+    perso_len: usize,
+    service: Service,
+    instantiate: impl FnOnce(&[u8]) -> Result<H::Inner, Error>,
+) -> c_int {
+    if h.is_null() {
+        return R::NullPointer as c_int;
+    }
+    // SAFETY: a non-NULL `perso` is valid for `perso_len` bytes by contract.
+    let perso = match unsafe { optional_input(perso, perso_len) } {
+        Ok(p) => p,
+        Err(e) => return e as c_int,
+    };
+    if let Err(e) = oxicrypt_module::require_operational() {
+        return R::from(e) as c_int;
+    }
+    if let Err(e) = oxicrypt_module::require_allowed(service) {
+        return R::from(e) as c_int;
+    }
+    let drbg = match instantiate(perso) {
+        Ok(d) => d,
+        Err(e) => return R::from(e) as c_int,
+    };
+    // SAFETY: `h` is non-NULL and, by contract, a live handle nothing else
+    // reaches during the call.
+    let handle = unsafe { (*h).handle() };
+    handle.inner = Some(drbg);
+    handle.pid.store(current_process(), Ordering::Release);
+    R::Ok as c_int
+}
+
+/// The body of every `_reseed_from_module` function. Checks the handle, the
+/// additional input, the module state and the profile, reaches the DRBG
+/// through [`typed_drbg_access`], then reseeds it with `reseed`.
+///
+/// # Safety
+///
+/// `h` must be NULL or a live handle nothing else reaches during the call.
+/// A non-NULL `additional` must be valid for reads of `additional_len`
+/// bytes.
+unsafe fn reseed_typed<H: TypedDrbg>(
+    h: *mut H,
+    additional: *const u8,
+    additional_len: usize,
+    service: Service,
+    reseed: impl FnOnce(&mut H::Inner, &[u8]) -> Result<(), Error>,
+) -> c_int
+where
+    H::Inner: 'static,
+{
+    if h.is_null() {
+        return R::NullPointer as c_int;
+    }
+    // SAFETY: a non-NULL `additional` is valid for `additional_len` bytes by
+    // contract.
+    let additional = match unsafe { optional_input(additional, additional_len) } {
+        Ok(a) => a,
+        Err(e) => return e as c_int,
+    };
+    if let Err(e) = oxicrypt_module::require_operational() {
+        return R::from(e) as c_int;
+    }
+    if let Err(e) = oxicrypt_module::require_allowed(service) {
+        return R::from(e) as c_int;
+    }
+    // SAFETY: `h` is a live handle nothing else reaches during the call, by
+    // contract; the borrow ends with this function.
+    let drbg = match unsafe { typed_drbg_access(h) } {
+        Ok(d) => d,
+        Err(e) => return e as c_int,
+    };
+    status_module(reseed(drbg, additional))
+}
+
+/// The body of every `_generate` function. Checks the handle and the output
+/// and additional-input pointers, the module state and the profile, reaches
+/// the DRBG through [`typed_drbg_access`], refuses additional input longer
+/// than `max_additional`, then generates through [`staged`].
+///
+/// # Safety
+///
+/// `h` must be NULL or a live handle nothing else reaches during the call.
+/// `out` must be valid for writes of `out_len` bytes. A non-NULL
+/// `additional` must be valid for reads of `additional_len` bytes.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "the five C arguments plus the DRBG's service, bound and generate function"
+)]
+unsafe fn generate_typed<H: TypedDrbg>(
+    h: *mut H,
+    additional: *const u8,
+    additional_len: usize,
+    out: *mut u8,
+    out_len: usize,
+    service: Service,
+    max_additional: usize,
+    generate: impl FnOnce(&mut H::Inner, Option<&[u8]>, &mut [u8]) -> Result<(), DrbgError>,
+) -> c_int
+where
+    H::Inner: 'static,
+{
+    if h.is_null() || (out.is_null() && out_len > 0) {
+        return R::NullPointer as c_int;
+    }
+    // NULL with a non-zero length is refused by slice_from_raw with NullPointer.
+    let additional: Option<&[u8]> = if additional.is_null() && additional_len == 0 {
+        None
+    } else {
+        // SAFETY: a non-NULL `additional` is valid for `additional_len`
+        // bytes by contract.
+        match unsafe { crate::slice_from_raw(additional, additional_len) } {
+            Ok(s) => Some(s),
+            Err(e) => return e,
+        }
+    };
+    if let Err(e) = oxicrypt_module::require_operational() {
+        return R::from(e) as c_int;
+    }
+    if let Err(e) = oxicrypt_module::require_allowed(service) {
+        return R::from(e) as c_int;
+    }
+    // SAFETY: `h` is a live handle nothing else reaches during the call, by
+    // contract; the borrow ends with this function.
+    let drbg = match unsafe { typed_drbg_access(h) } {
+        Ok(d) => d,
+        Err(e) => return e as c_int,
+    };
+    if additional_len > max_additional {
+        return R::InvalidInput as c_int;
+    }
+    // Refused before the private buffer is allocated, so a request of any
+    // length costs no allocation of that length.
+    if out_len > MAX_REQUEST_BYTES {
+        return R::OutputTooLong as c_int;
+    }
+    // SAFETY: `out` is valid for writes of `out_len` bytes by contract.
+    unsafe { staged(out, out_len, |buf| generate(drbg, additional, buf)) }
+}
+
+/// Runs a generate call into a private buffer and copies the bytes to the
+/// caller's buffer at `out` through [`write_out`] only once the call has
+/// succeeded, so a failed call, or a module that entered its error state
+/// meanwhile, never writes generated bytes there. The private buffer is
+/// wiped either way; no test observes that wipe, so it is unproven.
+///
+/// # Safety
+///
+/// `out` must be valid for writes of `out_len` bytes; it may be NULL only
+/// when `out_len` is 0.
+unsafe fn staged(
+    out: *mut u8,
+    out_len: usize,
+    generate: impl FnOnce(&mut [u8]) -> Result<(), DrbgError>,
+) -> c_int {
+    let mut buf = vec![0u8; out_len];
+    let result = generate(&mut buf).map_err(R::from).and_then(|()| {
+        // SAFETY: `out` is valid for `out_len` bytes by contract, the
+        // generate call filled all `out_len` bytes of `buf`, and `buf` is this
+        // function's own allocation, so the two do not overlap.
+        unsafe { write_out(out, &buf) }
+    });
     oxicrypt_zeroize::zeroize(&mut buf);
-    status_drbg(result)
+    match result {
+        Ok(()) => R::Ok as c_int,
+        Err(e) => e as c_int,
+    }
 }
 
 /// Opaque HMAC_DRBG-SHA-256 handle. The internal layout
 /// (`OxiHandle<HmacDrbgSha256>`) is implementation detail and not
 /// part of the C ABI; cbindgen renders this as an opaque struct.
 ///
+/// The handle is seeded by the module: `_instantiate_from_module` draws its
+/// entropy input and nonce from the module's seed path, and the DRBG reseeds
+/// itself from the same path at the SP 800-90A reseed interval. A forked
+/// child inherits a copy that returns `InvalidInput = 5` until the child
+/// re-instantiates it with `_instantiate_from_module`. The handle has no
+/// busy flag: callers serialise all calls on one handle.
+///
 /// cbindgen:opaque
 pub struct OxiHmacDrbgSha256 {
     inner: OxiHandle<HmacDrbgSha256>,
 }
 
-impl OxiHmacDrbgSha256 {
-    /// Crate-internal accessor for the underlying mutable
-    /// `HmacDrbgSha256`. Used by other FFI surfaces in this crate
-    /// that consume a DRBG handle as a parameter (e.g.
-    /// `oxi_dh3072_generate_keypair`). Keeps the `inner` field
-    /// private while exposing the projection needed for
-    /// DRBG-handle-as-parameter surfaces.
-    ///
-    /// Returns `None` if the handle has been finalized (today: never,
-    /// because DRBG handles do not have a finalize-bearing lifecycle —
-    /// the consumed-sentinel field is unused for DRBG, same as AES).
-    pub(crate) fn inner_mut(&mut self) -> Option<&mut HmacDrbgSha256> {
-        self.inner.as_mut()
+impl TypedDrbg for OxiHmacDrbgSha256 {
+    type Inner = HmacDrbgSha256;
+    fn handle(&mut self) -> &mut OxiHandle<HmacDrbgSha256> {
+        &mut self.inner
     }
 }
 
@@ -164,8 +391,8 @@ impl OxiHmacDrbgSha256 {
 ///
 /// The newly-allocated handle is uninstantiated — calling
 /// [`oxi_hmac_drbg_sha256_generate`] or
-/// [`oxi_hmac_drbg_sha256_reseed`] before
-/// [`oxi_hmac_drbg_sha256_instantiate`] returns
+/// [`oxi_hmac_drbg_sha256_reseed_from_module`] before
+/// [`oxi_hmac_drbg_sha256_instantiate_from_module`] returns
 /// `OxiResult::Uninstantiated = 8`.
 ///
 /// # Safety
@@ -195,7 +422,8 @@ pub unsafe extern "C" fn oxi_hmac_drbg_sha256_new(
 ///
 /// Drop on the upstream `HmacDrbgSha256` zeroizes the internal
 /// `(K, V)` state via the workspace-wide `oxicrypt-zeroize`
-/// volatile-write convention; no caller-side scrubbing is required.
+/// volatile-write convention, and every byte of the handle is then wiped
+/// before its memory is released; no caller-side scrubbing is required.
 ///
 /// # Safety
 ///
@@ -206,138 +434,108 @@ pub unsafe extern "C" fn oxi_hmac_drbg_sha256_free(handle: *mut OxiHmacDrbgSha25
     if handle.is_null() {
         return;
     }
-    drop(unsafe { Box::from_raw(handle) });
+    // SAFETY: `handle` is a live `Box` from the matching `_new` that has not
+    // been freed, by contract.
+    unsafe { crate::rbg::wipe_and_free(handle) };
 }
 
-/// HMAC_DRBG-SHA-256 Instantiate (SP 800-90A §10.1.2.3).
+/// HMAC_DRBG-SHA-256 Instantiate from the module's seed path
+/// (SP 800-90A §10.1.2.3), with an optional personalization string.
 ///
-/// Seeds the DRBG with caller-supplied entropy, nonce, and
-/// personalization. The combined length
-/// `entropy_len + nonce_len + perso_len` MUST NOT exceed
-/// `HMAC_DRBG_MAX_PROVIDED = 768` bytes; over-length returns
-/// `OxiResult::InvalidInput = 5`.
+/// Draws the entropy input and nonce from the module's seed path,
+/// replaces any earlier instantiation of the handle and records the
+/// calling process's id. In a forked child this is the call that makes
+/// an inherited handle usable again.
 ///
-/// Each input may be NULL when its corresponding length is 0.
-/// Personalization length 0 is the typical path for FIPS-conformant
-/// callers that don't have a personalization string. The instantiated
-/// security strength is 256 bits, so an entropy input shorter than
-/// 32 bytes (SP 800-90A Rev. 1 Table 2 `min_length`) returns
-/// `OxiResult::EntropyInputTooShort = 29`, and a nonce shorter than
-/// 16 bytes returns `OxiResult::NonceTooShort = 30`. The nonce floor is
-/// the module's own check, permitted by §9.1 step 8: a shorter nonce
-/// that would meet only the uniqueness condition of §8.6.7 is refused.
-/// An over-long combined input returns `InvalidInput = 5` even when the
-/// entropy input or nonce is also short. A refusal by any of these
-/// length checks leaves the handle uninstantiated.
+/// `perso` may be NULL when `perso_len` is 0; NULL with a non-zero length
+/// returns `OxiResult::InvalidInput = 5`. A personalization string longer
+/// than the DRBG accepts returns `InvalidInput = 5` before any draw. A
+/// failed draw returns `OxiResult::Busy = 32` (retry after a pause) or
+/// `OxiResult::EntropyUnavailable = 33`. Every refusal leaves the handle
+/// as it was.
 ///
 /// # Safety
 ///
-/// All pointer/length pairs must be valid. `handle` must be a live
-/// handle from [`oxi_hmac_drbg_sha256_new`].
+/// `handle` must be NULL or a live handle from
+/// [`oxi_hmac_drbg_sha256_new`], not in use by another call. A non-NULL
+/// `perso` must be valid for reads of `perso_len` bytes.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn oxi_hmac_drbg_sha256_instantiate(
+pub unsafe extern "C" fn oxi_hmac_drbg_sha256_instantiate_from_module(
     handle: *mut OxiHmacDrbgSha256,
-    entropy: *const u8,
-    entropy_len: usize,
-    nonce: *const u8,
-    nonce_len: usize,
-    personalization: *const u8,
-    personalization_len: usize,
+    perso: *const u8,
+    perso_len: usize,
 ) -> c_int {
-    if handle.is_null() {
-        return R::NullPointer as c_int;
+    // SAFETY: this function's contract is `instantiate_typed`'s.
+    unsafe {
+        instantiate_typed(
+            handle,
+            perso,
+            perso_len,
+            Service::HmacDrbgSha256,
+            HmacDrbgSha256::instantiate_from_module,
+        )
     }
-    let entropy_slice = match unsafe { crate::slice_from_raw(entropy, entropy_len) } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    let nonce_slice = match unsafe { crate::slice_from_raw(nonce, nonce_len) } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    let perso_slice = match unsafe { crate::slice_from_raw(personalization, personalization_len) } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    // SAFETY: the handle lifecycle contract requires that the caller
-    // not race `_free` against an in-flight call on the same handle.
-    // DRBG mutates per call, so we use `as_mut` — the `&mut self`
-    // projection upholds Rust's exclusivity rule for the duration of
-    // the call.
-    let Some(drbg) = (unsafe { (*handle).inner.as_mut() }) else {
-        return R::NotOperational as c_int;
-    };
-    status_module(drbg.instantiate(entropy_slice, nonce_slice, perso_slice))
 }
 
-/// HMAC_DRBG-SHA-256 Reseed (SP 800-90A §10.1.2.4).
+/// HMAC_DRBG-SHA-256 Reseed from the module's seed path
+/// (SP 800-90A §10.1.2.4), with optional additional input.
 ///
-/// Re-seeds the DRBG with fresh entropy and (optionally) additional
-/// input. After successful reseed, `reseed_counter` is reset to 1
-/// and the handle is ready to serve new `generate` calls.
-///
-/// `additional_input` may be NULL when `additional_input_len` is 0.
-/// `entropy` MUST point to ≥ `entropy_len` readable bytes.
-///
-/// Returns `OxiResult::Uninstantiated = 8` if the handle has not yet
-/// been instantiated. Returns `OxiResult::InvalidInput = 5` if the
-/// combined `entropy_len + additional_input_len` exceeds
-/// `HMAC_DRBG_MAX_PROVIDED = 768` bytes, and
-/// `OxiResult::EntropyInputTooShort = 29` if `entropy_len` is below
-/// 32 bytes (SP 800-90A Rev. 1 Table 2 `min_length`).
+/// `additional` may be NULL when `additional_len` is 0; NULL with a
+/// non-zero length returns `OxiResult::InvalidInput = 5`. A handle never
+/// instantiated with [`oxi_hmac_drbg_sha256_instantiate_from_module`]
+/// returns `OxiResult::Uninstantiated = 8`, and a handle instantiated by
+/// another process returns `InvalidInput = 5`. Additional input longer
+/// than the DRBG accepts returns `InvalidInput = 5` before any draw. A
+/// failed draw returns `OxiResult::Busy = 32` or
+/// `OxiResult::EntropyUnavailable = 33`.
 ///
 /// # Safety
 ///
-/// All pointer/length pairs must be valid. `handle` must be a live
-/// handle from [`oxi_hmac_drbg_sha256_new`].
+/// `handle` must be NULL or a live handle from
+/// [`oxi_hmac_drbg_sha256_new`], not in use by another call. A non-NULL
+/// `additional` must be valid for reads of `additional_len` bytes.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn oxi_hmac_drbg_sha256_reseed(
+pub unsafe extern "C" fn oxi_hmac_drbg_sha256_reseed_from_module(
     handle: *mut OxiHmacDrbgSha256,
-    entropy: *const u8,
-    entropy_len: usize,
-    additional_input: *const u8,
-    additional_input_len: usize,
+    additional: *const u8,
+    additional_len: usize,
 ) -> c_int {
-    if handle.is_null() {
-        return R::NullPointer as c_int;
+    // SAFETY: this function's contract is `reseed_typed`'s.
+    unsafe {
+        reseed_typed(
+            handle,
+            additional,
+            additional_len,
+            Service::HmacDrbgSha256,
+            HmacDrbgSha256::reseed_from_module,
+        )
     }
-    let entropy_slice = match unsafe { crate::slice_from_raw(entropy, entropy_len) } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    let ai_slice = match unsafe { crate::slice_from_raw(additional_input, additional_input_len) } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    let Some(drbg) = (unsafe { (*handle).inner.as_mut() }) else {
-        return R::NotOperational as c_int;
-    };
-    status_drbg(drbg.reseed(entropy_slice, ai_slice))
 }
 
 /// HMAC_DRBG-SHA-256 Generate (SP 800-90A §10.1.2.5).
 ///
-/// Produces `out_len` pseudorandom bytes into `out`, advancing the
-/// internal `(K, V)` state and incrementing `reseed_counter`.
+/// Produces `out_len` pseudorandom bytes into `out`. The DRBG reseeds
+/// itself from the module's seed path when it reaches the SP 800-90A
+/// reseed interval, so `OxiResult::ReseedRequired = 9` never occurs.
 ///
 /// `additional_input` may be NULL when `additional_input_len` is 0
 /// (mapped to upstream `additional_input = None`); a NULL with
 /// non-zero length returns `OxiResult::NullPointer = 10`.
 ///
-/// Returns `OxiResult::Uninstantiated = 8` if `instantiate` has not
-/// yet succeeded on this handle. Returns `OxiResult::ReseedRequired = 9`
-/// if `reseed_counter` has reached the SP 800-90A Table 3 bound; the
-/// caller MUST call [`oxi_hmac_drbg_sha256_reseed`] before retrying.
-/// Returns `OxiResult::OutputTooLong = 12` if `out_len` exceeds the
+/// Returns `OxiResult::Uninstantiated = 8` if the handle was never
+/// instantiated with [`oxi_hmac_drbg_sha256_instantiate_from_module`],
+/// and `OxiResult::InvalidInput = 5` if it was instantiated by another
+/// process or `additional_input_len` exceeds the additional input the
+/// DRBG accepts from a module reseed. Returns
+/// `OxiResult::OutputTooLong = 12` if `out_len` exceeds the
 /// SP 800-90A Table 3 `max_number_of_bits_per_request` ceiling
-/// (`2^19` bits = 65 536 bytes).
+/// (`2^19` bits = 65 536 bytes). `out` is written only on success.
 ///
 /// # Safety
 ///
-/// `handle` must be a live handle from [`oxi_hmac_drbg_sha256_new`].
-/// `out` must point to ≥ `out_len` writable bytes (or `out_len == 0`,
-/// in which case the call is a no-op state advance — useful only as
-/// part of a `reseed`-then-`generate(None, [])` PR equivalence).
+/// `handle` must be NULL or a live handle from
+/// [`oxi_hmac_drbg_sha256_new`], not in use by another call.
+/// `out` must point to ≥ `out_len` writable bytes (or `out_len == 0`).
 /// `additional_input` must point to ≥ `additional_input_len`
 /// readable bytes when `additional_input_len > 0`.
 #[unsafe(no_mangle)]
@@ -348,64 +546,52 @@ pub unsafe extern "C" fn oxi_hmac_drbg_sha256_generate(
     out: *mut u8,
     out_len: usize,
 ) -> c_int {
-    if handle.is_null() {
-        return R::NullPointer as c_int;
+    // SAFETY: this function's contract is `generate_typed`'s.
+    unsafe {
+        generate_typed(
+            handle,
+            additional_input,
+            additional_input_len,
+            out,
+            out_len,
+            Service::HmacDrbgSha256,
+            HmacDrbgSha256::MAX_MODULE_ADDITIONAL_INPUT,
+            HmacDrbgSha256::generate,
+        )
     }
-    if out.is_null() && out_len > 0 {
-        return R::NullPointer as c_int;
-    }
-    // additional_input: NULL+0 → None; non-NULL+>0 → Some(slice).
-    // (NULL+>0 is rejected by slice_from_raw with NullPointer.)
-    let ai_opt: Option<&[u8]> = if additional_input.is_null() && additional_input_len == 0 {
-        None
-    } else {
-        match unsafe { crate::slice_from_raw(additional_input, additional_input_len) } {
-            Ok(s) => Some(s),
-            Err(e) => return e,
-        }
-    };
-    let out_slice = match unsafe { crate::slice_from_raw_mut(out, out_len) } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    let Some(drbg) = (unsafe { (*handle).inner.as_mut() }) else {
-        return R::NotOperational as c_int;
-    };
-    staged(out_slice, |buf| drbg.generate(ai_opt, buf))
 }
 
-// ── HMAC-DRBG-SHA-384 / -SHA-512 — additive variants ─────────────
+// ── HMAC-DRBG-SHA-384 / -SHA-512 ─────────────────────────────────
 //
-// Pure stencil mirror of `OxiHmacDrbgSha256` for the wider HMAC-DRBG
-// hashes (SP 800-90A §10.1.2). The upstream `HmacDrbg<H: HmacAlg>`
-// is parametric over the hash alg, with `HmacDrbgSha384` and
-// `HmacDrbgSha512` already shipped as type aliases at
-// `crates/oxicrypt-drbg/src/hmac.rs:122`/`:124` — wider output
-// lengths (SHA-384 and SHA-512 are both instantiated at 256-bit
-// security strength, per SP 800-57 Part 1 and SP 800-90A Table 2) but
-// identical `instantiate / reseed / generate` shape. Same per-call-mutating
-// thread-safety contract, same `(K, V, reseed_counter)` Drop-zeroize,
-// same `OxiResult` discriminant set (Ok / NotOperational /
-// InvalidInput / AlgorithmRestricted / Uninstantiated /
-// ReseedRequired / OutputTooLong / NullPointer / EntropyInputTooShort /
-// NonceTooShort); see the SHA-256
-// rustdocs above for the full contract — comments here cite only
+// The `OxiHmacDrbgSha256` shape for the wider HMAC-DRBG hashes
+// (SP 800-90A §10.1.2), over the upstream `HmacDrbg<H: HmacAlg>` type
+// aliases `HmacDrbgSha384` and `HmacDrbgSha512`. Output lengths are
+// wider; both are instantiated at 256-bit security strength (SP 800-57
+// Part 1, SP 800-90A Table 2); the
+// `instantiate_from_module / reseed_from_module / generate` shape is
+// identical. Same per-call-mutating thread-safety contract, same
+// `(K, V, reseed_counter)` Drop-zeroize, same check order; see the
+// SHA-256 rustdocs above for the full contract — comments here cite only
 // hash-specific deltas.
 
 /// Opaque HMAC_DRBG-SHA-384 handle. See `OxiHmacDrbgSha256`.
+///
+/// The handle is seeded by the module: `_instantiate_from_module` draws its
+/// entropy input and nonce from the module's seed path, and the DRBG reseeds
+/// itself from the same path at the SP 800-90A reseed interval. A forked
+/// child inherits a copy that returns `InvalidInput = 5` until the child
+/// re-instantiates it with `_instantiate_from_module`. The handle has no
+/// busy flag: callers serialise all calls on one handle.
 ///
 /// cbindgen:opaque
 pub struct OxiHmacDrbgSha384 {
     inner: OxiHandle<HmacDrbgSha384>,
 }
 
-impl OxiHmacDrbgSha384 {
-    /// Crate-internal mutable accessor; mirrors
-    /// `OxiHmacDrbgSha256::inner_mut`. Future DRBG-handle-as-parameter
-    /// surfaces wired to SHA-384 will use this projection.
-    #[allow(dead_code)] // first call site lands when a SHA-384-DRBG-driven primitive surfaces
-    pub(crate) fn inner_mut(&mut self) -> Option<&mut HmacDrbgSha384> {
-        self.inner.as_mut()
+impl TypedDrbg for OxiHmacDrbgSha384 {
+    type Inner = HmacDrbgSha384;
+    fn handle(&mut self) -> &mut OxiHandle<HmacDrbgSha384> {
+        &mut self.inner
     }
 }
 
@@ -442,90 +628,64 @@ pub unsafe extern "C" fn oxi_hmac_drbg_sha384_free(handle: *mut OxiHmacDrbgSha38
     if handle.is_null() {
         return;
     }
-    drop(unsafe { Box::from_raw(handle) });
+    // SAFETY: `handle` is a live `Box` from the matching `_new` that has not
+    // been freed, by contract.
+    unsafe { crate::rbg::wipe_and_free(handle) };
 }
 
-/// HMAC_DRBG-SHA-384 Instantiate (SP 800-90A §10.1.2.3). See
-/// [`oxi_hmac_drbg_sha256_instantiate`] for full contract; the
-/// `entropy_len + nonce_len + perso_len` ceiling is the same upstream
-/// `HMAC_DRBG_MAX_PROVIDED = 768` bytes (alg-independent constant).
-/// The instantiated security strength is 256 bits (SP 800-57 Part 1),
-/// so per SP 800-90A Table 2 entropy ≥ 256 bits, nonce ≥ 128 bits.
-///
-/// Returns `OxiResult::EntropyInputTooShort = 29` when `entropy_len`
-/// is below 32 bytes and `OxiResult::NonceTooShort = 30` when
-/// `nonce_len` is below 16 bytes (SP 800-90A Rev. 1 Table 2
-/// `min_length` and the module's nonce floor).
+/// HMAC_DRBG-SHA-384 Instantiate from the module's seed path
+/// (SP 800-90A §10.1.2.3). See
+/// [`oxi_hmac_drbg_sha256_instantiate_from_module`] for the full contract.
+/// The instantiated security strength is 256 bits (SP 800-57 Part 1).
 ///
 /// # Safety
 ///
-/// All pointer/length pairs must be valid. `handle` must be a live
-/// handle from [`oxi_hmac_drbg_sha384_new`].
+/// `handle` must be NULL or a live handle from
+/// [`oxi_hmac_drbg_sha384_new`], not in use by another call. A non-NULL
+/// `perso` must be valid for reads of `perso_len` bytes.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn oxi_hmac_drbg_sha384_instantiate(
+pub unsafe extern "C" fn oxi_hmac_drbg_sha384_instantiate_from_module(
     handle: *mut OxiHmacDrbgSha384,
-    entropy: *const u8,
-    entropy_len: usize,
-    nonce: *const u8,
-    nonce_len: usize,
-    personalization: *const u8,
-    personalization_len: usize,
+    perso: *const u8,
+    perso_len: usize,
 ) -> c_int {
-    if handle.is_null() {
-        return R::NullPointer as c_int;
+    // SAFETY: this function's contract is `instantiate_typed`'s.
+    unsafe {
+        instantiate_typed(
+            handle,
+            perso,
+            perso_len,
+            Service::HmacDrbgSha384,
+            HmacDrbgSha384::instantiate_from_module,
+        )
     }
-    let entropy_slice = match unsafe { crate::slice_from_raw(entropy, entropy_len) } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    let nonce_slice = match unsafe { crate::slice_from_raw(nonce, nonce_len) } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    let perso_slice = match unsafe { crate::slice_from_raw(personalization, personalization_len) } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    let Some(drbg) = (unsafe { (*handle).inner.as_mut() }) else {
-        return R::NotOperational as c_int;
-    };
-    status_module(drbg.instantiate(entropy_slice, nonce_slice, perso_slice))
 }
 
-/// HMAC_DRBG-SHA-384 Reseed (SP 800-90A §10.1.2.4). See
-/// [`oxi_hmac_drbg_sha256_reseed`] for full contract.
-///
-/// Returns `OxiResult::EntropyInputTooShort = 29` when `entropy_len`
-/// is below 32 bytes (SP 800-90A Rev. 1 Table 2 `min_length`);
-/// additional input does not count toward it.
+/// HMAC_DRBG-SHA-384 Reseed from the module's seed path
+/// (SP 800-90A §10.1.2.4). See
+/// [`oxi_hmac_drbg_sha256_reseed_from_module`] for the full contract.
 ///
 /// # Safety
 ///
-/// All pointer/length pairs must be valid. `handle` must be a live
-/// handle from [`oxi_hmac_drbg_sha384_new`].
+/// `handle` must be NULL or a live handle from
+/// [`oxi_hmac_drbg_sha384_new`], not in use by another call. A non-NULL
+/// `additional` must be valid for reads of `additional_len` bytes.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn oxi_hmac_drbg_sha384_reseed(
+pub unsafe extern "C" fn oxi_hmac_drbg_sha384_reseed_from_module(
     handle: *mut OxiHmacDrbgSha384,
-    entropy: *const u8,
-    entropy_len: usize,
-    additional_input: *const u8,
-    additional_input_len: usize,
+    additional: *const u8,
+    additional_len: usize,
 ) -> c_int {
-    if handle.is_null() {
-        return R::NullPointer as c_int;
+    // SAFETY: this function's contract is `reseed_typed`'s.
+    unsafe {
+        reseed_typed(
+            handle,
+            additional,
+            additional_len,
+            Service::HmacDrbgSha384,
+            HmacDrbgSha384::reseed_from_module,
+        )
     }
-    let entropy_slice = match unsafe { crate::slice_from_raw(entropy, entropy_len) } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    let ai_slice = match unsafe { crate::slice_from_raw(additional_input, additional_input_len) } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    let Some(drbg) = (unsafe { (*handle).inner.as_mut() }) else {
-        return R::NotOperational as c_int;
-    };
-    status_drbg(drbg.reseed(entropy_slice, ai_slice))
 }
 
 /// HMAC_DRBG-SHA-384 Generate (SP 800-90A §10.1.2.5). See
@@ -535,7 +695,8 @@ pub unsafe extern "C" fn oxi_hmac_drbg_sha384_reseed(
 ///
 /// # Safety
 ///
-/// `handle` must be a live handle from [`oxi_hmac_drbg_sha384_new`].
+/// `handle` must be NULL or a live handle from
+/// [`oxi_hmac_drbg_sha384_new`], not in use by another call.
 /// `out` must point to ≥ `out_len` writable bytes.
 /// `additional_input` must point to ≥ `additional_input_len`
 /// readable bytes when `additional_input_len > 0`.
@@ -547,41 +708,39 @@ pub unsafe extern "C" fn oxi_hmac_drbg_sha384_generate(
     out: *mut u8,
     out_len: usize,
 ) -> c_int {
-    if handle.is_null() {
-        return R::NullPointer as c_int;
+    // SAFETY: this function's contract is `generate_typed`'s.
+    unsafe {
+        generate_typed(
+            handle,
+            additional_input,
+            additional_input_len,
+            out,
+            out_len,
+            Service::HmacDrbgSha384,
+            HmacDrbgSha384::MAX_MODULE_ADDITIONAL_INPUT,
+            HmacDrbgSha384::generate,
+        )
     }
-    if out.is_null() && out_len > 0 {
-        return R::NullPointer as c_int;
-    }
-    let ai_opt: Option<&[u8]> = if additional_input.is_null() && additional_input_len == 0 {
-        None
-    } else {
-        match unsafe { crate::slice_from_raw(additional_input, additional_input_len) } {
-            Ok(s) => Some(s),
-            Err(e) => return e,
-        }
-    };
-    let out_slice = match unsafe { crate::slice_from_raw_mut(out, out_len) } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    let Some(drbg) = (unsafe { (*handle).inner.as_mut() }) else {
-        return R::NotOperational as c_int;
-    };
-    staged(out_slice, |buf| drbg.generate(ai_opt, buf))
 }
 
 /// Opaque HMAC_DRBG-SHA-512 handle. See `OxiHmacDrbgSha256`.
+///
+/// The handle is seeded by the module: `_instantiate_from_module` draws its
+/// entropy input and nonce from the module's seed path, and the DRBG reseeds
+/// itself from the same path at the SP 800-90A reseed interval. A forked
+/// child inherits a copy that returns `InvalidInput = 5` until the child
+/// re-instantiates it with `_instantiate_from_module`. The handle has no
+/// busy flag: callers serialise all calls on one handle.
 ///
 /// cbindgen:opaque
 pub struct OxiHmacDrbgSha512 {
     inner: OxiHandle<HmacDrbgSha512>,
 }
 
-impl OxiHmacDrbgSha512 {
-    #[allow(dead_code)] // first call site lands when a SHA-512-DRBG-driven primitive surfaces
-    pub(crate) fn inner_mut(&mut self) -> Option<&mut HmacDrbgSha512> {
-        self.inner.as_mut()
+impl TypedDrbg for OxiHmacDrbgSha512 {
+    type Inner = HmacDrbgSha512;
+    fn handle(&mut self) -> &mut OxiHandle<HmacDrbgSha512> {
+        &mut self.inner
     }
 }
 
@@ -617,89 +776,65 @@ pub unsafe extern "C" fn oxi_hmac_drbg_sha512_free(handle: *mut OxiHmacDrbgSha51
     if handle.is_null() {
         return;
     }
-    drop(unsafe { Box::from_raw(handle) });
+    // SAFETY: `handle` is a live `Box` from the matching `_new` that has not
+    // been freed, by contract.
+    unsafe { crate::rbg::wipe_and_free(handle) };
 }
 
-/// HMAC_DRBG-SHA-512 Instantiate (SP 800-90A §10.1.2.3). See
-/// [`oxi_hmac_drbg_sha256_instantiate`] for full contract. Per
-/// SP 800-90A Table 2, security strength 256 → entropy ≥ 256 bits,
-/// nonce ≥ 128 bits — same as SHA-256 but with a wider internal
+/// HMAC_DRBG-SHA-512 Instantiate from the module's seed path
+/// (SP 800-90A §10.1.2.3). See
+/// [`oxi_hmac_drbg_sha256_instantiate_from_module`] for the full contract.
+/// The instantiated security strength is 256 bits, with a wider internal
 /// `(K, V)` of 64 bytes each.
 ///
-/// Returns `OxiResult::EntropyInputTooShort = 29` when `entropy_len`
-/// is below 32 bytes and `OxiResult::NonceTooShort = 30` when
-/// `nonce_len` is below 16 bytes (SP 800-90A Rev. 1 Table 2
-/// `min_length` and the module's nonce floor).
-///
 /// # Safety
 ///
-/// All pointer/length pairs must be valid. `handle` must be a live
-/// handle from [`oxi_hmac_drbg_sha512_new`].
+/// `handle` must be NULL or a live handle from
+/// [`oxi_hmac_drbg_sha512_new`], not in use by another call. A non-NULL
+/// `perso` must be valid for reads of `perso_len` bytes.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn oxi_hmac_drbg_sha512_instantiate(
+pub unsafe extern "C" fn oxi_hmac_drbg_sha512_instantiate_from_module(
     handle: *mut OxiHmacDrbgSha512,
-    entropy: *const u8,
-    entropy_len: usize,
-    nonce: *const u8,
-    nonce_len: usize,
-    personalization: *const u8,
-    personalization_len: usize,
+    perso: *const u8,
+    perso_len: usize,
 ) -> c_int {
-    if handle.is_null() {
-        return R::NullPointer as c_int;
+    // SAFETY: this function's contract is `instantiate_typed`'s.
+    unsafe {
+        instantiate_typed(
+            handle,
+            perso,
+            perso_len,
+            Service::HmacDrbgSha512,
+            HmacDrbgSha512::instantiate_from_module,
+        )
     }
-    let entropy_slice = match unsafe { crate::slice_from_raw(entropy, entropy_len) } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    let nonce_slice = match unsafe { crate::slice_from_raw(nonce, nonce_len) } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    let perso_slice = match unsafe { crate::slice_from_raw(personalization, personalization_len) } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    let Some(drbg) = (unsafe { (*handle).inner.as_mut() }) else {
-        return R::NotOperational as c_int;
-    };
-    status_module(drbg.instantiate(entropy_slice, nonce_slice, perso_slice))
 }
 
-/// HMAC_DRBG-SHA-512 Reseed (SP 800-90A §10.1.2.4). See
-/// [`oxi_hmac_drbg_sha256_reseed`].
-///
-/// Returns `OxiResult::EntropyInputTooShort = 29` when `entropy_len`
-/// is below 32 bytes (SP 800-90A Rev. 1 Table 2 `min_length`);
-/// additional input does not count toward it.
+/// HMAC_DRBG-SHA-512 Reseed from the module's seed path
+/// (SP 800-90A §10.1.2.4). See
+/// [`oxi_hmac_drbg_sha256_reseed_from_module`] for the full contract.
 ///
 /// # Safety
 ///
-/// All pointer/length pairs must be valid. `handle` must be a live
-/// handle from [`oxi_hmac_drbg_sha512_new`].
+/// `handle` must be NULL or a live handle from
+/// [`oxi_hmac_drbg_sha512_new`], not in use by another call. A non-NULL
+/// `additional` must be valid for reads of `additional_len` bytes.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn oxi_hmac_drbg_sha512_reseed(
+pub unsafe extern "C" fn oxi_hmac_drbg_sha512_reseed_from_module(
     handle: *mut OxiHmacDrbgSha512,
-    entropy: *const u8,
-    entropy_len: usize,
-    additional_input: *const u8,
-    additional_input_len: usize,
+    additional: *const u8,
+    additional_len: usize,
 ) -> c_int {
-    if handle.is_null() {
-        return R::NullPointer as c_int;
+    // SAFETY: this function's contract is `reseed_typed`'s.
+    unsafe {
+        reseed_typed(
+            handle,
+            additional,
+            additional_len,
+            Service::HmacDrbgSha512,
+            HmacDrbgSha512::reseed_from_module,
+        )
     }
-    let entropy_slice = match unsafe { crate::slice_from_raw(entropy, entropy_len) } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    let ai_slice = match unsafe { crate::slice_from_raw(additional_input, additional_input_len) } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    let Some(drbg) = (unsafe { (*handle).inner.as_mut() }) else {
-        return R::NotOperational as c_int;
-    };
-    status_drbg(drbg.reseed(entropy_slice, ai_slice))
 }
 
 /// HMAC_DRBG-SHA-512 Generate (SP 800-90A §10.1.2.5). See
@@ -707,7 +842,8 @@ pub unsafe extern "C" fn oxi_hmac_drbg_sha512_reseed(
 ///
 /// # Safety
 ///
-/// `handle` must be a live handle from [`oxi_hmac_drbg_sha512_new`].
+/// `handle` must be NULL or a live handle from
+/// [`oxi_hmac_drbg_sha512_new`], not in use by another call.
 /// `out` must point to ≥ `out_len` writable bytes.
 /// `additional_input` must point to ≥ `additional_input_len`
 /// readable bytes when `additional_input_len > 0`.
@@ -719,55 +855,49 @@ pub unsafe extern "C" fn oxi_hmac_drbg_sha512_generate(
     out: *mut u8,
     out_len: usize,
 ) -> c_int {
-    if handle.is_null() {
-        return R::NullPointer as c_int;
+    // SAFETY: this function's contract is `generate_typed`'s.
+    unsafe {
+        generate_typed(
+            handle,
+            additional_input,
+            additional_input_len,
+            out,
+            out_len,
+            Service::HmacDrbgSha512,
+            HmacDrbgSha512::MAX_MODULE_ADDITIONAL_INPUT,
+            HmacDrbgSha512::generate,
+        )
     }
-    if out.is_null() && out_len > 0 {
-        return R::NullPointer as c_int;
-    }
-    let ai_opt: Option<&[u8]> = if additional_input.is_null() && additional_input_len == 0 {
-        None
-    } else {
-        match unsafe { crate::slice_from_raw(additional_input, additional_input_len) } {
-            Ok(s) => Some(s),
-            Err(e) => return e,
-        }
-    };
-    let out_slice = match unsafe { crate::slice_from_raw_mut(out, out_len) } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    let Some(drbg) = (unsafe { (*handle).inner.as_mut() }) else {
-        return R::NotOperational as c_int;
-    };
-    staged(out_slice, |buf| drbg.generate(ai_opt, buf))
 }
 
-// ── Hash-DRBG-SHA-256 / -SHA-384 / -SHA-512 — additive variants ──
+// ── Hash-DRBG-SHA-256 / -SHA-384 / -SHA-512 ──────────────────────
 //
-// SP 800-90A §10.1.1 Hash_DRBG family. Pure stencil mirror of
-// `OxiHmacDrbgSha{256,384,512}` above; upstream `HashDrbg<H: HashAlg>`
-// is parametric over the hash with `HashDrbgSha{256,384,512}` shipping
-// as type aliases at `crates/oxicrypt-drbg/src/hash.rs:139-143`. The
-// `instantiate / reseed / generate` signatures are byte-identical to
-// the HMAC-DRBG family (same `Result<(), Error>` for instantiate,
-// `Result<(), DrbgError>` for reseed and generate, same `Option<&[u8]>`
-// for generate's `additional_input`). Combined-input ceiling is
-// `HASH_DRBG_MAX_DF_INPUT` (alg-independent). Per SP 800-90A Table 2,
+// SP 800-90A §10.1.1 Hash_DRBG family, in the shape of
+// `OxiHmacDrbgSha{256,384,512}` above, over the upstream
+// `HashDrbg<H: HashAlg>` type aliases `HashDrbgSha{256,384,512}`. The
+// `instantiate_from_module / reseed_from_module / generate` signatures
+// are identical to the HMAC-DRBG family. Per SP 800-90A Table 2,
 // security strengths match HMAC: 256 bits for SHA-256, SHA-384 and
 // SHA-512 (SP 800-57 Part 1).
 
 /// Opaque Hash_DRBG-SHA-256 handle. See `OxiHmacDrbgSha256`.
+///
+/// The handle is seeded by the module: `_instantiate_from_module` draws its
+/// entropy input and nonce from the module's seed path, and the DRBG reseeds
+/// itself from the same path at the SP 800-90A reseed interval. A forked
+/// child inherits a copy that returns `InvalidInput = 5` until the child
+/// re-instantiates it with `_instantiate_from_module`. The handle has no
+/// busy flag: callers serialise all calls on one handle.
 ///
 /// cbindgen:opaque
 pub struct OxiHashDrbgSha256 {
     inner: OxiHandle<HashDrbgSha256>,
 }
 
-impl OxiHashDrbgSha256 {
-    #[allow(dead_code)] // first call site lands when a Hash-DRBG-SHA-256-driven primitive surfaces
-    pub(crate) fn inner_mut(&mut self) -> Option<&mut HashDrbgSha256> {
-        self.inner.as_mut()
+impl TypedDrbg for OxiHashDrbgSha256 {
+    type Inner = HashDrbgSha256;
+    fn handle(&mut self) -> &mut OxiHandle<HashDrbgSha256> {
+        &mut self.inner
     }
 }
 
@@ -803,89 +933,63 @@ pub unsafe extern "C" fn oxi_hash_drbg_sha256_free(handle: *mut OxiHashDrbgSha25
     if handle.is_null() {
         return;
     }
-    drop(unsafe { Box::from_raw(handle) });
+    // SAFETY: `handle` is a live `Box` from the matching `_new` that has not
+    // been freed, by contract.
+    unsafe { crate::rbg::wipe_and_free(handle) };
 }
 
-/// Hash_DRBG-SHA-256 Instantiate (SP 800-90A §10.1.1.2). See
-/// [`oxi_hmac_drbg_sha256_instantiate`] for full contract; per
-/// SP 800-90A Table 2, security strength 256 → entropy ≥ 256 bits,
-/// nonce ≥ 128 bits. Combined-input ceiling is the alg-independent
-/// `HASH_DRBG_MAX_DF_INPUT` upstream constant.
-///
-/// Returns `OxiResult::EntropyInputTooShort = 29` when `entropy_len`
-/// is below 32 bytes and `OxiResult::NonceTooShort = 30` when
-/// `nonce_len` is below 16 bytes (SP 800-90A Rev. 1 Table 2
-/// `min_length` and the module's nonce floor).
+/// Hash_DRBG-SHA-256 Instantiate from the module's seed path
+/// (SP 800-90A §10.1.1.2). See
+/// [`oxi_hmac_drbg_sha256_instantiate_from_module`] for the full contract.
 ///
 /// # Safety
 ///
-/// All pointer/length pairs must be valid. `handle` must be a live
-/// handle from [`oxi_hash_drbg_sha256_new`].
+/// `handle` must be NULL or a live handle from
+/// [`oxi_hash_drbg_sha256_new`], not in use by another call. A non-NULL
+/// `perso` must be valid for reads of `perso_len` bytes.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn oxi_hash_drbg_sha256_instantiate(
+pub unsafe extern "C" fn oxi_hash_drbg_sha256_instantiate_from_module(
     handle: *mut OxiHashDrbgSha256,
-    entropy: *const u8,
-    entropy_len: usize,
-    nonce: *const u8,
-    nonce_len: usize,
-    personalization: *const u8,
-    personalization_len: usize,
+    perso: *const u8,
+    perso_len: usize,
 ) -> c_int {
-    if handle.is_null() {
-        return R::NullPointer as c_int;
+    // SAFETY: this function's contract is `instantiate_typed`'s.
+    unsafe {
+        instantiate_typed(
+            handle,
+            perso,
+            perso_len,
+            Service::HashDrbgSha256,
+            HashDrbgSha256::instantiate_from_module,
+        )
     }
-    let entropy_slice = match unsafe { crate::slice_from_raw(entropy, entropy_len) } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    let nonce_slice = match unsafe { crate::slice_from_raw(nonce, nonce_len) } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    let perso_slice = match unsafe { crate::slice_from_raw(personalization, personalization_len) } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    let Some(drbg) = (unsafe { (*handle).inner.as_mut() }) else {
-        return R::NotOperational as c_int;
-    };
-    status_module(drbg.instantiate(entropy_slice, nonce_slice, perso_slice))
 }
 
-/// Hash_DRBG-SHA-256 Reseed (SP 800-90A §10.1.1.3). See
-/// [`oxi_hmac_drbg_sha256_reseed`].
-///
-/// Returns `OxiResult::EntropyInputTooShort = 29` when `entropy_len`
-/// is below 32 bytes (SP 800-90A Rev. 1 Table 2 `min_length`);
-/// additional input does not count toward it.
+/// Hash_DRBG-SHA-256 Reseed from the module's seed path
+/// (SP 800-90A §10.1.1.3). See
+/// [`oxi_hmac_drbg_sha256_reseed_from_module`] for the full contract.
 ///
 /// # Safety
 ///
-/// All pointer/length pairs must be valid. `handle` must be a live
-/// handle from [`oxi_hash_drbg_sha256_new`].
+/// `handle` must be NULL or a live handle from
+/// [`oxi_hash_drbg_sha256_new`], not in use by another call. A non-NULL
+/// `additional` must be valid for reads of `additional_len` bytes.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn oxi_hash_drbg_sha256_reseed(
+pub unsafe extern "C" fn oxi_hash_drbg_sha256_reseed_from_module(
     handle: *mut OxiHashDrbgSha256,
-    entropy: *const u8,
-    entropy_len: usize,
-    additional_input: *const u8,
-    additional_input_len: usize,
+    additional: *const u8,
+    additional_len: usize,
 ) -> c_int {
-    if handle.is_null() {
-        return R::NullPointer as c_int;
+    // SAFETY: this function's contract is `reseed_typed`'s.
+    unsafe {
+        reseed_typed(
+            handle,
+            additional,
+            additional_len,
+            Service::HashDrbgSha256,
+            HashDrbgSha256::reseed_from_module,
+        )
     }
-    let entropy_slice = match unsafe { crate::slice_from_raw(entropy, entropy_len) } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    let ai_slice = match unsafe { crate::slice_from_raw(additional_input, additional_input_len) } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    let Some(drbg) = (unsafe { (*handle).inner.as_mut() }) else {
-        return R::NotOperational as c_int;
-    };
-    status_drbg(drbg.reseed(entropy_slice, ai_slice))
 }
 
 /// Hash_DRBG-SHA-256 Generate (SP 800-90A §10.1.1.4). See
@@ -893,7 +997,8 @@ pub unsafe extern "C" fn oxi_hash_drbg_sha256_reseed(
 ///
 /// # Safety
 ///
-/// `handle` must be a live handle from [`oxi_hash_drbg_sha256_new`].
+/// `handle` must be NULL or a live handle from
+/// [`oxi_hash_drbg_sha256_new`], not in use by another call.
 /// `out` must point to ≥ `out_len` writable bytes.
 /// `additional_input` must point to ≥ `additional_input_len`
 /// readable bytes when `additional_input_len > 0`.
@@ -905,41 +1010,39 @@ pub unsafe extern "C" fn oxi_hash_drbg_sha256_generate(
     out: *mut u8,
     out_len: usize,
 ) -> c_int {
-    if handle.is_null() {
-        return R::NullPointer as c_int;
+    // SAFETY: this function's contract is `generate_typed`'s.
+    unsafe {
+        generate_typed(
+            handle,
+            additional_input,
+            additional_input_len,
+            out,
+            out_len,
+            Service::HashDrbgSha256,
+            HashDrbgSha256::MAX_MODULE_ADDITIONAL_INPUT,
+            HashDrbgSha256::generate,
+        )
     }
-    if out.is_null() && out_len > 0 {
-        return R::NullPointer as c_int;
-    }
-    let ai_opt: Option<&[u8]> = if additional_input.is_null() && additional_input_len == 0 {
-        None
-    } else {
-        match unsafe { crate::slice_from_raw(additional_input, additional_input_len) } {
-            Ok(s) => Some(s),
-            Err(e) => return e,
-        }
-    };
-    let out_slice = match unsafe { crate::slice_from_raw_mut(out, out_len) } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    let Some(drbg) = (unsafe { (*handle).inner.as_mut() }) else {
-        return R::NotOperational as c_int;
-    };
-    staged(out_slice, |buf| drbg.generate(ai_opt, buf))
 }
 
 /// Opaque Hash_DRBG-SHA-384 handle. See `OxiHmacDrbgSha256`.
+///
+/// The handle is seeded by the module: `_instantiate_from_module` draws its
+/// entropy input and nonce from the module's seed path, and the DRBG reseeds
+/// itself from the same path at the SP 800-90A reseed interval. A forked
+/// child inherits a copy that returns `InvalidInput = 5` until the child
+/// re-instantiates it with `_instantiate_from_module`. The handle has no
+/// busy flag: callers serialise all calls on one handle.
 ///
 /// cbindgen:opaque
 pub struct OxiHashDrbgSha384 {
     inner: OxiHandle<HashDrbgSha384>,
 }
 
-impl OxiHashDrbgSha384 {
-    #[allow(dead_code)] // first call site lands when a Hash-DRBG-SHA-384-driven primitive surfaces
-    pub(crate) fn inner_mut(&mut self) -> Option<&mut HashDrbgSha384> {
-        self.inner.as_mut()
+impl TypedDrbg for OxiHashDrbgSha384 {
+    type Inner = HashDrbgSha384;
+    fn handle(&mut self) -> &mut OxiHandle<HashDrbgSha384> {
+        &mut self.inner
     }
 }
 
@@ -974,93 +1077,70 @@ pub unsafe extern "C" fn oxi_hash_drbg_sha384_free(handle: *mut OxiHashDrbgSha38
     if handle.is_null() {
         return;
     }
-    drop(unsafe { Box::from_raw(handle) });
+    // SAFETY: `handle` is a live `Box` from the matching `_new` that has not
+    // been freed, by contract.
+    unsafe { crate::rbg::wipe_and_free(handle) };
 }
 
-/// Hash_DRBG-SHA-384 Instantiate. The instantiated security strength
-/// is 256 bits (SP 800-57 Part 1), so per SP 800-90A Table 2
-/// entropy ≥ 256 bits, nonce ≥ 128 bits.
-///
-/// Returns `OxiResult::EntropyInputTooShort = 29` when `entropy_len`
-/// is below 32 bytes and `OxiResult::NonceTooShort = 30` when
-/// `nonce_len` is below 16 bytes (SP 800-90A Rev. 1 Table 2
-/// `min_length` and the module's nonce floor).
+/// Hash_DRBG-SHA-384 Instantiate from the module's seed path. The
+/// instantiated security strength is 256 bits (SP 800-57 Part 1). See
+/// [`oxi_hmac_drbg_sha256_instantiate_from_module`] for the full contract.
 ///
 /// # Safety
 ///
-/// All pointer/length pairs must be valid. `handle` must be a live
-/// handle from [`oxi_hash_drbg_sha384_new`].
+/// `handle` must be NULL or a live handle from
+/// [`oxi_hash_drbg_sha384_new`], not in use by another call. A non-NULL
+/// `perso` must be valid for reads of `perso_len` bytes.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn oxi_hash_drbg_sha384_instantiate(
+pub unsafe extern "C" fn oxi_hash_drbg_sha384_instantiate_from_module(
     handle: *mut OxiHashDrbgSha384,
-    entropy: *const u8,
-    entropy_len: usize,
-    nonce: *const u8,
-    nonce_len: usize,
-    personalization: *const u8,
-    personalization_len: usize,
+    perso: *const u8,
+    perso_len: usize,
 ) -> c_int {
-    if handle.is_null() {
-        return R::NullPointer as c_int;
+    // SAFETY: this function's contract is `instantiate_typed`'s.
+    unsafe {
+        instantiate_typed(
+            handle,
+            perso,
+            perso_len,
+            Service::HashDrbgSha384,
+            HashDrbgSha384::instantiate_from_module,
+        )
     }
-    let entropy_slice = match unsafe { crate::slice_from_raw(entropy, entropy_len) } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    let nonce_slice = match unsafe { crate::slice_from_raw(nonce, nonce_len) } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    let perso_slice = match unsafe { crate::slice_from_raw(personalization, personalization_len) } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    let Some(drbg) = (unsafe { (*handle).inner.as_mut() }) else {
-        return R::NotOperational as c_int;
-    };
-    status_module(drbg.instantiate(entropy_slice, nonce_slice, perso_slice))
 }
 
-/// Hash_DRBG-SHA-384 Reseed.
-///
-/// Returns `OxiResult::EntropyInputTooShort = 29` when `entropy_len`
-/// is below 32 bytes (SP 800-90A Rev. 1 Table 2 `min_length`);
-/// additional input does not count toward it.
+/// Hash_DRBG-SHA-384 Reseed from the module's seed path. See
+/// [`oxi_hmac_drbg_sha256_reseed_from_module`] for the full contract.
 ///
 /// # Safety
 ///
-/// All pointer/length pairs must be valid. `handle` must be a live
-/// handle from [`oxi_hash_drbg_sha384_new`].
+/// `handle` must be NULL or a live handle from
+/// [`oxi_hash_drbg_sha384_new`], not in use by another call. A non-NULL
+/// `additional` must be valid for reads of `additional_len` bytes.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn oxi_hash_drbg_sha384_reseed(
+pub unsafe extern "C" fn oxi_hash_drbg_sha384_reseed_from_module(
     handle: *mut OxiHashDrbgSha384,
-    entropy: *const u8,
-    entropy_len: usize,
-    additional_input: *const u8,
-    additional_input_len: usize,
+    additional: *const u8,
+    additional_len: usize,
 ) -> c_int {
-    if handle.is_null() {
-        return R::NullPointer as c_int;
+    // SAFETY: this function's contract is `reseed_typed`'s.
+    unsafe {
+        reseed_typed(
+            handle,
+            additional,
+            additional_len,
+            Service::HashDrbgSha384,
+            HashDrbgSha384::reseed_from_module,
+        )
     }
-    let entropy_slice = match unsafe { crate::slice_from_raw(entropy, entropy_len) } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    let ai_slice = match unsafe { crate::slice_from_raw(additional_input, additional_input_len) } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    let Some(drbg) = (unsafe { (*handle).inner.as_mut() }) else {
-        return R::NotOperational as c_int;
-    };
-    status_drbg(drbg.reseed(entropy_slice, ai_slice))
 }
 
-/// Hash_DRBG-SHA-384 Generate.
+/// Hash_DRBG-SHA-384 Generate. See [`oxi_hmac_drbg_sha256_generate`].
 ///
 /// # Safety
 ///
-/// `handle` must be a live handle from [`oxi_hash_drbg_sha384_new`].
+/// `handle` must be NULL or a live handle from
+/// [`oxi_hash_drbg_sha384_new`], not in use by another call.
 /// `out` must point to ≥ `out_len` writable bytes.
 /// `additional_input` must point to ≥ `additional_input_len`
 /// readable bytes when `additional_input_len > 0`.
@@ -1072,41 +1152,39 @@ pub unsafe extern "C" fn oxi_hash_drbg_sha384_generate(
     out: *mut u8,
     out_len: usize,
 ) -> c_int {
-    if handle.is_null() {
-        return R::NullPointer as c_int;
+    // SAFETY: this function's contract is `generate_typed`'s.
+    unsafe {
+        generate_typed(
+            handle,
+            additional_input,
+            additional_input_len,
+            out,
+            out_len,
+            Service::HashDrbgSha384,
+            HashDrbgSha384::MAX_MODULE_ADDITIONAL_INPUT,
+            HashDrbgSha384::generate,
+        )
     }
-    if out.is_null() && out_len > 0 {
-        return R::NullPointer as c_int;
-    }
-    let ai_opt: Option<&[u8]> = if additional_input.is_null() && additional_input_len == 0 {
-        None
-    } else {
-        match unsafe { crate::slice_from_raw(additional_input, additional_input_len) } {
-            Ok(s) => Some(s),
-            Err(e) => return e,
-        }
-    };
-    let out_slice = match unsafe { crate::slice_from_raw_mut(out, out_len) } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    let Some(drbg) = (unsafe { (*handle).inner.as_mut() }) else {
-        return R::NotOperational as c_int;
-    };
-    staged(out_slice, |buf| drbg.generate(ai_opt, buf))
 }
 
 /// Opaque Hash_DRBG-SHA-512 handle. See `OxiHmacDrbgSha256`.
+///
+/// The handle is seeded by the module: `_instantiate_from_module` draws its
+/// entropy input and nonce from the module's seed path, and the DRBG reseeds
+/// itself from the same path at the SP 800-90A reseed interval. A forked
+/// child inherits a copy that returns `InvalidInput = 5` until the child
+/// re-instantiates it with `_instantiate_from_module`. The handle has no
+/// busy flag: callers serialise all calls on one handle.
 ///
 /// cbindgen:opaque
 pub struct OxiHashDrbgSha512 {
     inner: OxiHandle<HashDrbgSha512>,
 }
 
-impl OxiHashDrbgSha512 {
-    #[allow(dead_code)] // first call site lands when a Hash-DRBG-SHA-512-driven primitive surfaces
-    pub(crate) fn inner_mut(&mut self) -> Option<&mut HashDrbgSha512> {
-        self.inner.as_mut()
+impl TypedDrbg for OxiHashDrbgSha512 {
+    type Inner = HashDrbgSha512;
+    fn handle(&mut self) -> &mut OxiHandle<HashDrbgSha512> {
+        &mut self.inner
     }
 }
 
@@ -1141,92 +1219,70 @@ pub unsafe extern "C" fn oxi_hash_drbg_sha512_free(handle: *mut OxiHashDrbgSha51
     if handle.is_null() {
         return;
     }
-    drop(unsafe { Box::from_raw(handle) });
+    // SAFETY: `handle` is a live `Box` from the matching `_new` that has not
+    // been freed, by contract.
+    unsafe { crate::rbg::wipe_and_free(handle) };
 }
 
-/// Hash_DRBG-SHA-512 Instantiate. Per SP 800-90A Table 2, security
-/// strength 256 → entropy ≥ 256 bits, nonce ≥ 128 bits.
-///
-/// Returns `OxiResult::EntropyInputTooShort = 29` when `entropy_len`
-/// is below 32 bytes and `OxiResult::NonceTooShort = 30` when
-/// `nonce_len` is below 16 bytes (SP 800-90A Rev. 1 Table 2
-/// `min_length` and the module's nonce floor).
+/// Hash_DRBG-SHA-512 Instantiate from the module's seed path. The
+/// instantiated security strength is 256 bits. See
+/// [`oxi_hmac_drbg_sha256_instantiate_from_module`] for the full contract.
 ///
 /// # Safety
 ///
-/// All pointer/length pairs must be valid. `handle` must be a live
-/// handle from [`oxi_hash_drbg_sha512_new`].
+/// `handle` must be NULL or a live handle from
+/// [`oxi_hash_drbg_sha512_new`], not in use by another call. A non-NULL
+/// `perso` must be valid for reads of `perso_len` bytes.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn oxi_hash_drbg_sha512_instantiate(
+pub unsafe extern "C" fn oxi_hash_drbg_sha512_instantiate_from_module(
     handle: *mut OxiHashDrbgSha512,
-    entropy: *const u8,
-    entropy_len: usize,
-    nonce: *const u8,
-    nonce_len: usize,
-    personalization: *const u8,
-    personalization_len: usize,
+    perso: *const u8,
+    perso_len: usize,
 ) -> c_int {
-    if handle.is_null() {
-        return R::NullPointer as c_int;
+    // SAFETY: this function's contract is `instantiate_typed`'s.
+    unsafe {
+        instantiate_typed(
+            handle,
+            perso,
+            perso_len,
+            Service::HashDrbgSha512,
+            HashDrbgSha512::instantiate_from_module,
+        )
     }
-    let entropy_slice = match unsafe { crate::slice_from_raw(entropy, entropy_len) } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    let nonce_slice = match unsafe { crate::slice_from_raw(nonce, nonce_len) } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    let perso_slice = match unsafe { crate::slice_from_raw(personalization, personalization_len) } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    let Some(drbg) = (unsafe { (*handle).inner.as_mut() }) else {
-        return R::NotOperational as c_int;
-    };
-    status_module(drbg.instantiate(entropy_slice, nonce_slice, perso_slice))
 }
 
-/// Hash_DRBG-SHA-512 Reseed.
-///
-/// Returns `OxiResult::EntropyInputTooShort = 29` when `entropy_len`
-/// is below 32 bytes (SP 800-90A Rev. 1 Table 2 `min_length`);
-/// additional input does not count toward it.
+/// Hash_DRBG-SHA-512 Reseed from the module's seed path. See
+/// [`oxi_hmac_drbg_sha256_reseed_from_module`] for the full contract.
 ///
 /// # Safety
 ///
-/// All pointer/length pairs must be valid. `handle` must be a live
-/// handle from [`oxi_hash_drbg_sha512_new`].
+/// `handle` must be NULL or a live handle from
+/// [`oxi_hash_drbg_sha512_new`], not in use by another call. A non-NULL
+/// `additional` must be valid for reads of `additional_len` bytes.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn oxi_hash_drbg_sha512_reseed(
+pub unsafe extern "C" fn oxi_hash_drbg_sha512_reseed_from_module(
     handle: *mut OxiHashDrbgSha512,
-    entropy: *const u8,
-    entropy_len: usize,
-    additional_input: *const u8,
-    additional_input_len: usize,
+    additional: *const u8,
+    additional_len: usize,
 ) -> c_int {
-    if handle.is_null() {
-        return R::NullPointer as c_int;
+    // SAFETY: this function's contract is `reseed_typed`'s.
+    unsafe {
+        reseed_typed(
+            handle,
+            additional,
+            additional_len,
+            Service::HashDrbgSha512,
+            HashDrbgSha512::reseed_from_module,
+        )
     }
-    let entropy_slice = match unsafe { crate::slice_from_raw(entropy, entropy_len) } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    let ai_slice = match unsafe { crate::slice_from_raw(additional_input, additional_input_len) } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    let Some(drbg) = (unsafe { (*handle).inner.as_mut() }) else {
-        return R::NotOperational as c_int;
-    };
-    status_drbg(drbg.reseed(entropy_slice, ai_slice))
 }
 
-/// Hash_DRBG-SHA-512 Generate.
+/// Hash_DRBG-SHA-512 Generate. See [`oxi_hmac_drbg_sha256_generate`].
 ///
 /// # Safety
 ///
-/// `handle` must be a live handle from [`oxi_hash_drbg_sha512_new`].
+/// `handle` must be NULL or a live handle from
+/// [`oxi_hash_drbg_sha512_new`], not in use by another call.
 /// `out` must point to ≥ `out_len` writable bytes.
 /// `additional_input` must point to ≥ `additional_input_len`
 /// readable bytes when `additional_input_len > 0`.
@@ -1238,89 +1294,64 @@ pub unsafe extern "C" fn oxi_hash_drbg_sha512_generate(
     out: *mut u8,
     out_len: usize,
 ) -> c_int {
-    if handle.is_null() {
-        return R::NullPointer as c_int;
+    // SAFETY: this function's contract is `generate_typed`'s.
+    unsafe {
+        generate_typed(
+            handle,
+            additional_input,
+            additional_input_len,
+            out,
+            out_len,
+            Service::HashDrbgSha512,
+            HashDrbgSha512::MAX_MODULE_ADDITIONAL_INPUT,
+            HashDrbgSha512::generate,
+        )
     }
-    if out.is_null() && out_len > 0 {
-        return R::NullPointer as c_int;
-    }
-    let ai_opt: Option<&[u8]> = if additional_input.is_null() && additional_input_len == 0 {
-        None
-    } else {
-        match unsafe { crate::slice_from_raw(additional_input, additional_input_len) } {
-            Ok(s) => Some(s),
-            Err(e) => return e,
-        }
-    };
-    let out_slice = match unsafe { crate::slice_from_raw_mut(out, out_len) } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    let Some(drbg) = (unsafe { (*handle).inner.as_mut() }) else {
-        return R::NotOperational as c_int;
-    };
-    staged(out_slice, |buf| drbg.generate(ai_opt, buf))
 }
 
-// ── CTR-DRBG-AES-128 / -192 / -256 — additive variants ──────────
+// ── CTR-DRBG-AES-128 / -192 / -256 ───────────────────────────────
 //
 // SP 800-90A §10.2 CTR_DRBG family. Same opaque-handle / `OxiHandle<T>`
 // / Drop-zeroize / per-call-mutating contract as the HMAC-DRBG and
 // Hash-DRBG families above; differs in upstream construction (block
-// cipher CTR mode per §10.2 vs hash-based per §10.1.1/§10.1.2) AND
-// — uniquely among the three DRBG families — exposes BOTH `_no_df`
-// and `_df` derivation modes through DISTINCT entry points per
-// lifecycle stage rather than a runtime flag.
-//
-// **df vs no-df (SP 800-90A §10.2.1):** the `no_df` variant requires
-// the caller to supply seed material that is already a full-entropy
-// string of exactly `SEED_LEN` bytes (= `KEY_LEN + OUTLEN` per the
-// underlying block cipher). The `df` variant runs `Block_Cipher_df`
-// over arbitrary-length entropy + nonce + personalization input
-// (capped at `MAX_DF_INPUT`) to derive the seed. SP 800-90A allows
-// either; the choice is a deployment-environment decision (the no_df
-// path is for callers with a hardware RNG that outputs full-entropy
-// blocks; the df path is for callers with a non-full-entropy source
-// or who want personalization). We surface BOTH because lab-grade
-// callers exercise both — collapsing them into a runtime `use_df`
-// flag would force conditional FFI-side validation that obscures the
-// upstream's distinct preconditions (no_df: exact length; df:
-// minimum entropy and nonce lengths, total up to MAX_DF_INPUT). One-to-one upstream-to-FFI
-// mapping is the reviewer-legible default.
+// cipher CTR mode per §10.2 vs hash-based per §10.1.1/§10.1.2). Every
+// CTR_DRBG handle is instantiated from the module's seed path through
+// the derivation function (`Block_Cipher_df`, SP 800-90A §10.3.2), so
+// the generate entry point is `_generate_df`.
 //
 // Per SP 800-90A Table 3, security strength is 128 / 192 / 256 bits
 // for CTR-AES-128 / -192 / -256 (matches the underlying block-cipher
-// key length). `SEED_LEN` is `KEY_LEN + OUTLEN` = 32 / 40 / 48 bytes.
-// `RESEED_INTERVAL` is `2^48` per Table 3. `max_number_of_bits_per_request`
-// is `2^19` bits — alg-independent across all DRBG families. CTR_DRBG
-// needs no `OxiResult` discriminant of its own: its errors map
-// through `From<oxicrypt_module::Error>` + `From<DrbgError>` in
-// `error.rs` (DrbgError::InvalidSeedLength → InvalidInput,
-// DrbgError::InputTooLong → InvalidInput, DrbgError::RequestTooLong
-// → OutputTooLong, and for the `_df` functions
-// Error::EntropyInputTooShort and DrbgError::EntropyInputTooShort →
-// EntropyInputTooShort, Error::NonceTooShort → NonceTooShort).
+// key length). `max_number_of_bits_per_request` is `2^19` bits —
+// alg-independent across all DRBG families. CTR_DRBG needs no
+// `OxiResult` discriminant of its own: its errors map through
+// `From<oxicrypt_module::Error>` + `From<DrbgError>` in `error.rs`.
 
 /// Opaque CTR_DRBG-AES-128 handle. See `OxiHmacDrbgSha256` for the
 /// per-call-mutating thread-safety and Drop-zeroize contract.
+///
+/// The handle is seeded by the module: `_instantiate_from_module` draws its
+/// entropy input and nonce from the module's seed path, and the DRBG reseeds
+/// itself from the same path at the SP 800-90A reseed interval. A forked
+/// child inherits a copy that returns `InvalidInput = 5` until the child
+/// re-instantiates it with `_instantiate_from_module`. The handle has no
+/// busy flag: callers serialise all calls on one handle.
 ///
 /// cbindgen:opaque
 pub struct OxiCtrDrbgAes128 {
     inner: OxiHandle<CtrDrbgAes128>,
 }
 
-impl OxiCtrDrbgAes128 {
-    #[allow(dead_code)] // first call site lands when a CTR-AES-128-DRBG-driven primitive surfaces
-    pub(crate) fn inner_mut(&mut self) -> Option<&mut CtrDrbgAes128> {
-        self.inner.as_mut()
+impl TypedDrbg for OxiCtrDrbgAes128 {
+    type Inner = CtrDrbgAes128;
+    fn handle(&mut self) -> &mut OxiHandle<CtrDrbgAes128> {
+        &mut self.inner
     }
 }
 
 /// Allocate a new, uninstantiated CTR_DRBG-AES-128 handle. Caller
-/// must subsequently call exactly one of
-/// [`oxi_ctr_drbg_aes128_instantiate_no_df`] or
-/// [`oxi_ctr_drbg_aes128_instantiate_df`] before generate / reseed
-/// becomes operational.
+/// must subsequently call
+/// [`oxi_ctr_drbg_aes128_instantiate_from_module`] before generate /
+/// reseed becomes operational.
 ///
 /// # Safety
 ///
@@ -1340,7 +1371,8 @@ pub unsafe extern "C" fn oxi_ctr_drbg_aes128_new(out_handle: *mut *mut OxiCtrDrb
 
 /// Free a CTR_DRBG-AES-128 handle. NULL-safe. Drop on the upstream
 /// `CtrDrbgAes128` zeroizes the internal `(Key, V, reseed_counter)`
-/// state via `oxicrypt-zeroize`.
+/// state via `oxicrypt-zeroize`, and every byte of the handle is then wiped
+/// before its memory is released.
 ///
 /// # Safety
 ///
@@ -1351,207 +1383,81 @@ pub unsafe extern "C" fn oxi_ctr_drbg_aes128_free(handle: *mut OxiCtrDrbgAes128)
     if handle.is_null() {
         return;
     }
-    drop(unsafe { Box::from_raw(handle) });
+    // SAFETY: `handle` is a live `Box` from the matching `_new` that has not
+    // been freed, by contract.
+    unsafe { crate::rbg::wipe_and_free(handle) };
 }
 
-/// CTR_DRBG-AES-128 Instantiate, **no-df** variant (SP 800-90A
-/// §10.2.1.3.1). `seed_material` MUST be exactly `SEED_LEN` = 32
-/// bytes (= AES-128 key length 16 + AES block size 16) and MUST
-/// equal `entropy_input || personalization_string` per the spec's
-/// no-df construction. Seed-length mismatch returns
-/// `OxiResult::InvalidInput = 5` — there is no auto-extend or
-/// auto-truncate at the FFI boundary.
+/// CTR_DRBG-AES-128 Instantiate from the module's seed path, through the
+/// derivation function (SP 800-90A §10.2.1.3.2). The instantiated security
+/// strength is 128 bits. See
+/// [`oxi_hmac_drbg_sha256_instantiate_from_module`] for the full contract.
 ///
 /// # Safety
 ///
-/// `handle` must be a live handle from
-/// [`oxi_ctr_drbg_aes128_new`]. `seed_material` must point to ≥
-/// `seed_material_len` readable bytes.
+/// `handle` must be NULL or a live handle from
+/// [`oxi_ctr_drbg_aes128_new`], not in use by another call. A non-NULL
+/// `perso` must be valid for reads of `perso_len` bytes.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn oxi_ctr_drbg_aes128_instantiate_no_df(
+pub unsafe extern "C" fn oxi_ctr_drbg_aes128_instantiate_from_module(
     handle: *mut OxiCtrDrbgAes128,
-    seed_material: *const u8,
-    seed_material_len: usize,
+    perso: *const u8,
+    perso_len: usize,
 ) -> c_int {
-    if handle.is_null() {
-        return R::NullPointer as c_int;
+    // SAFETY: this function's contract is `instantiate_typed`'s.
+    unsafe {
+        instantiate_typed(
+            handle,
+            perso,
+            perso_len,
+            Service::CtrDrbgAes128,
+            CtrDrbgAes128::instantiate_from_module,
+        )
     }
-    let seed_slice = match unsafe { crate::slice_from_raw(seed_material, seed_material_len) } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    let Some(drbg) = (unsafe { (*handle).inner.as_mut() }) else {
-        return R::NotOperational as c_int;
-    };
-    status_module(drbg.instantiate_no_df(seed_slice))
 }
 
-/// CTR_DRBG-AES-128 Instantiate, **df** variant (SP 800-90A
-/// §10.2.1.3.2). Runs `Block_Cipher_df(entropy || nonce ||
-/// personalization, seedlen)` to derive the initial seed material.
-/// Combined-length ceiling is `MAX_DF_INPUT` (alg-independent).
-/// Each input may be NULL when its length is 0. Per SP 800-90A
-/// Table 3, security strength 128 → entropy ≥ 128 bits, nonce ≥
-/// 64 bits; a shorter entropy input returns
-/// `OxiResult::EntropyInputTooShort = 29` and a shorter nonce
-/// `OxiResult::NonceTooShort = 30`.
+/// CTR_DRBG-AES-128 Reseed from the module's seed path, through the
+/// derivation function (SP 800-90A §10.2.1.4.2). See
+/// [`oxi_hmac_drbg_sha256_reseed_from_module`] for the full contract.
 ///
 /// # Safety
 ///
-/// All pointer/length pairs must be valid. `handle` must be a live
-/// handle from [`oxi_ctr_drbg_aes128_new`].
+/// `handle` must be NULL or a live handle from
+/// [`oxi_ctr_drbg_aes128_new`], not in use by another call. A non-NULL
+/// `additional` must be valid for reads of `additional_len` bytes.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn oxi_ctr_drbg_aes128_instantiate_df(
+pub unsafe extern "C" fn oxi_ctr_drbg_aes128_reseed_from_module(
     handle: *mut OxiCtrDrbgAes128,
-    entropy: *const u8,
-    entropy_len: usize,
-    nonce: *const u8,
-    nonce_len: usize,
-    personalization: *const u8,
-    personalization_len: usize,
+    additional: *const u8,
+    additional_len: usize,
 ) -> c_int {
-    if handle.is_null() {
-        return R::NullPointer as c_int;
+    // SAFETY: this function's contract is `reseed_typed`'s.
+    unsafe {
+        reseed_typed(
+            handle,
+            additional,
+            additional_len,
+            Service::CtrDrbgAes128,
+            CtrDrbgAes128::reseed_from_module,
+        )
     }
-    let entropy_slice = match unsafe { crate::slice_from_raw(entropy, entropy_len) } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    let nonce_slice = match unsafe { crate::slice_from_raw(nonce, nonce_len) } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    let perso_slice = match unsafe { crate::slice_from_raw(personalization, personalization_len) } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    let Some(drbg) = (unsafe { (*handle).inner.as_mut() }) else {
-        return R::NotOperational as c_int;
-    };
-    status_module(drbg.instantiate_df(entropy_slice, nonce_slice, perso_slice))
-}
-
-/// CTR_DRBG-AES-128 Reseed, **no-df** variant (SP 800-90A
-/// §10.2.1.4.1). `seed_material` MUST be exactly `SEED_LEN` = 32
-/// bytes; mismatch returns `OxiResult::InvalidInput = 5`.
-///
-/// # Safety
-///
-/// All pointer/length pairs must be valid. `handle` must be a live,
-/// instantiated handle from [`oxi_ctr_drbg_aes128_new`].
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn oxi_ctr_drbg_aes128_reseed_no_df(
-    handle: *mut OxiCtrDrbgAes128,
-    seed_material: *const u8,
-    seed_material_len: usize,
-) -> c_int {
-    if handle.is_null() {
-        return R::NullPointer as c_int;
-    }
-    let seed_slice = match unsafe { crate::slice_from_raw(seed_material, seed_material_len) } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    let Some(drbg) = (unsafe { (*handle).inner.as_mut() }) else {
-        return R::NotOperational as c_int;
-    };
-    status_drbg(drbg.reseed_no_df(seed_slice))
-}
-
-/// CTR_DRBG-AES-128 Reseed, **df** variant (SP 800-90A §10.2.1.4.2).
-/// Runs `Block_Cipher_df(entropy || additional_input, seedlen)` to
-/// derive the new seed. Combined-length ceiling is `MAX_DF_INPUT`.
-///
-/// Returns `OxiResult::EntropyInputTooShort = 29` when `entropy_len`
-/// is below 16 bytes (SP 800-90A Rev. 1 Table 3 `min_length`);
-/// additional input does not count toward it.
-///
-/// # Safety
-///
-/// All pointer/length pairs must be valid. `handle` must be a live,
-/// instantiated handle from [`oxi_ctr_drbg_aes128_new`].
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn oxi_ctr_drbg_aes128_reseed_df(
-    handle: *mut OxiCtrDrbgAes128,
-    entropy: *const u8,
-    entropy_len: usize,
-    additional_input: *const u8,
-    additional_input_len: usize,
-) -> c_int {
-    if handle.is_null() {
-        return R::NullPointer as c_int;
-    }
-    let entropy_slice = match unsafe { crate::slice_from_raw(entropy, entropy_len) } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    let ai_slice = match unsafe { crate::slice_from_raw(additional_input, additional_input_len) } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    let Some(drbg) = (unsafe { (*handle).inner.as_mut() }) else {
-        return R::NotOperational as c_int;
-    };
-    status_drbg(drbg.reseed_df(entropy_slice, ai_slice))
-}
-
-/// CTR_DRBG-AES-128 Generate, **no-df** variant (SP 800-90A
-/// §10.2.1.5.1). When `additional_input` is supplied (non-NULL +
-/// non-zero len), it MUST be exactly `SEED_LEN` = 32 bytes — this
-/// constraint is what makes this the no-df path; `additional_input
-/// = NULL, len = 0` is the typical no-AI call. `out_len` is bounded
-/// by `2^16` bytes (SP 800-90A §10.2.1.5.1 step 5).
-///
-/// # Safety
-///
-/// `handle` must be a live, instantiated handle from
-/// [`oxi_ctr_drbg_aes128_new`]. `out` must point to ≥ `out_len`
-/// writable bytes (or `out_len == 0`).
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn oxi_ctr_drbg_aes128_generate_no_df(
-    handle: *mut OxiCtrDrbgAes128,
-    additional_input: *const u8,
-    additional_input_len: usize,
-    out: *mut u8,
-    out_len: usize,
-) -> c_int {
-    if handle.is_null() {
-        return R::NullPointer as c_int;
-    }
-    if out.is_null() && out_len > 0 {
-        return R::NullPointer as c_int;
-    }
-    let ai_opt: Option<&[u8]> = if additional_input.is_null() && additional_input_len == 0 {
-        None
-    } else {
-        match unsafe { crate::slice_from_raw(additional_input, additional_input_len) } {
-            Ok(s) => Some(s),
-            Err(e) => return e,
-        }
-    };
-    let out_slice = match unsafe { crate::slice_from_raw_mut(out, out_len) } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    let Some(drbg) = (unsafe { (*handle).inner.as_mut() }) else {
-        return R::NotOperational as c_int;
-    };
-    staged(out_slice, |buf| drbg.generate_no_df(ai_opt, buf))
 }
 
 /// CTR_DRBG-AES-128 Generate, **df** variant (SP 800-90A
-/// §10.2.1.5.2). `additional_input` is variable length up to
-/// `MAX_DF_INPUT` and is passed through `Block_Cipher_df` before
-/// being mixed in. NULL+0 is the no-AI call; NULL with non-zero
-/// length returns `OxiResult::NullPointer = 10`. `out_len` is
-/// bounded by `2^16` bytes.
+/// §10.2.1.5.2). `additional_input` is passed through
+/// `Block_Cipher_df` before being mixed in, and is bounded by the
+/// additional input the DRBG accepts from a module reseed; longer
+/// returns `OxiResult::InvalidInput = 5`. NULL+0 is the no-AI call;
+/// NULL with non-zero length returns `OxiResult::NullPointer = 10`.
+/// `out_len` is bounded by `2^16` bytes. See
+/// [`oxi_hmac_drbg_sha256_generate`] for the rest of the contract.
 ///
 /// # Safety
 ///
-/// `handle` must be a live, instantiated handle from
-/// [`oxi_ctr_drbg_aes128_new`]. `out` must point to ≥ `out_len`
-/// writable bytes. `additional_input` must point to ≥
-/// `additional_input_len` readable bytes when
+/// `handle` must be NULL or a live handle from
+/// [`oxi_ctr_drbg_aes128_new`], not in use by another call. `out` must
+/// point to ≥ `out_len` writable bytes. `additional_input` must point
+/// to ≥ `additional_input_len` readable bytes when
 /// `additional_input_len > 0`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn oxi_ctr_drbg_aes128_generate_df(
@@ -1561,41 +1467,39 @@ pub unsafe extern "C" fn oxi_ctr_drbg_aes128_generate_df(
     out: *mut u8,
     out_len: usize,
 ) -> c_int {
-    if handle.is_null() {
-        return R::NullPointer as c_int;
+    // SAFETY: this function's contract is `generate_typed`'s.
+    unsafe {
+        generate_typed(
+            handle,
+            additional_input,
+            additional_input_len,
+            out,
+            out_len,
+            Service::CtrDrbgAes128,
+            CtrDrbgAes128::MAX_MODULE_ADDITIONAL_INPUT,
+            CtrDrbgAes128::generate_df,
+        )
     }
-    if out.is_null() && out_len > 0 {
-        return R::NullPointer as c_int;
-    }
-    let ai_opt: Option<&[u8]> = if additional_input.is_null() && additional_input_len == 0 {
-        None
-    } else {
-        match unsafe { crate::slice_from_raw(additional_input, additional_input_len) } {
-            Ok(s) => Some(s),
-            Err(e) => return e,
-        }
-    };
-    let out_slice = match unsafe { crate::slice_from_raw_mut(out, out_len) } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    let Some(drbg) = (unsafe { (*handle).inner.as_mut() }) else {
-        return R::NotOperational as c_int;
-    };
-    staged(out_slice, |buf| drbg.generate_df(ai_opt, buf))
 }
 
 /// Opaque CTR_DRBG-AES-192 handle. See `OxiCtrDrbgAes128`.
+///
+/// The handle is seeded by the module: `_instantiate_from_module` draws its
+/// entropy input and nonce from the module's seed path, and the DRBG reseeds
+/// itself from the same path at the SP 800-90A reseed interval. A forked
+/// child inherits a copy that returns `InvalidInput = 5` until the child
+/// re-instantiates it with `_instantiate_from_module`. The handle has no
+/// busy flag: callers serialise all calls on one handle.
 ///
 /// cbindgen:opaque
 pub struct OxiCtrDrbgAes192 {
     inner: OxiHandle<CtrDrbgAes192>,
 }
 
-impl OxiCtrDrbgAes192 {
-    #[allow(dead_code)] // first call site lands when a CTR-AES-192-DRBG-driven primitive surfaces
-    pub(crate) fn inner_mut(&mut self) -> Option<&mut CtrDrbgAes192> {
-        self.inner.as_mut()
+impl TypedDrbg for OxiCtrDrbgAes192 {
+    type Inner = CtrDrbgAes192;
+    fn handle(&mut self) -> &mut OxiHandle<CtrDrbgAes192> {
+        &mut self.inner
     }
 }
 
@@ -1629,190 +1533,74 @@ pub unsafe extern "C" fn oxi_ctr_drbg_aes192_free(handle: *mut OxiCtrDrbgAes192)
     if handle.is_null() {
         return;
     }
-    drop(unsafe { Box::from_raw(handle) });
+    // SAFETY: `handle` is a live `Box` from the matching `_new` that has not
+    // been freed, by contract.
+    unsafe { crate::rbg::wipe_and_free(handle) };
 }
 
-/// CTR_DRBG-AES-192 Instantiate, no-df variant. `seed_material` must
-/// be exactly `SEED_LEN` = 40 bytes (AES-192 key 24 + AES block 16).
-/// See [`oxi_ctr_drbg_aes128_instantiate_no_df`].
+/// CTR_DRBG-AES-192 Instantiate from the module's seed path, through the
+/// derivation function. The instantiated security strength is 192 bits.
+/// See [`oxi_hmac_drbg_sha256_instantiate_from_module`] for the full
+/// contract.
 ///
 /// # Safety
 ///
-/// All pointer/length pairs must be valid. `handle` must be a live
-/// handle from [`oxi_ctr_drbg_aes192_new`].
+/// `handle` must be NULL or a live handle from
+/// [`oxi_ctr_drbg_aes192_new`], not in use by another call. A non-NULL
+/// `perso` must be valid for reads of `perso_len` bytes.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn oxi_ctr_drbg_aes192_instantiate_no_df(
+pub unsafe extern "C" fn oxi_ctr_drbg_aes192_instantiate_from_module(
     handle: *mut OxiCtrDrbgAes192,
-    seed_material: *const u8,
-    seed_material_len: usize,
+    perso: *const u8,
+    perso_len: usize,
 ) -> c_int {
-    if handle.is_null() {
-        return R::NullPointer as c_int;
+    // SAFETY: this function's contract is `instantiate_typed`'s.
+    unsafe {
+        instantiate_typed(
+            handle,
+            perso,
+            perso_len,
+            Service::CtrDrbgAes192,
+            CtrDrbgAes192::instantiate_from_module,
+        )
     }
-    let seed_slice = match unsafe { crate::slice_from_raw(seed_material, seed_material_len) } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    let Some(drbg) = (unsafe { (*handle).inner.as_mut() }) else {
-        return R::NotOperational as c_int;
-    };
-    status_module(drbg.instantiate_no_df(seed_slice))
 }
 
-/// CTR_DRBG-AES-192 Instantiate, df variant. Per SP 800-90A Table 3,
-/// security strength 192 → entropy ≥ 192 bits, nonce ≥ 96 bits. See
-/// [`oxi_ctr_drbg_aes128_instantiate_df`].
-///
-/// Returns `OxiResult::EntropyInputTooShort = 29` when `entropy_len`
-/// is below 24 bytes and `OxiResult::NonceTooShort = 30` when
-/// `nonce_len` is below 12 bytes (SP 800-90A Rev. 1 Table 3
-/// `min_length` and the module's nonce floor).
+/// CTR_DRBG-AES-192 Reseed from the module's seed path, through the
+/// derivation function. See [`oxi_hmac_drbg_sha256_reseed_from_module`]
+/// for the full contract.
 ///
 /// # Safety
 ///
-/// All pointer/length pairs must be valid. `handle` must be a live
-/// handle from [`oxi_ctr_drbg_aes192_new`].
+/// `handle` must be NULL or a live handle from
+/// [`oxi_ctr_drbg_aes192_new`], not in use by another call. A non-NULL
+/// `additional` must be valid for reads of `additional_len` bytes.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn oxi_ctr_drbg_aes192_instantiate_df(
+pub unsafe extern "C" fn oxi_ctr_drbg_aes192_reseed_from_module(
     handle: *mut OxiCtrDrbgAes192,
-    entropy: *const u8,
-    entropy_len: usize,
-    nonce: *const u8,
-    nonce_len: usize,
-    personalization: *const u8,
-    personalization_len: usize,
+    additional: *const u8,
+    additional_len: usize,
 ) -> c_int {
-    if handle.is_null() {
-        return R::NullPointer as c_int;
+    // SAFETY: this function's contract is `reseed_typed`'s.
+    unsafe {
+        reseed_typed(
+            handle,
+            additional,
+            additional_len,
+            Service::CtrDrbgAes192,
+            CtrDrbgAes192::reseed_from_module,
+        )
     }
-    let entropy_slice = match unsafe { crate::slice_from_raw(entropy, entropy_len) } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    let nonce_slice = match unsafe { crate::slice_from_raw(nonce, nonce_len) } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    let perso_slice = match unsafe { crate::slice_from_raw(personalization, personalization_len) } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    let Some(drbg) = (unsafe { (*handle).inner.as_mut() }) else {
-        return R::NotOperational as c_int;
-    };
-    status_module(drbg.instantiate_df(entropy_slice, nonce_slice, perso_slice))
 }
 
-/// CTR_DRBG-AES-192 Reseed, no-df. `seed_material` must be exactly
-/// 40 bytes.
+/// CTR_DRBG-AES-192 Generate, df. See [`oxi_ctr_drbg_aes128_generate_df`].
 ///
 /// # Safety
 ///
-/// All pointer/length pairs must be valid. `handle` must be a live,
-/// instantiated handle from [`oxi_ctr_drbg_aes192_new`].
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn oxi_ctr_drbg_aes192_reseed_no_df(
-    handle: *mut OxiCtrDrbgAes192,
-    seed_material: *const u8,
-    seed_material_len: usize,
-) -> c_int {
-    if handle.is_null() {
-        return R::NullPointer as c_int;
-    }
-    let seed_slice = match unsafe { crate::slice_from_raw(seed_material, seed_material_len) } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    let Some(drbg) = (unsafe { (*handle).inner.as_mut() }) else {
-        return R::NotOperational as c_int;
-    };
-    status_drbg(drbg.reseed_no_df(seed_slice))
-}
-
-/// CTR_DRBG-AES-192 Reseed, df.
-///
-/// Returns `OxiResult::EntropyInputTooShort = 29` when `entropy_len`
-/// is below 24 bytes (SP 800-90A Rev. 1 Table 3 `min_length`);
-/// additional input does not count toward it.
-///
-/// # Safety
-///
-/// All pointer/length pairs must be valid. `handle` must be a live,
-/// instantiated handle from [`oxi_ctr_drbg_aes192_new`].
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn oxi_ctr_drbg_aes192_reseed_df(
-    handle: *mut OxiCtrDrbgAes192,
-    entropy: *const u8,
-    entropy_len: usize,
-    additional_input: *const u8,
-    additional_input_len: usize,
-) -> c_int {
-    if handle.is_null() {
-        return R::NullPointer as c_int;
-    }
-    let entropy_slice = match unsafe { crate::slice_from_raw(entropy, entropy_len) } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    let ai_slice = match unsafe { crate::slice_from_raw(additional_input, additional_input_len) } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    let Some(drbg) = (unsafe { (*handle).inner.as_mut() }) else {
-        return R::NotOperational as c_int;
-    };
-    status_drbg(drbg.reseed_df(entropy_slice, ai_slice))
-}
-
-/// CTR_DRBG-AES-192 Generate, no-df. When `additional_input` is
-/// supplied it MUST be exactly 40 bytes.
-///
-/// # Safety
-///
-/// `handle` must be a live, instantiated handle from
-/// [`oxi_ctr_drbg_aes192_new`]. `out` must point to ≥ `out_len`
-/// writable bytes.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn oxi_ctr_drbg_aes192_generate_no_df(
-    handle: *mut OxiCtrDrbgAes192,
-    additional_input: *const u8,
-    additional_input_len: usize,
-    out: *mut u8,
-    out_len: usize,
-) -> c_int {
-    if handle.is_null() {
-        return R::NullPointer as c_int;
-    }
-    if out.is_null() && out_len > 0 {
-        return R::NullPointer as c_int;
-    }
-    let ai_opt: Option<&[u8]> = if additional_input.is_null() && additional_input_len == 0 {
-        None
-    } else {
-        match unsafe { crate::slice_from_raw(additional_input, additional_input_len) } {
-            Ok(s) => Some(s),
-            Err(e) => return e,
-        }
-    };
-    let out_slice = match unsafe { crate::slice_from_raw_mut(out, out_len) } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    let Some(drbg) = (unsafe { (*handle).inner.as_mut() }) else {
-        return R::NotOperational as c_int;
-    };
-    staged(out_slice, |buf| drbg.generate_no_df(ai_opt, buf))
-}
-
-/// CTR_DRBG-AES-192 Generate, df. `additional_input` is variable up
-/// to `MAX_DF_INPUT`.
-///
-/// # Safety
-///
-/// `handle` must be a live, instantiated handle from
-/// [`oxi_ctr_drbg_aes192_new`]. `out` must point to ≥ `out_len`
-/// writable bytes. `additional_input` must point to ≥
-/// `additional_input_len` readable bytes when
+/// `handle` must be NULL or a live handle from
+/// [`oxi_ctr_drbg_aes192_new`], not in use by another call. `out` must
+/// point to ≥ `out_len` writable bytes. `additional_input` must point
+/// to ≥ `additional_input_len` readable bytes when
 /// `additional_input_len > 0`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn oxi_ctr_drbg_aes192_generate_df(
@@ -1822,41 +1610,39 @@ pub unsafe extern "C" fn oxi_ctr_drbg_aes192_generate_df(
     out: *mut u8,
     out_len: usize,
 ) -> c_int {
-    if handle.is_null() {
-        return R::NullPointer as c_int;
+    // SAFETY: this function's contract is `generate_typed`'s.
+    unsafe {
+        generate_typed(
+            handle,
+            additional_input,
+            additional_input_len,
+            out,
+            out_len,
+            Service::CtrDrbgAes192,
+            CtrDrbgAes192::MAX_MODULE_ADDITIONAL_INPUT,
+            CtrDrbgAes192::generate_df,
+        )
     }
-    if out.is_null() && out_len > 0 {
-        return R::NullPointer as c_int;
-    }
-    let ai_opt: Option<&[u8]> = if additional_input.is_null() && additional_input_len == 0 {
-        None
-    } else {
-        match unsafe { crate::slice_from_raw(additional_input, additional_input_len) } {
-            Ok(s) => Some(s),
-            Err(e) => return e,
-        }
-    };
-    let out_slice = match unsafe { crate::slice_from_raw_mut(out, out_len) } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    let Some(drbg) = (unsafe { (*handle).inner.as_mut() }) else {
-        return R::NotOperational as c_int;
-    };
-    staged(out_slice, |buf| drbg.generate_df(ai_opt, buf))
 }
 
 /// Opaque CTR_DRBG-AES-256 handle. See `OxiCtrDrbgAes128`.
+///
+/// The handle is seeded by the module: `_instantiate_from_module` draws its
+/// entropy input and nonce from the module's seed path, and the DRBG reseeds
+/// itself from the same path at the SP 800-90A reseed interval. A forked
+/// child inherits a copy that returns `InvalidInput = 5` until the child
+/// re-instantiates it with `_instantiate_from_module`. The handle has no
+/// busy flag: callers serialise all calls on one handle.
 ///
 /// cbindgen:opaque
 pub struct OxiCtrDrbgAes256 {
     inner: OxiHandle<CtrDrbgAes256>,
 }
 
-impl OxiCtrDrbgAes256 {
-    #[allow(dead_code)] // first call site lands when a CTR-AES-256-DRBG-driven primitive surfaces
-    pub(crate) fn inner_mut(&mut self) -> Option<&mut CtrDrbgAes256> {
-        self.inner.as_mut()
+impl TypedDrbg for OxiCtrDrbgAes256 {
+    type Inner = CtrDrbgAes256;
+    fn handle(&mut self) -> &mut OxiHandle<CtrDrbgAes256> {
+        &mut self.inner
     }
 }
 
@@ -1889,188 +1675,74 @@ pub unsafe extern "C" fn oxi_ctr_drbg_aes256_free(handle: *mut OxiCtrDrbgAes256)
     if handle.is_null() {
         return;
     }
-    drop(unsafe { Box::from_raw(handle) });
+    // SAFETY: `handle` is a live `Box` from the matching `_new` that has not
+    // been freed, by contract.
+    unsafe { crate::rbg::wipe_and_free(handle) };
 }
 
-/// CTR_DRBG-AES-256 Instantiate, no-df. `seed_material` must be
-/// exactly `SEED_LEN` = 48 bytes (AES-256 key 32 + AES block 16).
+/// CTR_DRBG-AES-256 Instantiate from the module's seed path, through the
+/// derivation function. The instantiated security strength is 256 bits.
+/// See [`oxi_hmac_drbg_sha256_instantiate_from_module`] for the full
+/// contract.
 ///
 /// # Safety
 ///
-/// All pointer/length pairs must be valid. `handle` must be a live
-/// handle from [`oxi_ctr_drbg_aes256_new`].
+/// `handle` must be NULL or a live handle from
+/// [`oxi_ctr_drbg_aes256_new`], not in use by another call. A non-NULL
+/// `perso` must be valid for reads of `perso_len` bytes.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn oxi_ctr_drbg_aes256_instantiate_no_df(
+pub unsafe extern "C" fn oxi_ctr_drbg_aes256_instantiate_from_module(
     handle: *mut OxiCtrDrbgAes256,
-    seed_material: *const u8,
-    seed_material_len: usize,
+    perso: *const u8,
+    perso_len: usize,
 ) -> c_int {
-    if handle.is_null() {
-        return R::NullPointer as c_int;
+    // SAFETY: this function's contract is `instantiate_typed`'s.
+    unsafe {
+        instantiate_typed(
+            handle,
+            perso,
+            perso_len,
+            Service::CtrDrbgAes256,
+            CtrDrbgAes256::instantiate_from_module,
+        )
     }
-    let seed_slice = match unsafe { crate::slice_from_raw(seed_material, seed_material_len) } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    let Some(drbg) = (unsafe { (*handle).inner.as_mut() }) else {
-        return R::NotOperational as c_int;
-    };
-    status_module(drbg.instantiate_no_df(seed_slice))
 }
 
-/// CTR_DRBG-AES-256 Instantiate, df. Per SP 800-90A Table 3,
-/// security strength 256 → entropy ≥ 256 bits, nonce ≥ 128 bits.
-///
-/// Returns `OxiResult::EntropyInputTooShort = 29` when `entropy_len`
-/// is below 32 bytes and `OxiResult::NonceTooShort = 30` when
-/// `nonce_len` is below 16 bytes (SP 800-90A Rev. 1 Table 3
-/// `min_length` and the module's nonce floor).
+/// CTR_DRBG-AES-256 Reseed from the module's seed path, through the
+/// derivation function. See [`oxi_hmac_drbg_sha256_reseed_from_module`]
+/// for the full contract.
 ///
 /// # Safety
 ///
-/// All pointer/length pairs must be valid. `handle` must be a live
-/// handle from [`oxi_ctr_drbg_aes256_new`].
+/// `handle` must be NULL or a live handle from
+/// [`oxi_ctr_drbg_aes256_new`], not in use by another call. A non-NULL
+/// `additional` must be valid for reads of `additional_len` bytes.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn oxi_ctr_drbg_aes256_instantiate_df(
+pub unsafe extern "C" fn oxi_ctr_drbg_aes256_reseed_from_module(
     handle: *mut OxiCtrDrbgAes256,
-    entropy: *const u8,
-    entropy_len: usize,
-    nonce: *const u8,
-    nonce_len: usize,
-    personalization: *const u8,
-    personalization_len: usize,
+    additional: *const u8,
+    additional_len: usize,
 ) -> c_int {
-    if handle.is_null() {
-        return R::NullPointer as c_int;
+    // SAFETY: this function's contract is `reseed_typed`'s.
+    unsafe {
+        reseed_typed(
+            handle,
+            additional,
+            additional_len,
+            Service::CtrDrbgAes256,
+            CtrDrbgAes256::reseed_from_module,
+        )
     }
-    let entropy_slice = match unsafe { crate::slice_from_raw(entropy, entropy_len) } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    let nonce_slice = match unsafe { crate::slice_from_raw(nonce, nonce_len) } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    let perso_slice = match unsafe { crate::slice_from_raw(personalization, personalization_len) } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    let Some(drbg) = (unsafe { (*handle).inner.as_mut() }) else {
-        return R::NotOperational as c_int;
-    };
-    status_module(drbg.instantiate_df(entropy_slice, nonce_slice, perso_slice))
 }
 
-/// CTR_DRBG-AES-256 Reseed, no-df. `seed_material` must be exactly
-/// 48 bytes.
+/// CTR_DRBG-AES-256 Generate, df. See [`oxi_ctr_drbg_aes128_generate_df`].
 ///
 /// # Safety
 ///
-/// All pointer/length pairs must be valid. `handle` must be a live,
-/// instantiated handle from [`oxi_ctr_drbg_aes256_new`].
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn oxi_ctr_drbg_aes256_reseed_no_df(
-    handle: *mut OxiCtrDrbgAes256,
-    seed_material: *const u8,
-    seed_material_len: usize,
-) -> c_int {
-    if handle.is_null() {
-        return R::NullPointer as c_int;
-    }
-    let seed_slice = match unsafe { crate::slice_from_raw(seed_material, seed_material_len) } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    let Some(drbg) = (unsafe { (*handle).inner.as_mut() }) else {
-        return R::NotOperational as c_int;
-    };
-    status_drbg(drbg.reseed_no_df(seed_slice))
-}
-
-/// CTR_DRBG-AES-256 Reseed, df.
-///
-/// Returns `OxiResult::EntropyInputTooShort = 29` when `entropy_len`
-/// is below 32 bytes (SP 800-90A Rev. 1 Table 3 `min_length`);
-/// additional input does not count toward it.
-///
-/// # Safety
-///
-/// All pointer/length pairs must be valid. `handle` must be a live,
-/// instantiated handle from [`oxi_ctr_drbg_aes256_new`].
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn oxi_ctr_drbg_aes256_reseed_df(
-    handle: *mut OxiCtrDrbgAes256,
-    entropy: *const u8,
-    entropy_len: usize,
-    additional_input: *const u8,
-    additional_input_len: usize,
-) -> c_int {
-    if handle.is_null() {
-        return R::NullPointer as c_int;
-    }
-    let entropy_slice = match unsafe { crate::slice_from_raw(entropy, entropy_len) } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    let ai_slice = match unsafe { crate::slice_from_raw(additional_input, additional_input_len) } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    let Some(drbg) = (unsafe { (*handle).inner.as_mut() }) else {
-        return R::NotOperational as c_int;
-    };
-    status_drbg(drbg.reseed_df(entropy_slice, ai_slice))
-}
-
-/// CTR_DRBG-AES-256 Generate, no-df. When `additional_input` is
-/// supplied it MUST be exactly 48 bytes.
-///
-/// # Safety
-///
-/// `handle` must be a live, instantiated handle from
-/// [`oxi_ctr_drbg_aes256_new`]. `out` must point to ≥ `out_len`
-/// writable bytes.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn oxi_ctr_drbg_aes256_generate_no_df(
-    handle: *mut OxiCtrDrbgAes256,
-    additional_input: *const u8,
-    additional_input_len: usize,
-    out: *mut u8,
-    out_len: usize,
-) -> c_int {
-    if handle.is_null() {
-        return R::NullPointer as c_int;
-    }
-    if out.is_null() && out_len > 0 {
-        return R::NullPointer as c_int;
-    }
-    let ai_opt: Option<&[u8]> = if additional_input.is_null() && additional_input_len == 0 {
-        None
-    } else {
-        match unsafe { crate::slice_from_raw(additional_input, additional_input_len) } {
-            Ok(s) => Some(s),
-            Err(e) => return e,
-        }
-    };
-    let out_slice = match unsafe { crate::slice_from_raw_mut(out, out_len) } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    let Some(drbg) = (unsafe { (*handle).inner.as_mut() }) else {
-        return R::NotOperational as c_int;
-    };
-    staged(out_slice, |buf| drbg.generate_no_df(ai_opt, buf))
-}
-
-/// CTR_DRBG-AES-256 Generate, df. `additional_input` is variable up
-/// to `MAX_DF_INPUT`.
-///
-/// # Safety
-///
-/// `handle` must be a live, instantiated handle from
-/// [`oxi_ctr_drbg_aes256_new`]. `out` must point to ≥ `out_len`
-/// writable bytes. `additional_input` must point to ≥
-/// `additional_input_len` readable bytes when
+/// `handle` must be NULL or a live handle from
+/// [`oxi_ctr_drbg_aes256_new`], not in use by another call. `out` must
+/// point to ≥ `out_len` writable bytes. `additional_input` must point
+/// to ≥ `additional_input_len` readable bytes when
 /// `additional_input_len > 0`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn oxi_ctr_drbg_aes256_generate_df(
@@ -2080,28 +1752,19 @@ pub unsafe extern "C" fn oxi_ctr_drbg_aes256_generate_df(
     out: *mut u8,
     out_len: usize,
 ) -> c_int {
-    if handle.is_null() {
-        return R::NullPointer as c_int;
+    // SAFETY: this function's contract is `generate_typed`'s.
+    unsafe {
+        generate_typed(
+            handle,
+            additional_input,
+            additional_input_len,
+            out,
+            out_len,
+            Service::CtrDrbgAes256,
+            CtrDrbgAes256::MAX_MODULE_ADDITIONAL_INPUT,
+            CtrDrbgAes256::generate_df,
+        )
     }
-    if out.is_null() && out_len > 0 {
-        return R::NullPointer as c_int;
-    }
-    let ai_opt: Option<&[u8]> = if additional_input.is_null() && additional_input_len == 0 {
-        None
-    } else {
-        match unsafe { crate::slice_from_raw(additional_input, additional_input_len) } {
-            Ok(s) => Some(s),
-            Err(e) => return e,
-        }
-    };
-    let out_slice = match unsafe { crate::slice_from_raw_mut(out, out_len) } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    let Some(drbg) = (unsafe { (*handle).inner.as_mut() }) else {
-        return R::NotOperational as c_int;
-    };
-    staged(out_slice, |buf| drbg.generate_df(ai_opt, buf))
 }
 
 #[cfg(test)]
@@ -2128,72 +1791,167 @@ mod tests {
         }
     }
 
-    const MATERIAL: [u8; 64] = [0x5a; 64];
-
-    /// Drives one handle family through its C entry points: an entropy
-    /// input one byte short returns `EntropyInputTooShort = 29` from
-    /// instantiate and reseed, a nonce one byte short returns
-    /// `NonceTooShort = 30` from instantiate, and the minimums succeed.
-    macro_rules! minimum_length_codes {
-        ($test:ident, $new:ident, $free:ident, $inst:ident, $reseed:ident, $ty:ty, $e:expr, $n:expr) => {
+    /// Drives one handle family through its C entry points: generate and
+    /// reseed on a never-instantiated handle return `Uninstantiated = 8`;
+    /// instantiate, generate and reseed then succeed; an optional input that
+    /// is NULL with a length, and additional input over the module-reseed
+    /// bound, return `InvalidInput = 5`; a handle whose recorded process id
+    /// is another process's returns `InvalidInput = 5` until it is
+    /// instantiated again; and a NULL handle returns `NullPointer = 10`.
+    macro_rules! module_seeded_codes {
+        ($test:ident, $new:ident, $free:ident, $inst:ident, $reseed:ident, $generate:ident, $ty:ty, $inner:ty) => {
             #[test]
             fn $test() {
                 operational();
-                let (e, n) = ($e, $n);
-                let m = MATERIAL.as_ptr();
                 let mut h: *mut $ty = ptr::null_mut();
+                let mut out = [0xa5u8; 32];
+                let (o, n) = (out.as_mut_ptr(), out.len());
+                let over = vec![0x11u8; <$inner>::MAX_MODULE_ADDITIONAL_INPUT + 1];
+                // SAFETY: `h` is a writable local and a live handle after
+                // `$new` until `$free`; every buffer is a valid local; the NULL
+                // handles are refused before any dereference.
                 unsafe {
-                    assert_eq!($new(&mut h), R::Ok as c_int);
+                    assert_eq!($new(&raw mut h), R::Ok as c_int);
                     assert_eq!(
-                        $inst(h, m, e - 1, m, n, ptr::null(), 0),
-                        R::EntropyInputTooShort as c_int
+                        $generate(h, ptr::null(), 0, o, n),
+                        R::Uninstantiated as c_int
+                    );
+                    assert_eq!($reseed(h, ptr::null(), 0), R::Uninstantiated as c_int);
+                    assert_eq!(out, [0xa5u8; 32], "a failed call wrote output");
+
+                    assert_eq!($inst(h, b"app".as_ptr(), 3), R::Ok as c_int);
+                    assert_eq!($generate(h, ptr::null(), 0, o, n), R::Ok as c_int);
+                    assert_ne!(out, [0xa5u8; 32]);
+                    assert_eq!($reseed(h, b"more".as_ptr(), 4), R::Ok as c_int);
+                    assert_eq!($inst(h, ptr::null(), 1), R::InvalidInput as c_int);
+                    assert_eq!($reseed(h, ptr::null(), 1), R::InvalidInput as c_int);
+                    assert_eq!(
+                        $generate(h, over.as_ptr(), over.len(), o, n),
+                        R::InvalidInput as c_int
                     );
                     assert_eq!(
-                        $inst(h, m, e, m, n - 1, ptr::null(), 0),
-                        R::NonceTooShort as c_int
+                        $generate(h, over.as_ptr(), over.len() - 1, o, n),
+                        R::Ok as c_int
                     );
-                    assert_eq!($inst(h, m, e, m, n, ptr::null(), 0), R::Ok as c_int);
-                    assert_eq!(
-                        $reseed(h, m, e - 1, ptr::null(), 0),
-                        R::EntropyInputTooShort as c_int
-                    );
-                    assert_eq!($reseed(h, m, e, ptr::null(), 0), R::Ok as c_int);
+
+                    // A copy inherited from another process.
+                    let pid = &raw const (*h).inner.pid;
+                    let own = (*pid).load(Ordering::SeqCst);
+                    assert_eq!(own, current_process());
+                    (*pid).store(own.wrapping_add(1), Ordering::SeqCst);
+                    assert_eq!($generate(h, ptr::null(), 0, o, n), R::InvalidInput as c_int);
+                    assert_eq!($reseed(h, ptr::null(), 0), R::InvalidInput as c_int);
+                    assert_eq!($inst(h, ptr::null(), 0), R::Ok as c_int);
+                    assert_eq!((*pid).load(Ordering::SeqCst), own);
+                    assert_eq!($generate(h, ptr::null(), 0, o, n), R::Ok as c_int);
                     $free(h);
+
+                    assert_eq!(
+                        $inst(ptr::null_mut(), ptr::null(), 0),
+                        R::NullPointer as c_int
+                    );
+                    assert_eq!(
+                        $reseed(ptr::null_mut(), ptr::null(), 0),
+                        R::NullPointer as c_int
+                    );
+                    assert_eq!(
+                        $generate(ptr::null_mut(), ptr::null(), 0, o, n),
+                        R::NullPointer as c_int
+                    );
                 }
-                assert_eq!(R::EntropyInputTooShort as c_int, 29);
-                assert_eq!(R::NonceTooShort as c_int, 30);
+                assert_eq!(R::Uninstantiated as c_int, 8);
             }
         };
     }
 
-    minimum_length_codes!(
-        hmac_drbg_sha384_reports_minimum_length_codes,
+    module_seeded_codes!(
+        hmac_drbg_sha256_module_seeded_codes,
+        oxi_hmac_drbg_sha256_new,
+        oxi_hmac_drbg_sha256_free,
+        oxi_hmac_drbg_sha256_instantiate_from_module,
+        oxi_hmac_drbg_sha256_reseed_from_module,
+        oxi_hmac_drbg_sha256_generate,
+        OxiHmacDrbgSha256,
+        HmacDrbgSha256
+    );
+    module_seeded_codes!(
+        hmac_drbg_sha384_module_seeded_codes,
         oxi_hmac_drbg_sha384_new,
         oxi_hmac_drbg_sha384_free,
-        oxi_hmac_drbg_sha384_instantiate,
-        oxi_hmac_drbg_sha384_reseed,
+        oxi_hmac_drbg_sha384_instantiate_from_module,
+        oxi_hmac_drbg_sha384_reseed_from_module,
+        oxi_hmac_drbg_sha384_generate,
         OxiHmacDrbgSha384,
-        32,
-        16
+        HmacDrbgSha384
     );
-    minimum_length_codes!(
-        hash_drbg_sha384_reports_minimum_length_codes,
+    module_seeded_codes!(
+        hmac_drbg_sha512_module_seeded_codes,
+        oxi_hmac_drbg_sha512_new,
+        oxi_hmac_drbg_sha512_free,
+        oxi_hmac_drbg_sha512_instantiate_from_module,
+        oxi_hmac_drbg_sha512_reseed_from_module,
+        oxi_hmac_drbg_sha512_generate,
+        OxiHmacDrbgSha512,
+        HmacDrbgSha512
+    );
+    module_seeded_codes!(
+        hash_drbg_sha256_module_seeded_codes,
+        oxi_hash_drbg_sha256_new,
+        oxi_hash_drbg_sha256_free,
+        oxi_hash_drbg_sha256_instantiate_from_module,
+        oxi_hash_drbg_sha256_reseed_from_module,
+        oxi_hash_drbg_sha256_generate,
+        OxiHashDrbgSha256,
+        HashDrbgSha256
+    );
+    module_seeded_codes!(
+        hash_drbg_sha384_module_seeded_codes,
         oxi_hash_drbg_sha384_new,
         oxi_hash_drbg_sha384_free,
-        oxi_hash_drbg_sha384_instantiate,
-        oxi_hash_drbg_sha384_reseed,
+        oxi_hash_drbg_sha384_instantiate_from_module,
+        oxi_hash_drbg_sha384_reseed_from_module,
+        oxi_hash_drbg_sha384_generate,
         OxiHashDrbgSha384,
-        32,
-        16
+        HashDrbgSha384
     );
-    minimum_length_codes!(
-        ctr_drbg_aes128_df_reports_minimum_length_codes,
+    module_seeded_codes!(
+        hash_drbg_sha512_module_seeded_codes,
+        oxi_hash_drbg_sha512_new,
+        oxi_hash_drbg_sha512_free,
+        oxi_hash_drbg_sha512_instantiate_from_module,
+        oxi_hash_drbg_sha512_reseed_from_module,
+        oxi_hash_drbg_sha512_generate,
+        OxiHashDrbgSha512,
+        HashDrbgSha512
+    );
+    module_seeded_codes!(
+        ctr_drbg_aes128_module_seeded_codes,
         oxi_ctr_drbg_aes128_new,
         oxi_ctr_drbg_aes128_free,
-        oxi_ctr_drbg_aes128_instantiate_df,
-        oxi_ctr_drbg_aes128_reseed_df,
+        oxi_ctr_drbg_aes128_instantiate_from_module,
+        oxi_ctr_drbg_aes128_reseed_from_module,
+        oxi_ctr_drbg_aes128_generate_df,
         OxiCtrDrbgAes128,
-        16,
-        8
+        CtrDrbgAes128
+    );
+    module_seeded_codes!(
+        ctr_drbg_aes192_module_seeded_codes,
+        oxi_ctr_drbg_aes192_new,
+        oxi_ctr_drbg_aes192_free,
+        oxi_ctr_drbg_aes192_instantiate_from_module,
+        oxi_ctr_drbg_aes192_reseed_from_module,
+        oxi_ctr_drbg_aes192_generate_df,
+        OxiCtrDrbgAes192,
+        CtrDrbgAes192
+    );
+    module_seeded_codes!(
+        ctr_drbg_aes256_module_seeded_codes,
+        oxi_ctr_drbg_aes256_new,
+        oxi_ctr_drbg_aes256_free,
+        oxi_ctr_drbg_aes256_instantiate_from_module,
+        oxi_ctr_drbg_aes256_reseed_from_module,
+        oxi_ctr_drbg_aes256_generate_df,
+        OxiCtrDrbgAes256,
+        CtrDrbgAes256
     );
 }

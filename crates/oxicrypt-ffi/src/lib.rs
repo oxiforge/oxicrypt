@@ -84,25 +84,25 @@ pub use aes::{
 pub use drbg::{
     OxiCtrDrbgAes128, OxiCtrDrbgAes192, OxiCtrDrbgAes256, OxiHashDrbgSha256, OxiHashDrbgSha384,
     OxiHashDrbgSha512, OxiHmacDrbgSha256, OxiHmacDrbgSha384, OxiHmacDrbgSha512,
-    oxi_ctr_drbg_aes128_free, oxi_ctr_drbg_aes128_generate_df, oxi_ctr_drbg_aes128_generate_no_df,
-    oxi_ctr_drbg_aes128_instantiate_df, oxi_ctr_drbg_aes128_instantiate_no_df,
-    oxi_ctr_drbg_aes128_new, oxi_ctr_drbg_aes128_reseed_df, oxi_ctr_drbg_aes128_reseed_no_df,
-    oxi_ctr_drbg_aes192_free, oxi_ctr_drbg_aes192_generate_df, oxi_ctr_drbg_aes192_generate_no_df,
-    oxi_ctr_drbg_aes192_instantiate_df, oxi_ctr_drbg_aes192_instantiate_no_df,
-    oxi_ctr_drbg_aes192_new, oxi_ctr_drbg_aes192_reseed_df, oxi_ctr_drbg_aes192_reseed_no_df,
-    oxi_ctr_drbg_aes256_free, oxi_ctr_drbg_aes256_generate_df, oxi_ctr_drbg_aes256_generate_no_df,
-    oxi_ctr_drbg_aes256_instantiate_df, oxi_ctr_drbg_aes256_instantiate_no_df,
-    oxi_ctr_drbg_aes256_new, oxi_ctr_drbg_aes256_reseed_df, oxi_ctr_drbg_aes256_reseed_no_df,
-    oxi_hash_drbg_sha256_free, oxi_hash_drbg_sha256_generate, oxi_hash_drbg_sha256_instantiate,
-    oxi_hash_drbg_sha256_new, oxi_hash_drbg_sha256_reseed, oxi_hash_drbg_sha384_free,
-    oxi_hash_drbg_sha384_generate, oxi_hash_drbg_sha384_instantiate, oxi_hash_drbg_sha384_new,
-    oxi_hash_drbg_sha384_reseed, oxi_hash_drbg_sha512_free, oxi_hash_drbg_sha512_generate,
-    oxi_hash_drbg_sha512_instantiate, oxi_hash_drbg_sha512_new, oxi_hash_drbg_sha512_reseed,
-    oxi_hmac_drbg_sha256_free, oxi_hmac_drbg_sha256_generate, oxi_hmac_drbg_sha256_instantiate,
-    oxi_hmac_drbg_sha256_new, oxi_hmac_drbg_sha256_reseed, oxi_hmac_drbg_sha384_free,
-    oxi_hmac_drbg_sha384_generate, oxi_hmac_drbg_sha384_instantiate, oxi_hmac_drbg_sha384_new,
-    oxi_hmac_drbg_sha384_reseed, oxi_hmac_drbg_sha512_free, oxi_hmac_drbg_sha512_generate,
-    oxi_hmac_drbg_sha512_instantiate, oxi_hmac_drbg_sha512_new, oxi_hmac_drbg_sha512_reseed,
+    oxi_ctr_drbg_aes128_free, oxi_ctr_drbg_aes128_generate_df,
+    oxi_ctr_drbg_aes128_instantiate_from_module, oxi_ctr_drbg_aes128_new,
+    oxi_ctr_drbg_aes128_reseed_from_module, oxi_ctr_drbg_aes192_free,
+    oxi_ctr_drbg_aes192_generate_df, oxi_ctr_drbg_aes192_instantiate_from_module,
+    oxi_ctr_drbg_aes192_new, oxi_ctr_drbg_aes192_reseed_from_module, oxi_ctr_drbg_aes256_free,
+    oxi_ctr_drbg_aes256_generate_df, oxi_ctr_drbg_aes256_instantiate_from_module,
+    oxi_ctr_drbg_aes256_new, oxi_ctr_drbg_aes256_reseed_from_module, oxi_hash_drbg_sha256_free,
+    oxi_hash_drbg_sha256_generate, oxi_hash_drbg_sha256_instantiate_from_module,
+    oxi_hash_drbg_sha256_new, oxi_hash_drbg_sha256_reseed_from_module, oxi_hash_drbg_sha384_free,
+    oxi_hash_drbg_sha384_generate, oxi_hash_drbg_sha384_instantiate_from_module,
+    oxi_hash_drbg_sha384_new, oxi_hash_drbg_sha384_reseed_from_module, oxi_hash_drbg_sha512_free,
+    oxi_hash_drbg_sha512_generate, oxi_hash_drbg_sha512_instantiate_from_module,
+    oxi_hash_drbg_sha512_new, oxi_hash_drbg_sha512_reseed_from_module, oxi_hmac_drbg_sha256_free,
+    oxi_hmac_drbg_sha256_generate, oxi_hmac_drbg_sha256_instantiate_from_module,
+    oxi_hmac_drbg_sha256_new, oxi_hmac_drbg_sha256_reseed_from_module, oxi_hmac_drbg_sha384_free,
+    oxi_hmac_drbg_sha384_generate, oxi_hmac_drbg_sha384_instantiate_from_module,
+    oxi_hmac_drbg_sha384_new, oxi_hmac_drbg_sha384_reseed_from_module, oxi_hmac_drbg_sha512_free,
+    oxi_hmac_drbg_sha512_generate, oxi_hmac_drbg_sha512_instantiate_from_module,
+    oxi_hmac_drbg_sha512_new, oxi_hmac_drbg_sha512_reseed_from_module,
 };
 pub use error::OxiResult;
 pub use rbg::{
@@ -2139,18 +2139,20 @@ pub unsafe extern "C" fn oxi_ecdh_p384_compute_shared_secret(
 /// Returns `OxiResult::Ok = 0` on success;
 /// `OxiResult::NullPointer = 10` if any pointer is NULL;
 /// `OxiResult::NotOperational = 1` if the FIPS module is not in
-/// the `Operational` state OR the DRBG handle has been finalised;
+/// the `Operational` state;
 /// `OxiResult::AlgorithmRestricted = 6` if the active profile does
 /// not allow ECDH-P-256;
-/// `OxiResult::InvalidInput = 5` if the DRBG faults during sampling,
-/// rejection-sampling exhausts without an in-range scalar (in
-/// practice only a broken DRBG), or the IG 10.3.A PCT mismatches.
+/// `OxiResult::Uninstantiated = 8` if the DRBG handle was never
+/// instantiated, and `OxiResult::InvalidInput = 5` if it was
+/// instantiated by another process, if the DRBG faults during
+/// sampling, if rejection sampling exhausts without an in-range scalar
+/// (in practice only a broken DRBG), or if the IG 10.3.A PCT mismatches.
 ///
 /// # Safety
 ///
 /// `drbg` must be a live, instantiated handle from
 /// [`oxi_hmac_drbg_sha256_new`] +
-/// [`oxi_hmac_drbg_sha256_instantiate`]. `private_out` must be a
+/// [`oxi_hmac_drbg_sha256_instantiate_from_module`]. `private_out` must be a
 /// non-NULL writable pointer to ≥32 bytes. `public_out` must be a
 /// non-NULL writable pointer to ≥65 bytes. The caller MUST
 /// serialise concurrent calls on the same `drbg` pointer.
@@ -2163,8 +2165,11 @@ pub unsafe extern "C" fn oxi_ecdh_p256_generate_keypair(
     if drbg.is_null() || private_out.is_null() || public_out.is_null() {
         return R::NullPointer as c_int;
     }
-    let Some(drbg_ref) = (unsafe { (*drbg).inner_mut() }) else {
-        return R::NotOperational as c_int;
+    // SAFETY: `drbg` is a live handle nothing else reaches during this
+    // call, by contract; the borrow ends with this function.
+    let drbg_ref = match unsafe { crate::drbg::typed_drbg_access(drbg) } {
+        Ok(d) => d,
+        Err(e) => return e as c_int,
     };
     let (d, q) = match oxicrypt_ecdh::generate_keypair_p256(drbg_ref) {
         Ok(pair) => pair,
@@ -2202,8 +2207,11 @@ pub unsafe extern "C" fn oxi_ecdh_p384_generate_keypair(
     if drbg.is_null() || private_out.is_null() || public_out.is_null() {
         return R::NullPointer as c_int;
     }
-    let Some(drbg_ref) = (unsafe { (*drbg).inner_mut() }) else {
-        return R::NotOperational as c_int;
+    // SAFETY: `drbg` is a live handle nothing else reaches during this
+    // call, by contract; the borrow ends with this function.
+    let drbg_ref = match unsafe { crate::drbg::typed_drbg_access(drbg) } {
+        Ok(d) => d,
+        Err(e) => return e as c_int,
     };
     let (d, q) = match oxicrypt_ecdh::generate_keypair_p384(drbg_ref) {
         Ok(pair) => pair,
@@ -2311,17 +2319,21 @@ pub unsafe extern "C" fn oxi_dh3072_compute_shared_secret(
 ///
 /// **First C ABI surface to consume an opaque DRBG handle.** The
 /// caller is responsible for: (a) allocating the handle via
-/// [`oxi_hmac_drbg_sha256_new`]; (b) instantiating it via
-/// [`oxi_hmac_drbg_sha256_instantiate`] with caller-sourced entropy
-/// before this call; (c) freeing it via [`oxi_hmac_drbg_sha256_free`]
-/// after use; and (d) serializing all calls on the same handle
-/// pointer per the per-call-mutating-handle thread-safety contract.
+/// [`oxi_hmac_drbg_sha256_new`]; (b) having the handle instantiated
+/// with [`oxi_hmac_drbg_sha256_instantiate_from_module`], which seeds
+/// it from the module's seed path, before this call; (c) freeing it via
+/// [`oxi_hmac_drbg_sha256_free`] after use; and (d) serializing all
+/// calls on the same handle pointer per the per-call-mutating-handle
+/// thread-safety contract.
 ///
-/// Returns `OxiResult::Ok = 0` on success; `OxiResult::InvalidInput
-/// = 5` if the DRBG is uninstantiated, exhausts its rejection-
-/// sampling attempts, or fails to produce output (the upstream
-/// `Option` is collapsed to `Err(InvalidInput)` by the gated public
-/// API); `OxiResult::NotOperational = 1` if the FIPS module is not
+/// Returns `OxiResult::Ok = 0` on success;
+/// `OxiResult::Uninstantiated = 8` if the DRBG handle was never
+/// instantiated with `_instantiate_from_module`;
+/// `OxiResult::InvalidInput = 5` if the handle was instantiated by
+/// another process, or the DRBG exhausts its rejection-sampling
+/// attempts or fails to produce output (the upstream `Option` is
+/// collapsed to `Err(InvalidInput)` by the gated public API);
+/// `OxiResult::NotOperational = 1` if the FIPS module is not
 /// operational; or `OxiResult::AlgorithmRestricted = 6` if the
 /// active profile blocks DH-3072.
 ///
@@ -2340,14 +2352,14 @@ pub unsafe extern "C" fn oxi_dh3072_generate_keypair(
     if drbg.is_null() || private_out.is_null() || public_out.is_null() {
         return R::NullPointer as c_int;
     }
-    // Project to `&mut HmacDrbgSha256` via the `inner_mut` accessor
-    // on `OxiHmacDrbgSha256`. The `&mut self` borrow upholds Rust's
-    // exclusivity rule for the duration of this FFI call; C-side
-    // concurrent calls on the same handle pointer are a
+    // Concurrent C calls on the same handle pointer are a
     // serialization-contract violation per the per-call-mutating-handle
     // thread-safety contract documented in `drbg.rs`.
-    let Some(drbg_ref) = (unsafe { (*drbg).inner_mut() }) else {
-        return R::NotOperational as c_int;
+    // SAFETY: `drbg` is a live handle nothing else reaches during this
+    // call, by contract; the borrow ends with this function.
+    let drbg_ref = match unsafe { crate::drbg::typed_drbg_access(drbg) } {
+        Ok(d) => d,
+        Err(e) => return e as c_int,
     };
     let (x, y) = match oxicrypt_dh::generate_keypair_3072(drbg_ref) {
         Ok(pair) => pair,
@@ -9534,7 +9546,7 @@ impl OxiEcdsaP384PrivateKey {
 ///
 /// `drbg` must be a live, instantiated handle from
 /// [`oxi_hmac_drbg_sha256_new`] +
-/// [`oxi_hmac_drbg_sha256_instantiate`]. `out_key` must be a non-NULL
+/// [`oxi_hmac_drbg_sha256_instantiate_from_module`]. `out_key` must be a non-NULL
 /// writable pointer to a `*mut OxiEcdsaP256PrivateKey`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn oxi_ecdsa_p256_private_key_new_generate(
@@ -9544,8 +9556,11 @@ pub unsafe extern "C" fn oxi_ecdsa_p256_private_key_new_generate(
     if drbg.is_null() || out_key.is_null() {
         return R::NullPointer as c_int;
     }
-    let Some(drbg_ref) = (unsafe { (*drbg).inner_mut() }) else {
-        return R::NotOperational as c_int;
+    // SAFETY: `drbg` is a live handle nothing else reaches during this
+    // call, by contract; the borrow ends with this function.
+    let drbg_ref = match unsafe { crate::drbg::typed_drbg_access(drbg) } {
+        Ok(d) => d,
+        Err(e) => return e as c_int,
     };
     let key = match oxicrypt_ecdsa::p256_ecdsa::EcdsaP256PrivateKey::generate(drbg_ref) {
         Ok(k) => k,
@@ -9640,7 +9655,7 @@ pub unsafe extern "C" fn oxi_ecdsa_p256_private_key_public_key(
 /// `key` must be a live handle from
 /// [`oxi_ecdsa_p256_private_key_new_generate`]. `drbg` must be a
 /// live, instantiated handle from [`oxi_hmac_drbg_sha256_new`] +
-/// [`oxi_hmac_drbg_sha256_instantiate`]; the caller MUST serialise
+/// [`oxi_hmac_drbg_sha256_instantiate_from_module`]; the caller MUST serialise
 /// concurrent calls on the same `drbg` pointer, because every call
 /// mutates the DRBG's state. `msg_ptr` must be valid for `msg_len` bytes.
 /// `sig_out` must be a non-NULL writable pointer to ≥64 bytes.
@@ -9662,8 +9677,11 @@ pub unsafe extern "C" fn oxi_ecdsa_p256_private_key_sign_sha256(
     let Some(key_ref) = (unsafe { (*key).inner_ref() }) else {
         return R::NotOperational as c_int;
     };
-    let Some(drbg_ref) = (unsafe { (*drbg).inner_mut() }) else {
-        return R::NotOperational as c_int;
+    // SAFETY: `drbg` is a live handle nothing else reaches during this
+    // call, by contract; the borrow ends with this function.
+    let drbg_ref = match unsafe { crate::drbg::typed_drbg_access(drbg) } {
+        Ok(d) => d,
+        Err(e) => return e as c_int,
     };
     let sig = match key_ref.sign_sha256(drbg_ref, msg) {
         Ok(s) => s,
@@ -9693,8 +9711,11 @@ pub unsafe extern "C" fn oxi_ecdsa_p384_private_key_new_generate(
     if drbg.is_null() || out_key.is_null() {
         return R::NullPointer as c_int;
     }
-    let Some(drbg_ref) = (unsafe { (*drbg).inner_mut() }) else {
-        return R::NotOperational as c_int;
+    // SAFETY: `drbg` is a live handle nothing else reaches during this
+    // call, by contract; the borrow ends with this function.
+    let drbg_ref = match unsafe { crate::drbg::typed_drbg_access(drbg) } {
+        Ok(d) => d,
+        Err(e) => return e as c_int,
     };
     let key = match oxicrypt_ecdsa::p384_ecdsa::EcdsaP384PrivateKey::generate(drbg_ref) {
         Ok(k) => k,
@@ -9795,8 +9816,11 @@ pub unsafe extern "C" fn oxi_ecdsa_p384_private_key_sign_sha384(
     let Some(key_ref) = (unsafe { (*key).inner_ref() }) else {
         return R::NotOperational as c_int;
     };
-    let Some(drbg_ref) = (unsafe { (*drbg).inner_mut() }) else {
-        return R::NotOperational as c_int;
+    // SAFETY: `drbg` is a live handle nothing else reaches during this
+    // call, by contract; the borrow ends with this function.
+    let drbg_ref = match unsafe { crate::drbg::typed_drbg_access(drbg) } {
+        Ok(d) => d,
+        Err(e) => return e as c_int,
     };
     let sig = match key_ref.sign_sha384(drbg_ref, msg) {
         Ok(s) => s,
@@ -9845,7 +9869,7 @@ pub unsafe extern "C" fn oxi_ecdsa_p384_private_key_sign_sha384(
 // observe has therefore already produced a valid sign/verify pair on
 // the same code path the caller will exercise.
 //
-// **DRBG-handle-as-parameter** (per `OxiHmacDrbgSha256::inner_mut`):
+// **DRBG-handle-as-parameter** (through `drbg::typed_drbg_access`):
 // keygen takes the DRBG by mutable pointer; sign-PSS re-borrows the
 // same DRBG for per-signature salt sampling; OAEP encrypt borrows the
 // DRBG for seed sampling. Three sites per size = nine DRBG re-borrows
@@ -9934,7 +9958,7 @@ impl OxiRsaPrivateKey4096 {
 ///
 /// `drbg` must be a live, instantiated handle from
 /// [`oxi_hmac_drbg_sha256_new`] +
-/// [`oxi_hmac_drbg_sha256_instantiate`]. `out_key` must be a non-NULL
+/// [`oxi_hmac_drbg_sha256_instantiate_from_module`]. `out_key` must be a non-NULL
 /// writable pointer to a `*mut OxiRsaPrivateKey2048`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn oxi_rsa_2048_private_key_new_generate(
@@ -9945,8 +9969,11 @@ pub unsafe extern "C" fn oxi_rsa_2048_private_key_new_generate(
     if drbg.is_null() || out_key.is_null() {
         return R::NullPointer as c_int;
     }
-    let Some(drbg_ref) = (unsafe { (*drbg).inner_mut() }) else {
-        return R::NotOperational as c_int;
+    // SAFETY: `drbg` is a live handle nothing else reaches during this
+    // call, by contract; the borrow ends with this function.
+    let drbg_ref = match unsafe { crate::drbg::typed_drbg_access(drbg) } {
+        Ok(d) => d,
+        Err(e) => return e as c_int,
     };
     let key = match oxicrypt_rsa::RsaPrivateKey2048::generate(drbg_ref, e) {
         Ok(k) => k,
@@ -10115,8 +10142,11 @@ pub unsafe extern "C" fn oxi_rsa_2048_sign_pss_sha256(
     let Some(key_ref) = (unsafe { (*key).inner_ref() }) else {
         return R::NotOperational as c_int;
     };
-    let Some(drbg_ref) = (unsafe { (*drbg).inner_mut() }) else {
-        return R::NotOperational as c_int;
+    // SAFETY: `drbg` is a live handle nothing else reaches during this
+    // call, by contract; the borrow ends with this function.
+    let drbg_ref = match unsafe { crate::drbg::typed_drbg_access(drbg) } {
+        Ok(d) => d,
+        Err(e) => return e as c_int,
     };
     let sig = match key_ref.sign_pss_sha256(drbg_ref, msg) {
         Ok(s) => s,
@@ -10170,8 +10200,11 @@ pub unsafe extern "C" fn oxi_rsa_2048_oaep_encrypt_sha256(
     let Ok(n_arr) = <&[u8; 256]>::try_from(n) else {
         return R::Internal as c_int;
     };
-    let Some(drbg_ref) = (unsafe { (*drbg).inner_mut() }) else {
-        return R::NotOperational as c_int;
+    // SAFETY: `drbg` is a live handle nothing else reaches during this
+    // call, by contract; the borrow ends with this function.
+    let drbg_ref = match unsafe { crate::drbg::typed_drbg_access(drbg) } {
+        Ok(d) => d,
+        Err(e) => return e as c_int,
     };
     let ct = match oxicrypt_rsa::rsa_oaep_encrypt_2048_sha256(drbg_ref, n_arr, e, label, msg) {
         Ok(c) => c,
@@ -10264,8 +10297,11 @@ pub unsafe extern "C" fn oxi_rsa_3072_private_key_new_generate(
     if drbg.is_null() || out_key.is_null() {
         return R::NullPointer as c_int;
     }
-    let Some(drbg_ref) = (unsafe { (*drbg).inner_mut() }) else {
-        return R::NotOperational as c_int;
+    // SAFETY: `drbg` is a live handle nothing else reaches during this
+    // call, by contract; the borrow ends with this function.
+    let drbg_ref = match unsafe { crate::drbg::typed_drbg_access(drbg) } {
+        Ok(d) => d,
+        Err(e) => return e as c_int,
     };
     let key = match oxicrypt_rsa::rsa3072::RsaPrivateKey3072::generate(drbg_ref, e) {
         Ok(k) => k,
@@ -10409,8 +10445,11 @@ pub unsafe extern "C" fn oxi_rsa_3072_sign_pss_sha256(
     let Some(key_ref) = (unsafe { (*key).inner_ref() }) else {
         return R::NotOperational as c_int;
     };
-    let Some(drbg_ref) = (unsafe { (*drbg).inner_mut() }) else {
-        return R::NotOperational as c_int;
+    // SAFETY: `drbg` is a live handle nothing else reaches during this
+    // call, by contract; the borrow ends with this function.
+    let drbg_ref = match unsafe { crate::drbg::typed_drbg_access(drbg) } {
+        Ok(d) => d,
+        Err(e) => return e as c_int,
     };
     let sig = match key_ref.sign_pss_sha256(drbg_ref, msg) {
         Ok(s) => s,
@@ -10459,8 +10498,11 @@ pub unsafe extern "C" fn oxi_rsa_3072_oaep_encrypt_sha256(
     let Ok(n_arr) = <&[u8; 384]>::try_from(n) else {
         return R::Internal as c_int;
     };
-    let Some(drbg_ref) = (unsafe { (*drbg).inner_mut() }) else {
-        return R::NotOperational as c_int;
+    // SAFETY: `drbg` is a live handle nothing else reaches during this
+    // call, by contract; the borrow ends with this function.
+    let drbg_ref = match unsafe { crate::drbg::typed_drbg_access(drbg) } {
+        Ok(d) => d,
+        Err(e) => return e as c_int,
     };
     let ct = match oxicrypt_rsa::rsa3072::oaep_encrypt(drbg_ref, n_arr, e, label, msg) {
         Ok(c) => c,
@@ -10542,8 +10584,11 @@ pub unsafe extern "C" fn oxi_rsa_4096_private_key_new_generate(
     if drbg.is_null() || out_key.is_null() {
         return R::NullPointer as c_int;
     }
-    let Some(drbg_ref) = (unsafe { (*drbg).inner_mut() }) else {
-        return R::NotOperational as c_int;
+    // SAFETY: `drbg` is a live handle nothing else reaches during this
+    // call, by contract; the borrow ends with this function.
+    let drbg_ref = match unsafe { crate::drbg::typed_drbg_access(drbg) } {
+        Ok(d) => d,
+        Err(e) => return e as c_int,
     };
     let key = match oxicrypt_rsa::rsa4096::RsaPrivateKey4096::generate(drbg_ref, e) {
         Ok(k) => k,
@@ -10685,8 +10730,11 @@ pub unsafe extern "C" fn oxi_rsa_4096_sign_pss_sha256(
     let Some(key_ref) = (unsafe { (*key).inner_ref() }) else {
         return R::NotOperational as c_int;
     };
-    let Some(drbg_ref) = (unsafe { (*drbg).inner_mut() }) else {
-        return R::NotOperational as c_int;
+    // SAFETY: `drbg` is a live handle nothing else reaches during this
+    // call, by contract; the borrow ends with this function.
+    let drbg_ref = match unsafe { crate::drbg::typed_drbg_access(drbg) } {
+        Ok(d) => d,
+        Err(e) => return e as c_int,
     };
     let sig = match key_ref.sign_pss_sha256(drbg_ref, msg) {
         Ok(s) => s,
@@ -10734,8 +10782,11 @@ pub unsafe extern "C" fn oxi_rsa_4096_oaep_encrypt_sha256(
     let Ok(n_arr) = <&[u8; 512]>::try_from(n) else {
         return R::Internal as c_int;
     };
-    let Some(drbg_ref) = (unsafe { (*drbg).inner_mut() }) else {
-        return R::NotOperational as c_int;
+    // SAFETY: `drbg` is a live handle nothing else reaches during this
+    // call, by contract; the borrow ends with this function.
+    let drbg_ref = match unsafe { crate::drbg::typed_drbg_access(drbg) } {
+        Ok(d) => d,
+        Err(e) => return e as c_int,
     };
     let ct = match oxicrypt_rsa::rsa4096::oaep_encrypt(drbg_ref, n_arr, e, label, msg) {
         Ok(c) => c,

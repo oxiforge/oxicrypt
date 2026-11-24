@@ -1,39 +1,27 @@
 /* SP 800-90A DRBG C ABI smoke test — one representative per family.
  *
- * Exercises the full caller lifecycle
- *   _new → _instantiate → _generate → _reseed → _generate → _free
- * for one DRBG from each of the three families:
+ * Exercises the caller lifecycle
+ *   _new → _instantiate_from_module → _generate → _reseed_from_module
+ *        → _generate → _free
+ * for one typed DRBG handle from each of the three families:
  *
  *   - HMAC_DRBG-SHA-256  (SP 800-90A §10.1.2)
  *   - Hash_DRBG-SHA-256  (SP 800-90A §10.1.1)
  *   - CTR_DRBG-AES-256   (SP 800-90A §10.2.1, derivation-function form)
  *
- * Every rc is asserted == 0; after the first generate the output
- * buffer is asserted non-trivial (not all-zero). Distinct return
- * codes per failure (mirroring the LMS smoke test) keep a failure
+ * and one round trip of the shared OxiDrbg handle through
+ * oxi_hmac_drbg_sha256_new_rbg and the oxi_drbg_* functions.
+ *
+ * Every handle is seeded by the module: the caller supplies no entropy,
+ * only an optional personalization string. Every rc is asserted == 0;
+ * after the first generate the output buffer is asserted non-trivial
+ * (not all-zero). Distinct return codes per failure keep a failure
  * diagnosable from the process exit code alone.
  *
- * Entropy plumbing: the FFI does NOT bundle an entropy source — every
- * entropy-consuming call takes a caller-supplied buffer (drbg.rs
- * "Entropy plumbing"). Test entropy is a fixed 0x42-filled buffer
- * (deterministic, like the LMS test's xi seed) sized to the SP 800-90A
- * Table 2 / Table 3 minimums for the 256-bit security strength of each
- * representative:
- *   entropy ≥ 256 bits = 32 bytes; nonce ≥ 128 bits = 16 bytes.
- * We use 32-byte entropy + 16-byte nonce throughout. The CTR_DRBG _df
- * instantiate accepts variable-length entropy/nonce (it runs the
- * Block_Cipher_df), so the same sizes apply.
- *   (Sources: oxicrypt.h docs — HMAC §10.1.2.3 "entropy ≥ 256 bits,
- *   nonce ≥ 128 bits"; Hash §10.1.1.2 same; CTR-AES-256 _df §10.2.1
- *   "entropy ≥ 256 bits, nonce ≥ 128 bits".)
- *
- * Negative check: oxi_hmac_drbg_sha256_generate(NULL, ...) returns the
- * FFI-layer guard OxiResult::NullPointer = 10 (documented in
- * crates/oxicrypt-ffi/src/error.rs:62 and the drbg.rs error table
- * "NULL handle / NULL output | NullPointer = 10 | all three"; the guard
- * is `if handle.is_null() { return R::NullPointer }` at the top of the
- * generate fn — a defined, non-UB return). We do NOT double-free or
- * pass a NULL out-pointer with non-zero length triggering UB.
+ * Negative checks: generate on a handle never instantiated returns
+ * OxiResult::Uninstantiated = 8, and generate on a NULL handle returns
+ * OxiResult::NullPointer = 10. Neither passes a NULL out-pointer with a
+ * non-zero length.
  */
 
 #include "oxicrypt.h"
@@ -41,11 +29,12 @@
 #include <stdio.h>
 #include <string.h>
 
-#define DRBG_ENTROPY_LEN 32 /* 256-bit security strength */
-#define DRBG_NONCE_LEN   16 /* ≥ 128 bits                */
 #define DRBG_OUT_LEN     64
 
-#define OXI_NULL_POINTER 10 /* OxiResult::NullPointer (error.rs:62) */
+#define OXI_UNINSTANTIATED 8 /* OxiResult::Uninstantiated */
+#define OXI_NULL_POINTER 10  /* OxiResult::NullPointer    */
+
+static const uint8_t PERSO[] = "test_drbg_smoke";
 
 /* Returns 1 if buf is entirely zero (trivial/uninitialized output). */
 static int all_zero(const uint8_t *buf, size_t len) {
@@ -63,11 +52,6 @@ int main(void) {
         return 1;
     }
 
-    uint8_t entropy[DRBG_ENTROPY_LEN];
-    uint8_t nonce[DRBG_NONCE_LEN];
-    memset(entropy, 0x42, sizeof(entropy));
-    memset(nonce, 0x42, sizeof(nonce));
-
     uint8_t out[DRBG_OUT_LEN];
     int rc;
 
@@ -79,10 +63,18 @@ int main(void) {
             fprintf(stderr, "hmac_drbg_sha256_new failed: rc=%d\n", rc);
             return 10;
         }
-        rc = oxi_hmac_drbg_sha256_instantiate(drbg, entropy, sizeof(entropy),
-                                              nonce, sizeof(nonce), NULL, 0);
+
+        /* Negative: generate before instantiation → Uninstantiated = 8. */
+        rc = oxi_hmac_drbg_sha256_generate(drbg, NULL, 0, out, sizeof(out));
+        if (rc != OXI_UNINSTANTIATED) {
+            fprintf(stderr, "hmac_drbg_sha256_generate(uninstantiated) rc=%d (expected %d)\n",
+                    rc, OXI_UNINSTANTIATED);
+            return 17;
+        }
+
+        rc = oxi_hmac_drbg_sha256_instantiate_from_module(drbg, PERSO, sizeof(PERSO) - 1);
         if (rc != 0) {
-            fprintf(stderr, "hmac_drbg_sha256_instantiate failed: rc=%d\n", rc);
+            fprintf(stderr, "hmac_drbg_sha256_instantiate_from_module failed: rc=%d\n", rc);
             return 11;
         }
         memset(out, 0, sizeof(out));
@@ -95,9 +87,9 @@ int main(void) {
             fprintf(stderr, "hmac_drbg_sha256_generate(1) produced all-zero output\n");
             return 13;
         }
-        rc = oxi_hmac_drbg_sha256_reseed(drbg, entropy, sizeof(entropy), NULL, 0);
+        rc = oxi_hmac_drbg_sha256_reseed_from_module(drbg, NULL, 0);
         if (rc != 0) {
-            fprintf(stderr, "hmac_drbg_sha256_reseed failed: rc=%d\n", rc);
+            fprintf(stderr, "hmac_drbg_sha256_reseed_from_module failed: rc=%d\n", rc);
             return 14;
         }
         rc = oxi_hmac_drbg_sha256_generate(drbg, NULL, 0, out, sizeof(out));
@@ -125,10 +117,9 @@ int main(void) {
             fprintf(stderr, "hash_drbg_sha256_new failed: rc=%d\n", rc);
             return 20;
         }
-        rc = oxi_hash_drbg_sha256_instantiate(drbg, entropy, sizeof(entropy),
-                                              nonce, sizeof(nonce), NULL, 0);
+        rc = oxi_hash_drbg_sha256_instantiate_from_module(drbg, PERSO, sizeof(PERSO) - 1);
         if (rc != 0) {
-            fprintf(stderr, "hash_drbg_sha256_instantiate failed: rc=%d\n", rc);
+            fprintf(stderr, "hash_drbg_sha256_instantiate_from_module failed: rc=%d\n", rc);
             return 21;
         }
         memset(out, 0, sizeof(out));
@@ -141,9 +132,9 @@ int main(void) {
             fprintf(stderr, "hash_drbg_sha256_generate(1) produced all-zero output\n");
             return 23;
         }
-        rc = oxi_hash_drbg_sha256_reseed(drbg, entropy, sizeof(entropy), NULL, 0);
+        rc = oxi_hash_drbg_sha256_reseed_from_module(drbg, NULL, 0);
         if (rc != 0) {
-            fprintf(stderr, "hash_drbg_sha256_reseed failed: rc=%d\n", rc);
+            fprintf(stderr, "hash_drbg_sha256_reseed_from_module failed: rc=%d\n", rc);
             return 24;
         }
         rc = oxi_hash_drbg_sha256_generate(drbg, NULL, 0, out, sizeof(out));
@@ -162,10 +153,9 @@ int main(void) {
             fprintf(stderr, "ctr_drbg_aes256_new failed: rc=%d\n", rc);
             return 30;
         }
-        rc = oxi_ctr_drbg_aes256_instantiate_df(drbg, entropy, sizeof(entropy),
-                                                nonce, sizeof(nonce), NULL, 0);
+        rc = oxi_ctr_drbg_aes256_instantiate_from_module(drbg, PERSO, sizeof(PERSO) - 1);
         if (rc != 0) {
-            fprintf(stderr, "ctr_drbg_aes256_instantiate_df failed: rc=%d\n", rc);
+            fprintf(stderr, "ctr_drbg_aes256_instantiate_from_module failed: rc=%d\n", rc);
             return 31;
         }
         memset(out, 0, sizeof(out));
@@ -178,9 +168,9 @@ int main(void) {
             fprintf(stderr, "ctr_drbg_aes256_generate_df(1) produced all-zero output\n");
             return 33;
         }
-        rc = oxi_ctr_drbg_aes256_reseed_df(drbg, entropy, sizeof(entropy), NULL, 0);
+        rc = oxi_ctr_drbg_aes256_reseed_from_module(drbg, NULL, 0);
         if (rc != 0) {
-            fprintf(stderr, "ctr_drbg_aes256_reseed_df failed: rc=%d\n", rc);
+            fprintf(stderr, "ctr_drbg_aes256_reseed_from_module failed: rc=%d\n", rc);
             return 34;
         }
         rc = oxi_ctr_drbg_aes256_generate_df(drbg, NULL, 0, out, sizeof(out));
@@ -191,7 +181,34 @@ int main(void) {
         oxi_ctr_drbg_aes256_free(drbg);
     }
 
-    printf("test_drbg_smoke: OK (HMAC/Hash/CTR new+instantiate+generate+reseed+generate+free; "
-           "non-trivial output; NULL-handle rejects with NullPointer=10)\n");
+    /* ---- Shared OxiDrbg handle, HMAC_DRBG-SHA-256 (return codes 40-49) ---- */
+    {
+        OxiDrbg *drbg = NULL;
+        rc = oxi_hmac_drbg_sha256_new_rbg(&drbg);
+        if (rc != 0 || drbg == NULL) {
+            fprintf(stderr, "hmac_drbg_sha256_new_rbg failed: rc=%d\n", rc);
+            return 40;
+        }
+        rc = oxi_drbg_instantiate(drbg, PERSO, sizeof(PERSO) - 1);
+        if (rc != 0) {
+            fprintf(stderr, "drbg_instantiate failed: rc=%d\n", rc);
+            return 41;
+        }
+        memset(out, 0, sizeof(out));
+        rc = oxi_drbg_generate(drbg, NULL, 0, out, sizeof(out));
+        if (rc != 0) {
+            fprintf(stderr, "drbg_generate failed: rc=%d\n", rc);
+            return 42;
+        }
+        if (all_zero(out, sizeof(out))) {
+            fprintf(stderr, "drbg_generate produced all-zero output\n");
+            return 43;
+        }
+        oxi_drbg_free(drbg);
+    }
+
+    printf("test_drbg_smoke: OK (HMAC/Hash/CTR new+instantiate_from_module+generate+"
+           "reseed_from_module+generate+free; shared OxiDrbg round trip; non-trivial output; "
+           "uninstantiated rejects with 8, NULL handle with 10)\n");
     return 0;
 }

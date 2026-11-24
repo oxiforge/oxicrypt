@@ -1,73 +1,40 @@
-//! Opaque handle pattern with consumed-sentinel for safe-no-op-after-finalize.
+//! Opaque handle pattern.
 //!
 //! Lifecycle:
 //!   `_new(...)` returns a heap-allocated handle via double-pointer.
-//!   `_free(handle)` deallocates; safe to call on NULL or on a consumed handle.
-//!   `_finalize(handle, out)` consumes the inner state, sets the sentinel,
-//!     and is safe to follow with `_free`.
-//!
-//! Zeroize-on-Drop is preserved: when `_free` runs, Drop fires on the
-//! still-present-but-sentinel-tagged inner; if zeroize already ran during
-//! `_finalize`, the second pass is idempotent (zeroizing zeroes is a no-op).
-//!
-//! Use after finalize is a safe no-op rather than undefined behaviour:
-//! every handle-bearing API defines its behaviour after finalize or free.
+//!   `_free(handle)` deallocates; safe to call on NULL.
 
-use core::sync::atomic::{AtomicBool, Ordering};
+use core::sync::atomic::AtomicU64;
 
-/// Container for handle state with a consumed flag.
+/// Container for handle state.
 ///
-/// `T` is the inner Rust type (e.g. `Aes256Key`, `Sha256`). `consumed`
-/// flips to `true` when `_finalize` runs. Subsequent `_free` calls
-/// observe the flag and skip operations that would be unsound on
-/// consumed state.
+/// `T` is the inner Rust type (e.g. `Aes256Key`).
 pub(crate) struct OxiHandle<T> {
     pub(crate) inner: Option<T>,
-    // First call site for the consumed flag is the first
-    // finalize-bearing handle (e.g. an SHA streaming context where
-    // `_finalize(handle, out)` consumes the inner state to release
-    // the digest). AES-GCM uses one-shot semantics and only exercises
-    // `OxiHandle::new` + Drop. Allow the unused warning until the
-    // first such handle lands.
-    #[allow(dead_code)]
-    pub(crate) consumed: AtomicBool,
+    /// The process that instantiated the handle's DRBG from the module's
+    /// seed path, or 0 if it never was. Set by the typed DRBG handles'
+    /// `_instantiate_from_module` and read on every call that reaches
+    /// their DRBG; other handles leave it 0.
+    pub(crate) pid: AtomicU64,
 }
 
 impl<T> OxiHandle<T> {
     pub(crate) fn new(inner: T) -> Self {
         Self {
             inner: Some(inner),
-            consumed: AtomicBool::new(false),
+            pid: AtomicU64::new(0),
         }
     }
 
-    /// Take inner state, mark consumed. Idempotent: subsequent calls
-    /// return `None` even if `inner` is still `Some`. The `AcqRel`
-    /// ordering on the swap ensures the consumed flag becomes visible
-    /// to any concurrent `_free` before the inner is taken.
-    #[allow(dead_code)] // first call site lands with the first finalize-bearing handle
-    pub(crate) fn consume(&mut self) -> Option<T> {
-        if self.consumed.swap(true, Ordering::AcqRel) {
-            None
-        } else {
-            self.inner.take()
-        }
-    }
-
-    #[allow(dead_code)] // first call site lands with the first finalize-bearing handle
-    pub(crate) fn is_consumed(&self) -> bool {
-        self.consumed.load(Ordering::Acquire)
-    }
-
-    /// Borrow the inner state, if not yet consumed.
+    /// Borrow the inner state.
     ///
     /// Read-only accessor that hides the `Option<T>` representation
-    /// from callers. Returns `None` once the handle has been finalized.
+    /// from callers.
     pub(crate) fn as_ref(&self) -> Option<&T> {
         self.inner.as_ref()
     }
 
-    /// Mutably borrow the inner state, if not yet consumed.
+    /// Mutably borrow the inner state.
     ///
     /// Required by handle types that mutate per-call state (e.g.
     /// `OxiHmacDrbgSha256`, where `instantiate` / `reseed` / `generate`
@@ -76,46 +43,5 @@ impl<T> OxiHandle<T> {
     /// implementations are pure functions over `&Aes256Key`.
     pub(crate) fn as_mut(&mut self) -> Option<&mut T> {
         self.inner.as_mut()
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use core::sync::atomic::AtomicUsize;
-    use std::sync::Arc;
-
-    /// Test-only inner type whose Drop increments a shared counter so
-    /// `handle_drop_after_consume_is_idempotent` can verify the inner
-    /// is dropped exactly once, not twice.
-    struct InnerWithCounter(Arc<AtomicUsize>);
-
-    impl Drop for InnerWithCounter {
-        fn drop(&mut self) {
-            self.0.fetch_add(1, Ordering::SeqCst);
-        }
-    }
-
-    #[test]
-    fn handle_consume_returns_inner_first_call_only() {
-        let mut h = OxiHandle::new(42u32);
-        assert_eq!(h.consume(), Some(42));
-        assert_eq!(h.consume(), None);
-        assert!(h.is_consumed());
-    }
-
-    #[test]
-    fn handle_drop_after_consume_is_idempotent() {
-        let counter = Arc::new(AtomicUsize::new(0));
-        let mut h = OxiHandle::new(InnerWithCounter(counter.clone()));
-        let consumed = h.consume();
-        assert!(consumed.is_some(), "first consume returns Some");
-        drop(consumed); // Option<InnerWithCounter>::drop fires InnerWithCounter::drop, counter += 1
-        drop(h); // should NOT increment counter (handle's inner is already None)
-        assert_eq!(
-            counter.load(Ordering::SeqCst),
-            1,
-            "consumed inner dropped exactly once"
-        );
     }
 }

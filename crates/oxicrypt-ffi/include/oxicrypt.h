@@ -70,8 +70,13 @@ typedef enum {
    */
   OXI_RESULT_UNINSTANTIATED = 8,
   /*
-   `reseed_counter` reached the SP 800-90A Table 3 reseed-interval bound; caller MUST
-   call `reseed` with fresh entropy before `generate` will return more output.
+   The DRBG's reseed counter passed the SP 800-90A Table 3 reseed
+   interval and the DRBG cannot reseed itself. No exported function
+   returns it at ABI 2: every C DRBG handle is seeded by the module and
+   reseeds itself at the interval. It is returned by `generate` on an
+   `oxicrypt_drbg` instance instantiated through the testing interface
+   with a caller-supplied entropy input, which does not reseed itself at
+   the interval.
    */
   OXI_RESULT_RESEED_REQUIRED = 9,
   /*
@@ -103,13 +108,12 @@ typedef enum {
 
    Covers BOTH AEAD tag verification (AES-GCM, AES-CCM, AES-KW, AES-KWP)
    AND signature verification (ECDSA `Ok(false)` from FIPS 186-5 §6.4.2,
-   and future RSA-PSS / EdDSA / ML-DSA / SLH-DSA / LMS / XMSS verify
-   fns). The semantic is uniform: "the cryptographic verification
-   primitive ran cleanly but the result disagrees with the claimed
-   value." Distinct from [`OxiResult::InvalidInput`] (= 5), which
-   signals input that failed to decode BEFORE any cryptographic
-   comparison. AEAD plaintext output buffer contents are UNDEFINED
-   when this code is returned.
+   and the other `_verify` functions). The semantic is uniform: "the
+   cryptographic verification primitive ran cleanly but the result
+   disagrees with the claimed value." Distinct from
+   [`OxiResult::InvalidInput`] (= 5), which signals input that failed
+   to decode BEFORE any cryptographic comparison. AEAD plaintext
+   output buffer contents are UNDEFINED when this code is returned.
    */
   OXI_RESULT_TAG_MISMATCH = 22,
   /*
@@ -139,18 +143,28 @@ typedef enum {
    */
   OXI_RESULT_INTEGRITY_UNVERIFIED = 28,
   /*
-   A DRBG `_instantiate` or `_reseed` was given an entropy input shorter
-   than the minimum for the instantiated security strength (SP 800-90A
-   Rev. 1 Tables 2 and 3). Distinct from `InvalidInput = 5`, which an
-   over-long input returns, as does CTR_DRBG `_no_df` seed material
-   that is not exactly `seedlen` bytes.
+   A DRBG instantiate or reseed was given an entropy input shorter than
+   the minimum for the instantiated security strength (SP 800-90A Rev. 1
+   Tables 2 and 3). No exported function returns it at ABI 2: the C
+   interface takes no entropy input, and the module's seed path supplies
+   a full-length one. It is returned by the `oxicrypt_drbg` testing
+   interface's caller-entropy forms: HMAC_DRBG and Hash_DRBG
+   `instantiate` and `reseed`, and CTR_DRBG `instantiate_df` and
+   `reseed_df`. Distinct from `InvalidInput = 5`, which an over-long
+   input returns, as does CTR_DRBG `instantiate_no_df` or `reseed_no_df`
+   seed material that is not exactly `seedlen` bytes.
    */
   OXI_RESULT_ENTROPY_INPUT_TOO_SHORT = 29,
   /*
-   A DRBG `_instantiate` was given a nonce shorter than half the
+   A DRBG instantiate was given a nonce shorter than half the
    instantiated security strength, the module's nonce floor
    (permitted by SP 800-90A Rev. 1 §9.1 step 8; a shorter nonce that
-   would meet only the uniqueness condition of §8.6.7 is refused).
+   would meet only the uniqueness condition of §8.6.7 is refused). No
+   exported function returns it at ABI 2: the C interface takes no
+   nonce, and the module's seed path supplies a full-length one. It is
+   returned by the `oxicrypt_drbg` testing interface's caller-nonce
+   forms: HMAC_DRBG and Hash_DRBG `instantiate`, and CTR_DRBG
+   `instantiate_df`.
    */
   OXI_RESULT_NONCE_TOO_SHORT = 30,
   /*
@@ -171,9 +185,8 @@ typedef enum {
    */
   OXI_RESULT_ENTROPY_UNAVAILABLE = 33,
   /*
-   Catch-all for "should-never-happen" cases. New error sources should
-   be paired with new `OxiResult` variants in the same change set —
-   reaching `Internal` is a flag for reviewer attention.
+   Catch-all for "should-never-happen" cases, including an error variant
+   this mapping does not name.
    */
   OXI_RESULT_INTERNAL = 255,
 } OxiResult;
@@ -190,17 +203,38 @@ typedef struct OxiAes256Key OxiAes256Key;
  Opaque CTR_DRBG-AES-128 handle. See `OxiHmacDrbgSha256` for the
  per-call-mutating thread-safety and Drop-zeroize contract.
 
+ The handle is seeded by the module: `_instantiate_from_module` draws its
+ entropy input and nonce from the module's seed path, and the DRBG reseeds
+ itself from the same path at the SP 800-90A reseed interval. A forked
+ child inherits a copy that returns `InvalidInput = 5` until the child
+ re-instantiates it with `_instantiate_from_module`. The handle has no
+ busy flag: callers serialise all calls on one handle.
+
  */
 typedef struct OxiCtrDrbgAes128 OxiCtrDrbgAes128;
 
 /*
  Opaque CTR_DRBG-AES-192 handle. See `OxiCtrDrbgAes128`.
 
+ The handle is seeded by the module: `_instantiate_from_module` draws its
+ entropy input and nonce from the module's seed path, and the DRBG reseeds
+ itself from the same path at the SP 800-90A reseed interval. A forked
+ child inherits a copy that returns `InvalidInput = 5` until the child
+ re-instantiates it with `_instantiate_from_module`. The handle has no
+ busy flag: callers serialise all calls on one handle.
+
  */
 typedef struct OxiCtrDrbgAes192 OxiCtrDrbgAes192;
 
 /*
  Opaque CTR_DRBG-AES-256 handle. See `OxiCtrDrbgAes128`.
+
+ The handle is seeded by the module: `_instantiate_from_module` draws its
+ entropy input and nonce from the module's seed path, and the DRBG reseeds
+ itself from the same path at the SP 800-90A reseed interval. A forked
+ child inherits a copy that returns `InvalidInput = 5` until the child
+ re-instantiates it with `_instantiate_from_module`. The handle has no
+ busy flag: callers serialise all calls on one handle.
 
  */
 typedef struct OxiCtrDrbgAes256 OxiCtrDrbgAes256;
@@ -211,11 +245,18 @@ typedef struct OxiCtrDrbgAes256 OxiCtrDrbgAes256;
  After fork, the child inherits a copy of every handle. The copy is refused in the child with
  `InvalidInput = 5` until the child either constructs a new handle or re-instantiates the
  inherited one with `oxi_drbg_instantiate`, so parent and child never produce the same output.
- The check compares the process id recorded at instantiation with the caller's, so a
- process id reused after the parent exits is not detected.
+ One thread of the child takes the inherited handle over; another thread calling on it
+ meanwhile receives `Busy = 32`. If the re-instantiation fails, the handle holds no state
+ from the parent and returns `Uninstantiated = 8` until it is instantiated. The check
+ compares the caller's process id with the one recorded at instantiation and with the one
+ recorded by the call holding the handle, so a handle a parent thread was instantiating
+ for the first time at the fork is inherited too. A process id reused after the parent
+ exits is not detected.
 
- A call that finds the handle in use by another call returns `Busy = 32` and changes nothing:
- retry after a pause. Calls on one handle from several threads are otherwise safe.
+ A call that finds the handle in use by another call of this process returns `Busy = 32` and
+ changes nothing: retry after a pause. A hold inherited from a thread of the parent is not
+ `Busy`: `oxi_drbg_instantiate` takes the handle over in every case. Calls on one handle from
+ several threads are otherwise safe.
 
  Calling `oxi_drbg_free` on a handle another thread is using is undefined behaviour, as for
  every handle.
@@ -244,17 +285,38 @@ typedef struct OxiEcdsaP384PrivateKey OxiEcdsaP384PrivateKey;
 /*
  Opaque Hash_DRBG-SHA-256 handle. See `OxiHmacDrbgSha256`.
 
+ The handle is seeded by the module: `_instantiate_from_module` draws its
+ entropy input and nonce from the module's seed path, and the DRBG reseeds
+ itself from the same path at the SP 800-90A reseed interval. A forked
+ child inherits a copy that returns `InvalidInput = 5` until the child
+ re-instantiates it with `_instantiate_from_module`. The handle has no
+ busy flag: callers serialise all calls on one handle.
+
  */
 typedef struct OxiHashDrbgSha256 OxiHashDrbgSha256;
 
 /*
  Opaque Hash_DRBG-SHA-384 handle. See `OxiHmacDrbgSha256`.
 
+ The handle is seeded by the module: `_instantiate_from_module` draws its
+ entropy input and nonce from the module's seed path, and the DRBG reseeds
+ itself from the same path at the SP 800-90A reseed interval. A forked
+ child inherits a copy that returns `InvalidInput = 5` until the child
+ re-instantiates it with `_instantiate_from_module`. The handle has no
+ busy flag: callers serialise all calls on one handle.
+
  */
 typedef struct OxiHashDrbgSha384 OxiHashDrbgSha384;
 
 /*
  Opaque Hash_DRBG-SHA-512 handle. See `OxiHmacDrbgSha256`.
+
+ The handle is seeded by the module: `_instantiate_from_module` draws its
+ entropy input and nonce from the module's seed path, and the DRBG reseeds
+ itself from the same path at the SP 800-90A reseed interval. A forked
+ child inherits a copy that returns `InvalidInput = 5` until the child
+ re-instantiates it with `_instantiate_from_module`. The handle has no
+ busy flag: callers serialise all calls on one handle.
 
  */
 typedef struct OxiHashDrbgSha512 OxiHashDrbgSha512;
@@ -264,17 +326,38 @@ typedef struct OxiHashDrbgSha512 OxiHashDrbgSha512;
  (`OxiHandle<HmacDrbgSha256>`) is implementation detail and not
  part of the C ABI; cbindgen renders this as an opaque struct.
 
+ The handle is seeded by the module: `_instantiate_from_module` draws its
+ entropy input and nonce from the module's seed path, and the DRBG reseeds
+ itself from the same path at the SP 800-90A reseed interval. A forked
+ child inherits a copy that returns `InvalidInput = 5` until the child
+ re-instantiates it with `_instantiate_from_module`. The handle has no
+ busy flag: callers serialise all calls on one handle.
+
  */
 typedef struct OxiHmacDrbgSha256 OxiHmacDrbgSha256;
 
 /*
  Opaque HMAC_DRBG-SHA-384 handle. See `OxiHmacDrbgSha256`.
 
+ The handle is seeded by the module: `_instantiate_from_module` draws its
+ entropy input and nonce from the module's seed path, and the DRBG reseeds
+ itself from the same path at the SP 800-90A reseed interval. A forked
+ child inherits a copy that returns `InvalidInput = 5` until the child
+ re-instantiates it with `_instantiate_from_module`. The handle has no
+ busy flag: callers serialise all calls on one handle.
+
  */
 typedef struct OxiHmacDrbgSha384 OxiHmacDrbgSha384;
 
 /*
  Opaque HMAC_DRBG-SHA-512 handle. See `OxiHmacDrbgSha256`.
+
+ The handle is seeded by the module: `_instantiate_from_module` draws its
+ entropy input and nonce from the module's seed path, and the DRBG reseeds
+ itself from the same path at the SP 800-90A reseed interval. A forked
+ child inherits a copy that returns `InvalidInput = 5` until the child
+ re-instantiates it with `_instantiate_from_module`. The handle has no
+ busy flag: callers serialise all calls on one handle.
 
  */
 typedef struct OxiHmacDrbgSha512 OxiHmacDrbgSha512;
@@ -461,8 +544,7 @@ int oxi_is_operational(void);
 
  The value latches on the first run and nothing is re-run here, so a
  later call cannot revise it and this is safe to call from the error
- state. A value of 6 means the record held something this module never
- writes.
+ state.
 
  # Safety
 
@@ -985,7 +1067,10 @@ int oxi_hkdf_sha512_expand(const uint8_t *prk_ptr,
 
  Returns `OxiResult::InvalidInput = 5` if `out_len` exceeds 65535 or 255
  hash blocks, if the label is empty or longer than 249 bytes, or if the
- context is longer than 255 bytes (RFC 8446 §7.1), with `out` zeroized.
+ context is longer than 255 bytes (RFC 8446 §7.1). An `out_len` above
+ 255 hash blocks is refused for its length and writes nothing to `out`.
+ Otherwise a failure once the derivation has started, a refused label or
+ context or a refused write, leaves `out` zeroized for `out_len` bytes.
 
  # Safety
 
@@ -1010,7 +1095,10 @@ int oxi_tls13_hkdf_expand_label_sha256(const uint8_t *secret_ptr,
 
  Returns `OxiResult::InvalidInput = 5` if `out_len` exceeds 65535 or 255
  hash blocks, if the label is empty or longer than 249 bytes, or if the
- context is longer than 255 bytes (RFC 8446 §7.1), with `out` zeroized.
+ context is longer than 255 bytes (RFC 8446 §7.1). An `out_len` above
+ 255 hash blocks is refused for its length and writes nothing to `out`.
+ Otherwise a failure once the derivation has started, a refused label or
+ context or a refused write, leaves `out` zeroized for `out_len` bytes.
 
  # Safety
 
@@ -1035,7 +1123,10 @@ int oxi_tls13_hkdf_expand_label_sha384(const uint8_t *secret_ptr,
 
  Returns `OxiResult::InvalidInput = 5` if `out_len` exceeds 65535 or 255
  hash blocks, if the label is empty or longer than 249 bytes, or if the
- context is longer than 255 bytes (RFC 8446 §7.1), with `out` zeroized.
+ context is longer than 255 bytes (RFC 8446 §7.1). An `out_len` above
+ 255 hash blocks is refused for its length and writes nothing to `out`.
+ Otherwise a failure once the derivation has started, a refused label or
+ context or a refused write, leaves `out` zeroized for `out_len` bytes.
 
  # Safety
 
@@ -1060,7 +1151,10 @@ int oxi_tls13_derive_secret_sha256(const uint8_t *secret_ptr,
 
  Returns `OxiResult::InvalidInput = 5` if `out_len` exceeds 65535 or 255
  hash blocks, if the label is empty or longer than 249 bytes, or if the
- context is longer than 255 bytes (RFC 8446 §7.1), with `out` zeroized.
+ context is longer than 255 bytes (RFC 8446 §7.1). An `out_len` above
+ 255 hash blocks is refused for its length and writes nothing to `out`.
+ Otherwise a failure once the derivation has started, a refused label or
+ context or a refused write, leaves `out` zeroized for `out_len` bytes.
 
  # Safety
 
@@ -1208,18 +1302,20 @@ int oxi_ecdh_p384_compute_shared_secret(const uint8_t *d_ptr,
  Returns `OxiResult::Ok = 0` on success;
  `OxiResult::NullPointer = 10` if any pointer is NULL;
  `OxiResult::NotOperational = 1` if the FIPS module is not in
- the `Operational` state OR the DRBG handle has been finalised;
+ the `Operational` state;
  `OxiResult::AlgorithmRestricted = 6` if the active profile does
  not allow ECDH-P-256;
- `OxiResult::InvalidInput = 5` if the DRBG faults during sampling,
- rejection-sampling exhausts without an in-range scalar (in
- practice only a broken DRBG), or the IG 10.3.A PCT mismatches.
+ `OxiResult::Uninstantiated = 8` if the DRBG handle was never
+ instantiated, and `OxiResult::InvalidInput = 5` if it was
+ instantiated by another process, if the DRBG faults during
+ sampling, if rejection sampling exhausts without an in-range scalar
+ (in practice only a broken DRBG), or if the IG 10.3.A PCT mismatches.
 
  # Safety
 
  `drbg` must be a live, instantiated handle from
  [`oxi_hmac_drbg_sha256_new`] +
- [`oxi_hmac_drbg_sha256_instantiate`]. `private_out` must be a
+ [`oxi_hmac_drbg_sha256_instantiate_from_module`]. `private_out` must be a
  non-NULL writable pointer to ≥32 bytes. `public_out` must be a
  non-NULL writable pointer to ≥65 bytes. The caller MUST
  serialise concurrent calls on the same `drbg` pointer.
@@ -1238,6 +1334,10 @@ int oxi_ecdh_p256_generate_keypair(OxiHmacDrbgSha256 *drbg,
  48-byte private scalar, 97-byte SEC1 uncompressed public key,
  RFC 5903 §8.2 responder keypair drives the IG 10.3.A PCT.
  Same error mapping and thread-safety contract.
+
+ Returns `OxiResult::Uninstantiated = 8` if the DRBG handle was never
+ instantiated, and `OxiResult::InvalidInput = 5` if it was instantiated
+ by another process; both are checked before the module state.
 
  # Safety
 
@@ -1292,19 +1392,22 @@ int oxi_dh3072_compute_shared_secret(const uint8_t *x_ptr,
  advanced (its `(K, V, reseed_counter)` state mutates) by the
  rejection-sampling loop.
 
- **First C ABI surface to consume an opaque DRBG handle.** The
- caller is responsible for: (a) allocating the handle via
- [`oxi_hmac_drbg_sha256_new`]; (b) instantiating it via
- [`oxi_hmac_drbg_sha256_instantiate`] with caller-sourced entropy
- before this call; (c) freeing it via [`oxi_hmac_drbg_sha256_free`]
- after use; and (d) serializing all calls on the same handle
- pointer per the per-call-mutating-handle thread-safety contract.
+ The caller is responsible for: (a) allocating the handle via
+ [`oxi_hmac_drbg_sha256_new`]; (b) having the handle instantiated
+ with [`oxi_hmac_drbg_sha256_instantiate_from_module`], which seeds
+ it from the module's seed path, before this call; (c) freeing it via
+ [`oxi_hmac_drbg_sha256_free`] after use; and (d) serializing all
+ calls on the same handle pointer per the per-call-mutating-handle
+ thread-safety contract.
 
- Returns `OxiResult::Ok = 0` on success; `OxiResult::InvalidInput
- = 5` if the DRBG is uninstantiated, exhausts its rejection-
- sampling attempts, or fails to produce output (the upstream
- `Option` is collapsed to `Err(InvalidInput)` by the gated public
- API); `OxiResult::NotOperational = 1` if the FIPS module is not
+ Returns `OxiResult::Ok = 0` on success;
+ `OxiResult::Uninstantiated = 8` if the DRBG handle was never
+ instantiated with `_instantiate_from_module`;
+ `OxiResult::InvalidInput = 5` if the handle was instantiated by
+ another process, or the DRBG exhausts its rejection-sampling
+ attempts or fails to produce output (the upstream `Option` is
+ collapsed to `Err(InvalidInput)` by the gated public API);
+ `OxiResult::NotOperational = 1` if the FIPS module is not
  operational; or `OxiResult::AlgorithmRestricted = 6` if the
  active profile blocks DH-3072.
 
@@ -1714,8 +1817,9 @@ int oxi_ml_kem_1024_encapsulate(const uint8_t *ek_ptr,
  **Fully deterministic** — no caller randomness, no `Ok(false)`
  shape, no `TagMismatch = 22` mapping. The FO transform's
  implicit-rejection branch absorbs tampered ciphertext into a
- deterministic-but-pseudorandom shared secret in constant time;
- tamper does NOT surface as a discriminant.
+ deterministic-but-pseudorandom shared secret; tamper does NOT
+ surface as a discriminant. That this branch runs in constant time
+ is unproven: no timing probe covers it.
 
  Returns `OxiResult::Ok = 0` on success, or a module error
  variant (`NotOperational`, `AlgorithmRestricted`).
@@ -1787,8 +1891,9 @@ int oxi_ml_kem_512_encapsulate(const uint8_t *ek_ptr,
  **Fully deterministic** — no caller randomness, no `Ok(false)`
  shape, no `TagMismatch = 22` mapping. The FO transform's
  implicit-rejection branch absorbs tampered ciphertext into a
- deterministic-but-pseudorandom shared secret in constant time;
- tamper does NOT surface as a discriminant.
+ deterministic-but-pseudorandom shared secret; tamper does NOT
+ surface as a discriminant. That this branch runs in constant time
+ is unproven: no timing probe covers it.
 
  Returns `OxiResult::Ok = 0` on success, or a module error
  variant (`NotOperational`, `AlgorithmRestricted`).
@@ -1860,8 +1965,9 @@ int oxi_ml_kem_768_encapsulate(const uint8_t *ek_ptr,
  **Fully deterministic** — no caller randomness, no `Ok(false)`
  shape, no `TagMismatch = 22` mapping. The FO transform's
  implicit-rejection branch absorbs tampered ciphertext into a
- deterministic-but-pseudorandom shared secret in constant time;
- tamper does NOT surface as a discriminant.
+ deterministic-but-pseudorandom shared secret; tamper does NOT
+ surface as a discriminant. That this branch runs in constant time
+ is unproven: no timing probe covers it.
 
  Returns `OxiResult::Ok = 0` on success, or a module error
  variant (`NotOperational`, `AlgorithmRestricted`).
@@ -4106,11 +4212,15 @@ int oxi_xmss_verify(const uint8_t *pk_ptr,
  `Operational` state. Returns `OxiResult::AlgorithmRestricted = 6`
  if the active algorithm profile blocks ECDSA-P256 keygen.
 
+ Returns `OxiResult::Uninstantiated = 8` if the DRBG handle was never
+ instantiated, and `OxiResult::InvalidInput = 5` if it was instantiated
+ by another process; both are checked before the module state.
+
  # Safety
 
  `drbg` must be a live, instantiated handle from
  [`oxi_hmac_drbg_sha256_new`] +
- [`oxi_hmac_drbg_sha256_instantiate`]. `out_key` must be a non-NULL
+ [`oxi_hmac_drbg_sha256_instantiate_from_module`]. `out_key` must be a non-NULL
  writable pointer to a `*mut OxiEcdsaP256PrivateKey`.
  */
 int oxi_ecdsa_p256_private_key_new_generate(OxiHmacDrbgSha256 *drbg,
@@ -4121,9 +4231,9 @@ int oxi_ecdsa_p256_private_key_new_generate(OxiHmacDrbgSha256 *drbg,
 
  After this call the caller's pointer is dangling; the caller
  SHOULD set their pointer to NULL to avoid use-after-free. Drop
- on the upstream `EcdsaP256PrivateKey` zeroises the private
- scalar `d` via the workspace-wide `oxicrypt-zeroize` volatile-
- write convention; no caller-side scrubbing is required.
+ on the upstream `EcdsaP256PrivateKey` calls `oxicrypt-zeroize` on
+ the private scalar `d`; no caller-side scrubbing is required. That
+ the freed memory reads zero is unproven: no test inspects it.
 
  # Safety
 
@@ -4141,7 +4251,7 @@ void oxi_ecdsa_p256_private_key_free(OxiEcdsaP256PrivateKey *key);
  Returns `OxiResult::Ok = 0` on success;
  `OxiResult::NullPointer = 10` if either pointer is NULL;
  `OxiResult::NotOperational = 1` if the handle has been
- finalised (today: never — no `_finalize` exists for this handle).
+ finalised, which cannot happen: this handle has no `_finalize`.
 
  Returns `OxiResult::NotOperational = 1` outside the `SelfTest` and
  `Operational` states, including for a handle created before the module
@@ -4176,12 +4286,16 @@ int oxi_ecdsa_p256_private_key_public_key(const OxiEcdsaP256PrivateKey *key,
  MAY allow `EcdsaP256Keygen` but block `EcdsaP256Sign`, in which
  case `_new_generate` succeeds but this fn returns 6).
 
+ Returns `OxiResult::Uninstantiated = 8` if the DRBG handle was never
+ instantiated, and `OxiResult::InvalidInput = 5` if it was instantiated
+ by another process; both are checked before the module state.
+
  # Safety
 
  `key` must be a live handle from
  [`oxi_ecdsa_p256_private_key_new_generate`]. `drbg` must be a
  live, instantiated handle from [`oxi_hmac_drbg_sha256_new`] +
- [`oxi_hmac_drbg_sha256_instantiate`]; the caller MUST serialise
+ [`oxi_hmac_drbg_sha256_instantiate_from_module`]; the caller MUST serialise
  concurrent calls on the same `drbg` pointer, because every call
  mutates the DRBG's state. `msg_ptr` must be valid for `msg_len` bytes.
  `sig_out` must be a non-NULL writable pointer to ≥64 bytes.
@@ -4198,6 +4312,10 @@ int oxi_ecdsa_p256_private_key_sign_sha256(const OxiEcdsaP256PrivateKey *key,
  `drbg`, deriving its public key, and running the IG 10.3.A
  pairwise consistency test before returning. Mirrors
  [`oxi_ecdsa_p256_private_key_new_generate`].
+
+ Returns `OxiResult::Uninstantiated = 8` if the DRBG handle was never
+ instantiated, and `OxiResult::InvalidInput = 5` if it was instantiated
+ by another process; both are checked before the module state.
 
  # Safety
 
@@ -4252,6 +4370,10 @@ int oxi_ecdsa_p384_private_key_public_key(const OxiEcdsaP384PrivateKey *key,
  `EcdsaP384Keygen` but block `EcdsaP384Sign`, in which case
  `_new_generate` succeeds but this fn returns 6).
 
+ Returns `OxiResult::Uninstantiated = 8` if the DRBG handle was never
+ instantiated, and `OxiResult::InvalidInput = 5` if it was instantiated
+ by another process; both are checked before the module state.
+
  # Safety
 
  `key` must be a live handle from
@@ -4288,11 +4410,15 @@ int oxi_ecdsa_p384_private_key_sign_sha384(const OxiEcdsaP384PrivateKey *key,
  `OxiResult::AlgorithmRestricted = 6` if the active algorithm
  profile blocks RSA-2048 keygen.
 
+ Returns `OxiResult::Uninstantiated = 8` if the DRBG handle was never
+ instantiated, and `OxiResult::InvalidInput = 5` if it was instantiated
+ by another process; both are checked before the module state.
+
  # Safety
 
  `drbg` must be a live, instantiated handle from
  [`oxi_hmac_drbg_sha256_new`] +
- [`oxi_hmac_drbg_sha256_instantiate`]. `out_key` must be a non-NULL
+ [`oxi_hmac_drbg_sha256_instantiate_from_module`]. `out_key` must be a non-NULL
  writable pointer to a `*mut OxiRsaPrivateKey2048`.
  */
 int oxi_rsa_2048_private_key_new_generate(OxiHmacDrbgSha256 *drbg,
@@ -4303,9 +4429,10 @@ int oxi_rsa_2048_private_key_new_generate(OxiHmacDrbgSha256 *drbg,
  Free an RSA-2048 private-key handle. NULL-safe.
 
  After this call the caller's pointer is dangling. Drop on the
- upstream `RsaPrivateKey2048` zeroises the private exponent `d`
- and (when present) the CRT components `p, q, dP, dQ, qInv` via
- the workspace-wide `oxicrypt-zeroize` volatile-write convention.
+ upstream `RsaPrivateKey2048` calls `oxicrypt-zeroize` on the
+ private exponent `d` and (when present) the CRT components
+ `p, q, dP, dQ, qInv`. That the freed memory reads zero is unproven:
+ no test inspects it.
 
  # Safety
 
@@ -4378,6 +4505,10 @@ int oxi_rsa_2048_sign_pkcs1_v15_sha256(const OxiRsaPrivateKey2048 *key,
 
  On success, writes 256 bytes into `sig_out` and returns `Ok = 0`.
 
+ Returns `OxiResult::Uninstantiated = 8` if the DRBG handle was never
+ instantiated, and `OxiResult::InvalidInput = 5` if it was instantiated
+ by another process; both are checked before the module state.
+
  # Safety
 
  `key` must be a live handle. `drbg` must be a live, instantiated
@@ -4401,6 +4532,10 @@ int oxi_rsa_2048_sign_pss_sha256(const OxiRsaPrivateKey2048 *key,
  bytes (`k − 2·hLen − 2` with `k = 256`, `hLen = 32`).
 
  On success, writes 256 bytes into `ct_out` and returns `Ok = 0`.
+
+ Returns `OxiResult::Uninstantiated = 8` if the DRBG handle was never
+ instantiated, and `OxiResult::InvalidInput = 5` if it was instantiated
+ by another process; both are checked before the module state.
 
  # Safety
 
@@ -4458,6 +4593,10 @@ int oxi_rsa_2048_oaep_decrypt_sha256(const OxiRsaPrivateKey2048 *key,
  [`oxi_rsa_2048_private_key_new_generate`] for the 3072-bit
  modulus; PCT-at-construction runs on the CRT path with Bellcore
  verify-after-sign.
+
+ Returns `OxiResult::Uninstantiated = 8` if the DRBG handle was never
+ instantiated, and `OxiResult::InvalidInput = 5` if it was instantiated
+ by another process; both are checked before the module state.
 
  # Safety
 
@@ -4525,6 +4664,10 @@ int oxi_rsa_3072_sign_pkcs1_v15_sha256(const OxiRsaPrivateKey3072 *key,
  Sign `msg` with RSASSA-PSS SHA-256 under the RSA-3072 handle,
  DRBG-sampled salt. Produces a 384-byte signature.
 
+ Returns `OxiResult::Uninstantiated = 8` if the DRBG handle was never
+ instantiated, and `OxiResult::InvalidInput = 5` if it was instantiated
+ by another process; both are checked before the module state.
+
  # Safety
 
  See [`oxi_rsa_2048_sign_pss_sha256`]. `sig_out` must be a
@@ -4541,6 +4684,10 @@ int oxi_rsa_3072_sign_pss_sha256(const OxiRsaPrivateKey3072 *key,
  public key `(n, e)`, DRBG-sampled seed. Maximum plaintext length
  is 318 bytes (`k − 2·hLen − 2` with `k = 384`, `hLen = 32`).
  Ciphertext is fixed at 384 bytes.
+
+ Returns `OxiResult::Uninstantiated = 8` if the DRBG handle was never
+ instantiated, and `OxiResult::InvalidInput = 5` if it was instantiated
+ by another process; both are checked before the module state.
 
  # Safety
 
@@ -4580,6 +4727,10 @@ int oxi_rsa_3072_oaep_decrypt_sha256(const OxiRsaPrivateKey3072 *key,
  Allocate a new RSA-4096 private-key handle. Mirrors
  [`oxi_rsa_2048_private_key_new_generate`] for the 4096-bit
  modulus.
+
+ Returns `OxiResult::Uninstantiated = 8` if the DRBG handle was never
+ instantiated, and `OxiResult::InvalidInput = 5` if it was instantiated
+ by another process; both are checked before the module state.
 
  # Safety
 
@@ -4645,6 +4796,10 @@ int oxi_rsa_4096_sign_pkcs1_v15_sha256(const OxiRsaPrivateKey4096 *key,
  Sign `msg` with RSASSA-PSS SHA-256 under the RSA-4096 handle,
  DRBG-sampled salt. Produces a 512-byte signature.
 
+ Returns `OxiResult::Uninstantiated = 8` if the DRBG handle was never
+ instantiated, and `OxiResult::InvalidInput = 5` if it was instantiated
+ by another process; both are checked before the module state.
+
  # Safety
 
  See [`oxi_rsa_2048_sign_pss_sha256`]. `sig_out` must be a
@@ -4660,6 +4815,10 @@ int oxi_rsa_4096_sign_pss_sha256(const OxiRsaPrivateKey4096 *key,
  Encrypt `msg` with RSAES-OAEP SHA-256 against the RSA-4096
  public key `(n, e)`, DRBG-sampled seed. Maximum plaintext length
  is 446 bytes; ciphertext is 512 bytes.
+
+ Returns `OxiResult::Uninstantiated = 8` if the DRBG handle was never
+ instantiated, and `OxiResult::InvalidInput = 5` if it was instantiated
+ by another process; both are checked before the module state.
 
  # Safety
 
@@ -4758,12 +4917,8 @@ int oxi_aes256_gcm_encrypt(const OxiAes256Key *key,
  AES-256-GCM authenticated decryption (one-shot).
 
  Returns `OxiResult::TagMismatch = 22` on authentication failure.
- On tag mismatch the `plaintext` buffer contents are UNDEFINED —
- the caller MUST NOT use them. (FIPS 140-3 expects the
- implementation to release the plaintext only after successful
- tag verification, but operating-system buffers may have been
- touched during the constant-time tag check; treat the buffer as
- untrusted on any non-Ok return.)
+ On any non-Ok return, `TagMismatch` included, the `plaintext`
+ contents are undefined and MUST NOT be used.
 
  Buffer requirements identical to [`oxi_aes256_gcm_encrypt`] with
  `ciphertext`/`plaintext` directions swapped and `tag` as input.
@@ -5004,8 +5159,8 @@ int oxi_aes256_kwp_unwrap(const OxiAes256Key *key,
 
  The newly-allocated handle is uninstantiated — calling
  [`oxi_hmac_drbg_sha256_generate`] or
- [`oxi_hmac_drbg_sha256_reseed`] before
- [`oxi_hmac_drbg_sha256_instantiate`] returns
+ [`oxi_hmac_drbg_sha256_reseed_from_module`] before
+ [`oxi_hmac_drbg_sha256_instantiate_from_module`] returns
  `OxiResult::Uninstantiated = 8`.
 
  # Safety
@@ -5025,7 +5180,8 @@ int oxi_hmac_drbg_sha256_new(OxiHmacDrbgSha256 **out_handle);
 
  Drop on the upstream `HmacDrbgSha256` zeroizes the internal
  `(K, V)` state via the workspace-wide `oxicrypt-zeroize`
- volatile-write convention; no caller-side scrubbing is required.
+ volatile-write convention, and every byte of the handle is then wiped
+ before its memory is released; no caller-side scrubbing is required.
 
  # Safety
 
@@ -5035,92 +5191,79 @@ int oxi_hmac_drbg_sha256_new(OxiHmacDrbgSha256 **out_handle);
 void oxi_hmac_drbg_sha256_free(OxiHmacDrbgSha256 *handle);
 
 /*
- HMAC_DRBG-SHA-256 Instantiate (SP 800-90A §10.1.2.3).
+ HMAC_DRBG-SHA-256 Instantiate from the module's seed path
+ (SP 800-90A §10.1.2.3), with an optional personalization string.
 
- Seeds the DRBG with caller-supplied entropy, nonce, and
- personalization. The combined length
- `entropy_len + nonce_len + perso_len` MUST NOT exceed
- `HMAC_DRBG_MAX_PROVIDED = 768` bytes; over-length returns
- `OxiResult::InvalidInput = 5`.
+ Draws the entropy input and nonce from the module's seed path,
+ replaces any earlier instantiation of the handle and records the
+ calling process's id. In a forked child this is the call that makes
+ an inherited handle usable again.
 
- Each input may be NULL when its corresponding length is 0.
- Personalization length 0 is the typical path for FIPS-conformant
- callers that don't have a personalization string. The instantiated
- security strength is 256 bits, so an entropy input shorter than
- 32 bytes (SP 800-90A Rev. 1 Table 2 `min_length`) returns
- `OxiResult::EntropyInputTooShort = 29`, and a nonce shorter than
- 16 bytes returns `OxiResult::NonceTooShort = 30`. The nonce floor is
- the module's own check, permitted by §9.1 step 8: a shorter nonce
- that would meet only the uniqueness condition of §8.6.7 is refused.
- An over-long combined input returns `InvalidInput = 5` even when the
- entropy input or nonce is also short. A refusal by any of these
- length checks leaves the handle uninstantiated.
+ `perso` may be NULL when `perso_len` is 0; NULL with a non-zero length
+ returns `OxiResult::InvalidInput = 5`. A personalization string longer
+ than the DRBG accepts returns `InvalidInput = 5` before any draw. A
+ failed draw returns `OxiResult::Busy = 32` (retry after a pause) or
+ `OxiResult::EntropyUnavailable = 33`. Every refusal leaves the handle
+ as it was.
 
  # Safety
 
- All pointer/length pairs must be valid. `handle` must be a live
- handle from [`oxi_hmac_drbg_sha256_new`].
+ `handle` must be NULL or a live handle from
+ [`oxi_hmac_drbg_sha256_new`], not in use by another call. A non-NULL
+ `perso` must be valid for reads of `perso_len` bytes.
  */
-int oxi_hmac_drbg_sha256_instantiate(OxiHmacDrbgSha256 *handle,
-                                     const uint8_t *entropy,
-                                     uintptr_t entropy_len,
-                                     const uint8_t *nonce,
-                                     uintptr_t nonce_len,
-                                     const uint8_t *personalization,
-                                     uintptr_t personalization_len);
+int oxi_hmac_drbg_sha256_instantiate_from_module(OxiHmacDrbgSha256 *handle,
+                                                 const uint8_t *perso,
+                                                 uintptr_t perso_len);
 
 /*
- HMAC_DRBG-SHA-256 Reseed (SP 800-90A §10.1.2.4).
+ HMAC_DRBG-SHA-256 Reseed from the module's seed path
+ (SP 800-90A §10.1.2.4), with optional additional input.
 
- Re-seeds the DRBG with fresh entropy and (optionally) additional
- input. After successful reseed, `reseed_counter` is reset to 1
- and the handle is ready to serve new `generate` calls.
-
- `additional_input` may be NULL when `additional_input_len` is 0.
- `entropy` MUST point to ≥ `entropy_len` readable bytes.
-
- Returns `OxiResult::Uninstantiated = 8` if the handle has not yet
- been instantiated. Returns `OxiResult::InvalidInput = 5` if the
- combined `entropy_len + additional_input_len` exceeds
- `HMAC_DRBG_MAX_PROVIDED = 768` bytes, and
- `OxiResult::EntropyInputTooShort = 29` if `entropy_len` is below
- 32 bytes (SP 800-90A Rev. 1 Table 2 `min_length`).
+ `additional` may be NULL when `additional_len` is 0; NULL with a
+ non-zero length returns `OxiResult::InvalidInput = 5`. A handle never
+ instantiated with [`oxi_hmac_drbg_sha256_instantiate_from_module`]
+ returns `OxiResult::Uninstantiated = 8`, and a handle instantiated by
+ another process returns `InvalidInput = 5`. Additional input longer
+ than the DRBG accepts returns `InvalidInput = 5` before any draw. A
+ failed draw returns `OxiResult::Busy = 32` or
+ `OxiResult::EntropyUnavailable = 33`.
 
  # Safety
 
- All pointer/length pairs must be valid. `handle` must be a live
- handle from [`oxi_hmac_drbg_sha256_new`].
+ `handle` must be NULL or a live handle from
+ [`oxi_hmac_drbg_sha256_new`], not in use by another call. A non-NULL
+ `additional` must be valid for reads of `additional_len` bytes.
  */
-int oxi_hmac_drbg_sha256_reseed(OxiHmacDrbgSha256 *handle,
-                                const uint8_t *entropy,
-                                uintptr_t entropy_len,
-                                const uint8_t *additional_input,
-                                uintptr_t additional_input_len);
+int oxi_hmac_drbg_sha256_reseed_from_module(OxiHmacDrbgSha256 *handle,
+                                            const uint8_t *additional,
+                                            uintptr_t additional_len);
 
 /*
  HMAC_DRBG-SHA-256 Generate (SP 800-90A §10.1.2.5).
 
- Produces `out_len` pseudorandom bytes into `out`, advancing the
- internal `(K, V)` state and incrementing `reseed_counter`.
+ Produces `out_len` pseudorandom bytes into `out`. The DRBG reseeds
+ itself from the module's seed path when it reaches the SP 800-90A
+ reseed interval, so `OxiResult::ReseedRequired = 9` never occurs.
 
  `additional_input` may be NULL when `additional_input_len` is 0
  (mapped to upstream `additional_input = None`); a NULL with
  non-zero length returns `OxiResult::NullPointer = 10`.
 
- Returns `OxiResult::Uninstantiated = 8` if `instantiate` has not
- yet succeeded on this handle. Returns `OxiResult::ReseedRequired = 9`
- if `reseed_counter` has reached the SP 800-90A Table 3 bound; the
- caller MUST call [`oxi_hmac_drbg_sha256_reseed`] before retrying.
- Returns `OxiResult::OutputTooLong = 12` if `out_len` exceeds the
+ Returns `OxiResult::Uninstantiated = 8` if the handle was never
+ instantiated with [`oxi_hmac_drbg_sha256_instantiate_from_module`],
+ and `OxiResult::InvalidInput = 5` if it was instantiated by another
+ process or `additional_input_len` exceeds the additional input the
+ DRBG accepts from a module reseed. Returns
+ `OxiResult::OutputTooLong = 12` if `out_len` exceeds the
  SP 800-90A Table 3 `max_number_of_bits_per_request` ceiling
- (`2^19` bits = 65 536 bytes).
+ (`2^19` bits = 65 536 bytes). `out` is written only on success.
 
  # Safety
 
- `handle` must be a live handle from [`oxi_hmac_drbg_sha256_new`].
- `out` must point to ≥ `out_len` writable bytes (or `out_len == 0`,
- in which case the call is a no-op state advance — useful only as
- part of a `reseed`-then-`generate(None, [])` PR equivalence).
+ `handle` must be NULL or a live handle from
+ [`oxi_hmac_drbg_sha256_new`], not in use by another call.
+ `out` must point to ≥ `out_len` writable bytes (or `out_len == 0`).
  `additional_input` must point to ≥ `additional_input_len`
  readable bytes when `additional_input_len > 0`.
  */
@@ -5153,49 +5296,35 @@ int oxi_hmac_drbg_sha384_new(OxiHmacDrbgSha384 **out_handle);
 void oxi_hmac_drbg_sha384_free(OxiHmacDrbgSha384 *handle);
 
 /*
- HMAC_DRBG-SHA-384 Instantiate (SP 800-90A §10.1.2.3). See
- [`oxi_hmac_drbg_sha256_instantiate`] for full contract; the
- `entropy_len + nonce_len + perso_len` ceiling is the same upstream
- `HMAC_DRBG_MAX_PROVIDED = 768` bytes (alg-independent constant).
- The instantiated security strength is 256 bits (SP 800-57 Part 1),
- so per SP 800-90A Table 2 entropy ≥ 256 bits, nonce ≥ 128 bits.
-
- Returns `OxiResult::EntropyInputTooShort = 29` when `entropy_len`
- is below 32 bytes and `OxiResult::NonceTooShort = 30` when
- `nonce_len` is below 16 bytes (SP 800-90A Rev. 1 Table 2
- `min_length` and the module's nonce floor).
+ HMAC_DRBG-SHA-384 Instantiate from the module's seed path
+ (SP 800-90A §10.1.2.3). See
+ [`oxi_hmac_drbg_sha256_instantiate_from_module`] for the full contract.
+ The instantiated security strength is 256 bits (SP 800-57 Part 1).
 
  # Safety
 
- All pointer/length pairs must be valid. `handle` must be a live
- handle from [`oxi_hmac_drbg_sha384_new`].
+ `handle` must be NULL or a live handle from
+ [`oxi_hmac_drbg_sha384_new`], not in use by another call. A non-NULL
+ `perso` must be valid for reads of `perso_len` bytes.
  */
-int oxi_hmac_drbg_sha384_instantiate(OxiHmacDrbgSha384 *handle,
-                                     const uint8_t *entropy,
-                                     uintptr_t entropy_len,
-                                     const uint8_t *nonce,
-                                     uintptr_t nonce_len,
-                                     const uint8_t *personalization,
-                                     uintptr_t personalization_len);
+int oxi_hmac_drbg_sha384_instantiate_from_module(OxiHmacDrbgSha384 *handle,
+                                                 const uint8_t *perso,
+                                                 uintptr_t perso_len);
 
 /*
- HMAC_DRBG-SHA-384 Reseed (SP 800-90A §10.1.2.4). See
- [`oxi_hmac_drbg_sha256_reseed`] for full contract.
-
- Returns `OxiResult::EntropyInputTooShort = 29` when `entropy_len`
- is below 32 bytes (SP 800-90A Rev. 1 Table 2 `min_length`);
- additional input does not count toward it.
+ HMAC_DRBG-SHA-384 Reseed from the module's seed path
+ (SP 800-90A §10.1.2.4). See
+ [`oxi_hmac_drbg_sha256_reseed_from_module`] for the full contract.
 
  # Safety
 
- All pointer/length pairs must be valid. `handle` must be a live
- handle from [`oxi_hmac_drbg_sha384_new`].
+ `handle` must be NULL or a live handle from
+ [`oxi_hmac_drbg_sha384_new`], not in use by another call. A non-NULL
+ `additional` must be valid for reads of `additional_len` bytes.
  */
-int oxi_hmac_drbg_sha384_reseed(OxiHmacDrbgSha384 *handle,
-                                const uint8_t *entropy,
-                                uintptr_t entropy_len,
-                                const uint8_t *additional_input,
-                                uintptr_t additional_input_len);
+int oxi_hmac_drbg_sha384_reseed_from_module(OxiHmacDrbgSha384 *handle,
+                                            const uint8_t *additional,
+                                            uintptr_t additional_len);
 
 /*
  HMAC_DRBG-SHA-384 Generate (SP 800-90A §10.1.2.5). See
@@ -5205,7 +5334,8 @@ int oxi_hmac_drbg_sha384_reseed(OxiHmacDrbgSha384 *handle,
 
  # Safety
 
- `handle` must be a live handle from [`oxi_hmac_drbg_sha384_new`].
+ `handle` must be NULL or a live handle from
+ [`oxi_hmac_drbg_sha384_new`], not in use by another call.
  `out` must point to ≥ `out_len` writable bytes.
  `additional_input` must point to ≥ `additional_input_len`
  readable bytes when `additional_input_len > 0`.
@@ -5238,48 +5368,36 @@ int oxi_hmac_drbg_sha512_new(OxiHmacDrbgSha512 **out_handle);
 void oxi_hmac_drbg_sha512_free(OxiHmacDrbgSha512 *handle);
 
 /*
- HMAC_DRBG-SHA-512 Instantiate (SP 800-90A §10.1.2.3). See
- [`oxi_hmac_drbg_sha256_instantiate`] for full contract. Per
- SP 800-90A Table 2, security strength 256 → entropy ≥ 256 bits,
- nonce ≥ 128 bits — same as SHA-256 but with a wider internal
+ HMAC_DRBG-SHA-512 Instantiate from the module's seed path
+ (SP 800-90A §10.1.2.3). See
+ [`oxi_hmac_drbg_sha256_instantiate_from_module`] for the full contract.
+ The instantiated security strength is 256 bits, with a wider internal
  `(K, V)` of 64 bytes each.
 
- Returns `OxiResult::EntropyInputTooShort = 29` when `entropy_len`
- is below 32 bytes and `OxiResult::NonceTooShort = 30` when
- `nonce_len` is below 16 bytes (SP 800-90A Rev. 1 Table 2
- `min_length` and the module's nonce floor).
-
  # Safety
 
- All pointer/length pairs must be valid. `handle` must be a live
- handle from [`oxi_hmac_drbg_sha512_new`].
+ `handle` must be NULL or a live handle from
+ [`oxi_hmac_drbg_sha512_new`], not in use by another call. A non-NULL
+ `perso` must be valid for reads of `perso_len` bytes.
  */
-int oxi_hmac_drbg_sha512_instantiate(OxiHmacDrbgSha512 *handle,
-                                     const uint8_t *entropy,
-                                     uintptr_t entropy_len,
-                                     const uint8_t *nonce,
-                                     uintptr_t nonce_len,
-                                     const uint8_t *personalization,
-                                     uintptr_t personalization_len);
+int oxi_hmac_drbg_sha512_instantiate_from_module(OxiHmacDrbgSha512 *handle,
+                                                 const uint8_t *perso,
+                                                 uintptr_t perso_len);
 
 /*
- HMAC_DRBG-SHA-512 Reseed (SP 800-90A §10.1.2.4). See
- [`oxi_hmac_drbg_sha256_reseed`].
-
- Returns `OxiResult::EntropyInputTooShort = 29` when `entropy_len`
- is below 32 bytes (SP 800-90A Rev. 1 Table 2 `min_length`);
- additional input does not count toward it.
+ HMAC_DRBG-SHA-512 Reseed from the module's seed path
+ (SP 800-90A §10.1.2.4). See
+ [`oxi_hmac_drbg_sha256_reseed_from_module`] for the full contract.
 
  # Safety
 
- All pointer/length pairs must be valid. `handle` must be a live
- handle from [`oxi_hmac_drbg_sha512_new`].
+ `handle` must be NULL or a live handle from
+ [`oxi_hmac_drbg_sha512_new`], not in use by another call. A non-NULL
+ `additional` must be valid for reads of `additional_len` bytes.
  */
-int oxi_hmac_drbg_sha512_reseed(OxiHmacDrbgSha512 *handle,
-                                const uint8_t *entropy,
-                                uintptr_t entropy_len,
-                                const uint8_t *additional_input,
-                                uintptr_t additional_input_len);
+int oxi_hmac_drbg_sha512_reseed_from_module(OxiHmacDrbgSha512 *handle,
+                                            const uint8_t *additional,
+                                            uintptr_t additional_len);
 
 /*
  HMAC_DRBG-SHA-512 Generate (SP 800-90A §10.1.2.5). See
@@ -5287,7 +5405,8 @@ int oxi_hmac_drbg_sha512_reseed(OxiHmacDrbgSha512 *handle,
 
  # Safety
 
- `handle` must be a live handle from [`oxi_hmac_drbg_sha512_new`].
+ `handle` must be NULL or a live handle from
+ [`oxi_hmac_drbg_sha512_new`], not in use by another call.
  `out` must point to ≥ `out_len` writable bytes.
  `additional_input` must point to ≥ `additional_input_len`
  readable bytes when `additional_input_len > 0`.
@@ -5320,48 +5439,34 @@ int oxi_hash_drbg_sha256_new(OxiHashDrbgSha256 **out_handle);
 void oxi_hash_drbg_sha256_free(OxiHashDrbgSha256 *handle);
 
 /*
- Hash_DRBG-SHA-256 Instantiate (SP 800-90A §10.1.1.2). See
- [`oxi_hmac_drbg_sha256_instantiate`] for full contract; per
- SP 800-90A Table 2, security strength 256 → entropy ≥ 256 bits,
- nonce ≥ 128 bits. Combined-input ceiling is the alg-independent
- `HASH_DRBG_MAX_DF_INPUT` upstream constant.
-
- Returns `OxiResult::EntropyInputTooShort = 29` when `entropy_len`
- is below 32 bytes and `OxiResult::NonceTooShort = 30` when
- `nonce_len` is below 16 bytes (SP 800-90A Rev. 1 Table 2
- `min_length` and the module's nonce floor).
+ Hash_DRBG-SHA-256 Instantiate from the module's seed path
+ (SP 800-90A §10.1.1.2). See
+ [`oxi_hmac_drbg_sha256_instantiate_from_module`] for the full contract.
 
  # Safety
 
- All pointer/length pairs must be valid. `handle` must be a live
- handle from [`oxi_hash_drbg_sha256_new`].
+ `handle` must be NULL or a live handle from
+ [`oxi_hash_drbg_sha256_new`], not in use by another call. A non-NULL
+ `perso` must be valid for reads of `perso_len` bytes.
  */
-int oxi_hash_drbg_sha256_instantiate(OxiHashDrbgSha256 *handle,
-                                     const uint8_t *entropy,
-                                     uintptr_t entropy_len,
-                                     const uint8_t *nonce,
-                                     uintptr_t nonce_len,
-                                     const uint8_t *personalization,
-                                     uintptr_t personalization_len);
+int oxi_hash_drbg_sha256_instantiate_from_module(OxiHashDrbgSha256 *handle,
+                                                 const uint8_t *perso,
+                                                 uintptr_t perso_len);
 
 /*
- Hash_DRBG-SHA-256 Reseed (SP 800-90A §10.1.1.3). See
- [`oxi_hmac_drbg_sha256_reseed`].
-
- Returns `OxiResult::EntropyInputTooShort = 29` when `entropy_len`
- is below 32 bytes (SP 800-90A Rev. 1 Table 2 `min_length`);
- additional input does not count toward it.
+ Hash_DRBG-SHA-256 Reseed from the module's seed path
+ (SP 800-90A §10.1.1.3). See
+ [`oxi_hmac_drbg_sha256_reseed_from_module`] for the full contract.
 
  # Safety
 
- All pointer/length pairs must be valid. `handle` must be a live
- handle from [`oxi_hash_drbg_sha256_new`].
+ `handle` must be NULL or a live handle from
+ [`oxi_hash_drbg_sha256_new`], not in use by another call. A non-NULL
+ `additional` must be valid for reads of `additional_len` bytes.
  */
-int oxi_hash_drbg_sha256_reseed(OxiHashDrbgSha256 *handle,
-                                const uint8_t *entropy,
-                                uintptr_t entropy_len,
-                                const uint8_t *additional_input,
-                                uintptr_t additional_input_len);
+int oxi_hash_drbg_sha256_reseed_from_module(OxiHashDrbgSha256 *handle,
+                                            const uint8_t *additional,
+                                            uintptr_t additional_len);
 
 /*
  Hash_DRBG-SHA-256 Generate (SP 800-90A §10.1.1.4). See
@@ -5369,7 +5474,8 @@ int oxi_hash_drbg_sha256_reseed(OxiHashDrbgSha256 *handle,
 
  # Safety
 
- `handle` must be a live handle from [`oxi_hash_drbg_sha256_new`].
+ `handle` must be NULL or a live handle from
+ [`oxi_hash_drbg_sha256_new`], not in use by another call.
  `out` must point to ≥ `out_len` writable bytes.
  `additional_input` must point to ≥ `additional_input_len`
  readable bytes when `additional_input_len > 0`.
@@ -5401,52 +5507,41 @@ int oxi_hash_drbg_sha384_new(OxiHashDrbgSha384 **out_handle);
 void oxi_hash_drbg_sha384_free(OxiHashDrbgSha384 *handle);
 
 /*
- Hash_DRBG-SHA-384 Instantiate. The instantiated security strength
- is 256 bits (SP 800-57 Part 1), so per SP 800-90A Table 2
- entropy ≥ 256 bits, nonce ≥ 128 bits.
-
- Returns `OxiResult::EntropyInputTooShort = 29` when `entropy_len`
- is below 32 bytes and `OxiResult::NonceTooShort = 30` when
- `nonce_len` is below 16 bytes (SP 800-90A Rev. 1 Table 2
- `min_length` and the module's nonce floor).
+ Hash_DRBG-SHA-384 Instantiate from the module's seed path. The
+ instantiated security strength is 256 bits (SP 800-57 Part 1). See
+ [`oxi_hmac_drbg_sha256_instantiate_from_module`] for the full contract.
 
  # Safety
 
- All pointer/length pairs must be valid. `handle` must be a live
- handle from [`oxi_hash_drbg_sha384_new`].
+ `handle` must be NULL or a live handle from
+ [`oxi_hash_drbg_sha384_new`], not in use by another call. A non-NULL
+ `perso` must be valid for reads of `perso_len` bytes.
  */
-int oxi_hash_drbg_sha384_instantiate(OxiHashDrbgSha384 *handle,
-                                     const uint8_t *entropy,
-                                     uintptr_t entropy_len,
-                                     const uint8_t *nonce,
-                                     uintptr_t nonce_len,
-                                     const uint8_t *personalization,
-                                     uintptr_t personalization_len);
+int oxi_hash_drbg_sha384_instantiate_from_module(OxiHashDrbgSha384 *handle,
+                                                 const uint8_t *perso,
+                                                 uintptr_t perso_len);
 
 /*
- Hash_DRBG-SHA-384 Reseed.
-
- Returns `OxiResult::EntropyInputTooShort = 29` when `entropy_len`
- is below 32 bytes (SP 800-90A Rev. 1 Table 2 `min_length`);
- additional input does not count toward it.
+ Hash_DRBG-SHA-384 Reseed from the module's seed path. See
+ [`oxi_hmac_drbg_sha256_reseed_from_module`] for the full contract.
 
  # Safety
 
- All pointer/length pairs must be valid. `handle` must be a live
- handle from [`oxi_hash_drbg_sha384_new`].
+ `handle` must be NULL or a live handle from
+ [`oxi_hash_drbg_sha384_new`], not in use by another call. A non-NULL
+ `additional` must be valid for reads of `additional_len` bytes.
  */
-int oxi_hash_drbg_sha384_reseed(OxiHashDrbgSha384 *handle,
-                                const uint8_t *entropy,
-                                uintptr_t entropy_len,
-                                const uint8_t *additional_input,
-                                uintptr_t additional_input_len);
+int oxi_hash_drbg_sha384_reseed_from_module(OxiHashDrbgSha384 *handle,
+                                            const uint8_t *additional,
+                                            uintptr_t additional_len);
 
 /*
- Hash_DRBG-SHA-384 Generate.
+ Hash_DRBG-SHA-384 Generate. See [`oxi_hmac_drbg_sha256_generate`].
 
  # Safety
 
- `handle` must be a live handle from [`oxi_hash_drbg_sha384_new`].
+ `handle` must be NULL or a live handle from
+ [`oxi_hash_drbg_sha384_new`], not in use by another call.
  `out` must point to ≥ `out_len` writable bytes.
  `additional_input` must point to ≥ `additional_input_len`
  readable bytes when `additional_input_len > 0`.
@@ -5478,51 +5573,41 @@ int oxi_hash_drbg_sha512_new(OxiHashDrbgSha512 **out_handle);
 void oxi_hash_drbg_sha512_free(OxiHashDrbgSha512 *handle);
 
 /*
- Hash_DRBG-SHA-512 Instantiate. Per SP 800-90A Table 2, security
- strength 256 → entropy ≥ 256 bits, nonce ≥ 128 bits.
-
- Returns `OxiResult::EntropyInputTooShort = 29` when `entropy_len`
- is below 32 bytes and `OxiResult::NonceTooShort = 30` when
- `nonce_len` is below 16 bytes (SP 800-90A Rev. 1 Table 2
- `min_length` and the module's nonce floor).
+ Hash_DRBG-SHA-512 Instantiate from the module's seed path. The
+ instantiated security strength is 256 bits. See
+ [`oxi_hmac_drbg_sha256_instantiate_from_module`] for the full contract.
 
  # Safety
 
- All pointer/length pairs must be valid. `handle` must be a live
- handle from [`oxi_hash_drbg_sha512_new`].
+ `handle` must be NULL or a live handle from
+ [`oxi_hash_drbg_sha512_new`], not in use by another call. A non-NULL
+ `perso` must be valid for reads of `perso_len` bytes.
  */
-int oxi_hash_drbg_sha512_instantiate(OxiHashDrbgSha512 *handle,
-                                     const uint8_t *entropy,
-                                     uintptr_t entropy_len,
-                                     const uint8_t *nonce,
-                                     uintptr_t nonce_len,
-                                     const uint8_t *personalization,
-                                     uintptr_t personalization_len);
+int oxi_hash_drbg_sha512_instantiate_from_module(OxiHashDrbgSha512 *handle,
+                                                 const uint8_t *perso,
+                                                 uintptr_t perso_len);
 
 /*
- Hash_DRBG-SHA-512 Reseed.
-
- Returns `OxiResult::EntropyInputTooShort = 29` when `entropy_len`
- is below 32 bytes (SP 800-90A Rev. 1 Table 2 `min_length`);
- additional input does not count toward it.
+ Hash_DRBG-SHA-512 Reseed from the module's seed path. See
+ [`oxi_hmac_drbg_sha256_reseed_from_module`] for the full contract.
 
  # Safety
 
- All pointer/length pairs must be valid. `handle` must be a live
- handle from [`oxi_hash_drbg_sha512_new`].
+ `handle` must be NULL or a live handle from
+ [`oxi_hash_drbg_sha512_new`], not in use by another call. A non-NULL
+ `additional` must be valid for reads of `additional_len` bytes.
  */
-int oxi_hash_drbg_sha512_reseed(OxiHashDrbgSha512 *handle,
-                                const uint8_t *entropy,
-                                uintptr_t entropy_len,
-                                const uint8_t *additional_input,
-                                uintptr_t additional_input_len);
+int oxi_hash_drbg_sha512_reseed_from_module(OxiHashDrbgSha512 *handle,
+                                            const uint8_t *additional,
+                                            uintptr_t additional_len);
 
 /*
- Hash_DRBG-SHA-512 Generate.
+ Hash_DRBG-SHA-512 Generate. See [`oxi_hmac_drbg_sha256_generate`].
 
  # Safety
 
- `handle` must be a live handle from [`oxi_hash_drbg_sha512_new`].
+ `handle` must be NULL or a live handle from
+ [`oxi_hash_drbg_sha512_new`], not in use by another call.
  `out` must point to ≥ `out_len` writable bytes.
  `additional_input` must point to ≥ `additional_input_len`
  readable bytes when `additional_input_len > 0`.
@@ -5535,10 +5620,9 @@ int oxi_hash_drbg_sha512_generate(OxiHashDrbgSha512 *handle,
 
 /*
  Allocate a new, uninstantiated CTR_DRBG-AES-128 handle. Caller
- must subsequently call exactly one of
- [`oxi_ctr_drbg_aes128_instantiate_no_df`] or
- [`oxi_ctr_drbg_aes128_instantiate_df`] before generate / reseed
- becomes operational.
+ must subsequently call
+ [`oxi_ctr_drbg_aes128_instantiate_from_module`] before generate /
+ reseed becomes operational.
 
  # Safety
 
@@ -5550,7 +5634,8 @@ int oxi_ctr_drbg_aes128_new(OxiCtrDrbgAes128 **out_handle);
 /*
  Free a CTR_DRBG-AES-128 handle. NULL-safe. Drop on the upstream
  `CtrDrbgAes128` zeroizes the internal `(Key, V, reseed_counter)`
- state via `oxicrypt-zeroize`.
+ state via `oxicrypt-zeroize`, and every byte of the handle is then wiped
+ before its memory is released.
 
  # Safety
 
@@ -5560,116 +5645,52 @@ int oxi_ctr_drbg_aes128_new(OxiCtrDrbgAes128 **out_handle);
 void oxi_ctr_drbg_aes128_free(OxiCtrDrbgAes128 *handle);
 
 /*
- CTR_DRBG-AES-128 Instantiate, **no-df** variant (SP 800-90A
- §10.2.1.3.1). `seed_material` MUST be exactly `SEED_LEN` = 32
- bytes (= AES-128 key length 16 + AES block size 16) and MUST
- equal `entropy_input || personalization_string` per the spec's
- no-df construction. Seed-length mismatch returns
- `OxiResult::InvalidInput = 5` — there is no auto-extend or
- auto-truncate at the FFI boundary.
+ CTR_DRBG-AES-128 Instantiate from the module's seed path, through the
+ derivation function (SP 800-90A §10.2.1.3.2). The instantiated security
+ strength is 128 bits. See
+ [`oxi_hmac_drbg_sha256_instantiate_from_module`] for the full contract.
 
  # Safety
 
- `handle` must be a live handle from
- [`oxi_ctr_drbg_aes128_new`]. `seed_material` must point to ≥
- `seed_material_len` readable bytes.
+ `handle` must be NULL or a live handle from
+ [`oxi_ctr_drbg_aes128_new`], not in use by another call. A non-NULL
+ `perso` must be valid for reads of `perso_len` bytes.
  */
-int oxi_ctr_drbg_aes128_instantiate_no_df(OxiCtrDrbgAes128 *handle,
-                                          const uint8_t *seed_material,
-                                          uintptr_t seed_material_len);
+int oxi_ctr_drbg_aes128_instantiate_from_module(OxiCtrDrbgAes128 *handle,
+                                                const uint8_t *perso,
+                                                uintptr_t perso_len);
 
 /*
- CTR_DRBG-AES-128 Instantiate, **df** variant (SP 800-90A
- §10.2.1.3.2). Runs `Block_Cipher_df(entropy || nonce ||
- personalization, seedlen)` to derive the initial seed material.
- Combined-length ceiling is `MAX_DF_INPUT` (alg-independent).
- Each input may be NULL when its length is 0. Per SP 800-90A
- Table 3, security strength 128 → entropy ≥ 128 bits, nonce ≥
- 64 bits; a shorter entropy input returns
- `OxiResult::EntropyInputTooShort = 29` and a shorter nonce
- `OxiResult::NonceTooShort = 30`.
+ CTR_DRBG-AES-128 Reseed from the module's seed path, through the
+ derivation function (SP 800-90A §10.2.1.4.2). See
+ [`oxi_hmac_drbg_sha256_reseed_from_module`] for the full contract.
 
  # Safety
 
- All pointer/length pairs must be valid. `handle` must be a live
- handle from [`oxi_ctr_drbg_aes128_new`].
+ `handle` must be NULL or a live handle from
+ [`oxi_ctr_drbg_aes128_new`], not in use by another call. A non-NULL
+ `additional` must be valid for reads of `additional_len` bytes.
  */
-int oxi_ctr_drbg_aes128_instantiate_df(OxiCtrDrbgAes128 *handle,
-                                       const uint8_t *entropy,
-                                       uintptr_t entropy_len,
-                                       const uint8_t *nonce,
-                                       uintptr_t nonce_len,
-                                       const uint8_t *personalization,
-                                       uintptr_t personalization_len);
-
-/*
- CTR_DRBG-AES-128 Reseed, **no-df** variant (SP 800-90A
- §10.2.1.4.1). `seed_material` MUST be exactly `SEED_LEN` = 32
- bytes; mismatch returns `OxiResult::InvalidInput = 5`.
-
- # Safety
-
- All pointer/length pairs must be valid. `handle` must be a live,
- instantiated handle from [`oxi_ctr_drbg_aes128_new`].
- */
-int oxi_ctr_drbg_aes128_reseed_no_df(OxiCtrDrbgAes128 *handle,
-                                     const uint8_t *seed_material,
-                                     uintptr_t seed_material_len);
-
-/*
- CTR_DRBG-AES-128 Reseed, **df** variant (SP 800-90A §10.2.1.4.2).
- Runs `Block_Cipher_df(entropy || additional_input, seedlen)` to
- derive the new seed. Combined-length ceiling is `MAX_DF_INPUT`.
-
- Returns `OxiResult::EntropyInputTooShort = 29` when `entropy_len`
- is below 16 bytes (SP 800-90A Rev. 1 Table 3 `min_length`);
- additional input does not count toward it.
-
- # Safety
-
- All pointer/length pairs must be valid. `handle` must be a live,
- instantiated handle from [`oxi_ctr_drbg_aes128_new`].
- */
-int oxi_ctr_drbg_aes128_reseed_df(OxiCtrDrbgAes128 *handle,
-                                  const uint8_t *entropy,
-                                  uintptr_t entropy_len,
-                                  const uint8_t *additional_input,
-                                  uintptr_t additional_input_len);
-
-/*
- CTR_DRBG-AES-128 Generate, **no-df** variant (SP 800-90A
- §10.2.1.5.1). When `additional_input` is supplied (non-NULL +
- non-zero len), it MUST be exactly `SEED_LEN` = 32 bytes — this
- constraint is what makes this the no-df path; `additional_input
- = NULL, len = 0` is the typical no-AI call. `out_len` is bounded
- by `2^16` bytes (SP 800-90A §10.2.1.5.1 step 5).
-
- # Safety
-
- `handle` must be a live, instantiated handle from
- [`oxi_ctr_drbg_aes128_new`]. `out` must point to ≥ `out_len`
- writable bytes (or `out_len == 0`).
- */
-int oxi_ctr_drbg_aes128_generate_no_df(OxiCtrDrbgAes128 *handle,
-                                       const uint8_t *additional_input,
-                                       uintptr_t additional_input_len,
-                                       uint8_t *out,
-                                       uintptr_t out_len);
+int oxi_ctr_drbg_aes128_reseed_from_module(OxiCtrDrbgAes128 *handle,
+                                           const uint8_t *additional,
+                                           uintptr_t additional_len);
 
 /*
  CTR_DRBG-AES-128 Generate, **df** variant (SP 800-90A
- §10.2.1.5.2). `additional_input` is variable length up to
- `MAX_DF_INPUT` and is passed through `Block_Cipher_df` before
- being mixed in. NULL+0 is the no-AI call; NULL with non-zero
- length returns `OxiResult::NullPointer = 10`. `out_len` is
- bounded by `2^16` bytes.
+ §10.2.1.5.2). `additional_input` is passed through
+ `Block_Cipher_df` before being mixed in, and is bounded by the
+ additional input the DRBG accepts from a module reseed; longer
+ returns `OxiResult::InvalidInput = 5`. NULL+0 is the no-AI call;
+ NULL with non-zero length returns `OxiResult::NullPointer = 10`.
+ `out_len` is bounded by `2^16` bytes. See
+ [`oxi_hmac_drbg_sha256_generate`] for the rest of the contract.
 
  # Safety
 
- `handle` must be a live, instantiated handle from
- [`oxi_ctr_drbg_aes128_new`]. `out` must point to ≥ `out_len`
- writable bytes. `additional_input` must point to ≥
- `additional_input_len` readable bytes when
+ `handle` must be NULL or a live handle from
+ [`oxi_ctr_drbg_aes128_new`], not in use by another call. `out` must
+ point to ≥ `out_len` writable bytes. `additional_input` must point
+ to ≥ `additional_input_len` readable bytes when
  `additional_input_len > 0`.
  */
 int oxi_ctr_drbg_aes128_generate_df(OxiCtrDrbgAes128 *handle,
@@ -5700,99 +5721,45 @@ int oxi_ctr_drbg_aes192_new(OxiCtrDrbgAes192 **out_handle);
 void oxi_ctr_drbg_aes192_free(OxiCtrDrbgAes192 *handle);
 
 /*
- CTR_DRBG-AES-192 Instantiate, no-df variant. `seed_material` must
- be exactly `SEED_LEN` = 40 bytes (AES-192 key 24 + AES block 16).
- See [`oxi_ctr_drbg_aes128_instantiate_no_df`].
+ CTR_DRBG-AES-192 Instantiate from the module's seed path, through the
+ derivation function. The instantiated security strength is 192 bits.
+ See [`oxi_hmac_drbg_sha256_instantiate_from_module`] for the full
+ contract.
 
  # Safety
 
- All pointer/length pairs must be valid. `handle` must be a live
- handle from [`oxi_ctr_drbg_aes192_new`].
+ `handle` must be NULL or a live handle from
+ [`oxi_ctr_drbg_aes192_new`], not in use by another call. A non-NULL
+ `perso` must be valid for reads of `perso_len` bytes.
  */
-int oxi_ctr_drbg_aes192_instantiate_no_df(OxiCtrDrbgAes192 *handle,
-                                          const uint8_t *seed_material,
-                                          uintptr_t seed_material_len);
+int oxi_ctr_drbg_aes192_instantiate_from_module(OxiCtrDrbgAes192 *handle,
+                                                const uint8_t *perso,
+                                                uintptr_t perso_len);
 
 /*
- CTR_DRBG-AES-192 Instantiate, df variant. Per SP 800-90A Table 3,
- security strength 192 → entropy ≥ 192 bits, nonce ≥ 96 bits. See
- [`oxi_ctr_drbg_aes128_instantiate_df`].
-
- Returns `OxiResult::EntropyInputTooShort = 29` when `entropy_len`
- is below 24 bytes and `OxiResult::NonceTooShort = 30` when
- `nonce_len` is below 12 bytes (SP 800-90A Rev. 1 Table 3
- `min_length` and the module's nonce floor).
+ CTR_DRBG-AES-192 Reseed from the module's seed path, through the
+ derivation function. See [`oxi_hmac_drbg_sha256_reseed_from_module`]
+ for the full contract.
 
  # Safety
 
- All pointer/length pairs must be valid. `handle` must be a live
- handle from [`oxi_ctr_drbg_aes192_new`].
+ `handle` must be NULL or a live handle from
+ [`oxi_ctr_drbg_aes192_new`], not in use by another call. A non-NULL
+ `additional` must be valid for reads of `additional_len` bytes.
  */
-int oxi_ctr_drbg_aes192_instantiate_df(OxiCtrDrbgAes192 *handle,
-                                       const uint8_t *entropy,
-                                       uintptr_t entropy_len,
-                                       const uint8_t *nonce,
-                                       uintptr_t nonce_len,
-                                       const uint8_t *personalization,
-                                       uintptr_t personalization_len);
+int oxi_ctr_drbg_aes192_reseed_from_module(OxiCtrDrbgAes192 *handle,
+                                           const uint8_t *additional,
+                                           uintptr_t additional_len);
 
 /*
- CTR_DRBG-AES-192 Reseed, no-df. `seed_material` must be exactly
- 40 bytes.
+ CTR_DRBG-AES-192 Generate, df. See [`oxi_ctr_drbg_aes128_generate_df`].
 
  # Safety
 
- All pointer/length pairs must be valid. `handle` must be a live,
- instantiated handle from [`oxi_ctr_drbg_aes192_new`].
- */
-int oxi_ctr_drbg_aes192_reseed_no_df(OxiCtrDrbgAes192 *handle,
-                                     const uint8_t *seed_material,
-                                     uintptr_t seed_material_len);
-
-/*
- CTR_DRBG-AES-192 Reseed, df.
-
- Returns `OxiResult::EntropyInputTooShort = 29` when `entropy_len`
- is below 24 bytes (SP 800-90A Rev. 1 Table 3 `min_length`);
- additional input does not count toward it.
-
- # Safety
-
- All pointer/length pairs must be valid. `handle` must be a live,
- instantiated handle from [`oxi_ctr_drbg_aes192_new`].
- */
-int oxi_ctr_drbg_aes192_reseed_df(OxiCtrDrbgAes192 *handle,
-                                  const uint8_t *entropy,
-                                  uintptr_t entropy_len,
-                                  const uint8_t *additional_input,
-                                  uintptr_t additional_input_len);
-
-/*
- CTR_DRBG-AES-192 Generate, no-df. When `additional_input` is
- supplied it MUST be exactly 40 bytes.
-
- # Safety
-
- `handle` must be a live, instantiated handle from
- [`oxi_ctr_drbg_aes192_new`]. `out` must point to ≥ `out_len`
- writable bytes.
- */
-int oxi_ctr_drbg_aes192_generate_no_df(OxiCtrDrbgAes192 *handle,
-                                       const uint8_t *additional_input,
-                                       uintptr_t additional_input_len,
-                                       uint8_t *out,
-                                       uintptr_t out_len);
-
-/*
- CTR_DRBG-AES-192 Generate, df. `additional_input` is variable up
- to `MAX_DF_INPUT`.
-
- # Safety
-
- `handle` must be a live, instantiated handle from
- [`oxi_ctr_drbg_aes192_new`]. `out` must point to ≥ `out_len`
- writable bytes. `additional_input` must point to ≥
- `additional_input_len` readable bytes when
+ `handle` must be NULL or a live handle from
+ [`oxi_ctr_drbg_aes192_new`], not in use by another call. `out` must
+ point to ≥ `out_len` writable bytes. `additional_input` must point
+ to ≥ `additional_input_len` readable bytes when
  `additional_input_len > 0`.
  */
 int oxi_ctr_drbg_aes192_generate_df(OxiCtrDrbgAes192 *handle,
@@ -5822,97 +5789,45 @@ int oxi_ctr_drbg_aes256_new(OxiCtrDrbgAes256 **out_handle);
 void oxi_ctr_drbg_aes256_free(OxiCtrDrbgAes256 *handle);
 
 /*
- CTR_DRBG-AES-256 Instantiate, no-df. `seed_material` must be
- exactly `SEED_LEN` = 48 bytes (AES-256 key 32 + AES block 16).
+ CTR_DRBG-AES-256 Instantiate from the module's seed path, through the
+ derivation function. The instantiated security strength is 256 bits.
+ See [`oxi_hmac_drbg_sha256_instantiate_from_module`] for the full
+ contract.
 
  # Safety
 
- All pointer/length pairs must be valid. `handle` must be a live
- handle from [`oxi_ctr_drbg_aes256_new`].
+ `handle` must be NULL or a live handle from
+ [`oxi_ctr_drbg_aes256_new`], not in use by another call. A non-NULL
+ `perso` must be valid for reads of `perso_len` bytes.
  */
-int oxi_ctr_drbg_aes256_instantiate_no_df(OxiCtrDrbgAes256 *handle,
-                                          const uint8_t *seed_material,
-                                          uintptr_t seed_material_len);
+int oxi_ctr_drbg_aes256_instantiate_from_module(OxiCtrDrbgAes256 *handle,
+                                                const uint8_t *perso,
+                                                uintptr_t perso_len);
 
 /*
- CTR_DRBG-AES-256 Instantiate, df. Per SP 800-90A Table 3,
- security strength 256 → entropy ≥ 256 bits, nonce ≥ 128 bits.
-
- Returns `OxiResult::EntropyInputTooShort = 29` when `entropy_len`
- is below 32 bytes and `OxiResult::NonceTooShort = 30` when
- `nonce_len` is below 16 bytes (SP 800-90A Rev. 1 Table 3
- `min_length` and the module's nonce floor).
+ CTR_DRBG-AES-256 Reseed from the module's seed path, through the
+ derivation function. See [`oxi_hmac_drbg_sha256_reseed_from_module`]
+ for the full contract.
 
  # Safety
 
- All pointer/length pairs must be valid. `handle` must be a live
- handle from [`oxi_ctr_drbg_aes256_new`].
+ `handle` must be NULL or a live handle from
+ [`oxi_ctr_drbg_aes256_new`], not in use by another call. A non-NULL
+ `additional` must be valid for reads of `additional_len` bytes.
  */
-int oxi_ctr_drbg_aes256_instantiate_df(OxiCtrDrbgAes256 *handle,
-                                       const uint8_t *entropy,
-                                       uintptr_t entropy_len,
-                                       const uint8_t *nonce,
-                                       uintptr_t nonce_len,
-                                       const uint8_t *personalization,
-                                       uintptr_t personalization_len);
+int oxi_ctr_drbg_aes256_reseed_from_module(OxiCtrDrbgAes256 *handle,
+                                           const uint8_t *additional,
+                                           uintptr_t additional_len);
 
 /*
- CTR_DRBG-AES-256 Reseed, no-df. `seed_material` must be exactly
- 48 bytes.
+ CTR_DRBG-AES-256 Generate, df. See [`oxi_ctr_drbg_aes128_generate_df`].
 
  # Safety
 
- All pointer/length pairs must be valid. `handle` must be a live,
- instantiated handle from [`oxi_ctr_drbg_aes256_new`].
- */
-int oxi_ctr_drbg_aes256_reseed_no_df(OxiCtrDrbgAes256 *handle,
-                                     const uint8_t *seed_material,
-                                     uintptr_t seed_material_len);
-
-/*
- CTR_DRBG-AES-256 Reseed, df.
-
- Returns `OxiResult::EntropyInputTooShort = 29` when `entropy_len`
- is below 32 bytes (SP 800-90A Rev. 1 Table 3 `min_length`);
- additional input does not count toward it.
-
- # Safety
-
- All pointer/length pairs must be valid. `handle` must be a live,
- instantiated handle from [`oxi_ctr_drbg_aes256_new`].
- */
-int oxi_ctr_drbg_aes256_reseed_df(OxiCtrDrbgAes256 *handle,
-                                  const uint8_t *entropy,
-                                  uintptr_t entropy_len,
-                                  const uint8_t *additional_input,
-                                  uintptr_t additional_input_len);
-
-/*
- CTR_DRBG-AES-256 Generate, no-df. When `additional_input` is
- supplied it MUST be exactly 48 bytes.
-
- # Safety
-
- `handle` must be a live, instantiated handle from
- [`oxi_ctr_drbg_aes256_new`]. `out` must point to ≥ `out_len`
- writable bytes.
- */
-int oxi_ctr_drbg_aes256_generate_no_df(OxiCtrDrbgAes256 *handle,
-                                       const uint8_t *additional_input,
-                                       uintptr_t additional_input_len,
-                                       uint8_t *out,
-                                       uintptr_t out_len);
-
-/*
- CTR_DRBG-AES-256 Generate, df. `additional_input` is variable up
- to `MAX_DF_INPUT`.
-
- # Safety
-
- `handle` must be a live, instantiated handle from
- [`oxi_ctr_drbg_aes256_new`]. `out` must point to ≥ `out_len`
- writable bytes. `additional_input` must point to ≥
- `additional_input_len` readable bytes when
+ `handle` must be NULL or a live handle from
+ [`oxi_ctr_drbg_aes256_new`], not in use by another call. `out` must
+ point to ≥ `out_len` writable bytes. `additional_input` must point
+ to ≥ `additional_input_len` readable bytes when
  `additional_input_len > 0`.
  */
 int oxi_ctr_drbg_aes256_generate_df(OxiCtrDrbgAes256 *handle,
@@ -6026,12 +5941,19 @@ int oxi_ctr_drbg_aes256_new_rbg(OxiDrbg **out);
  `perso` may be NULL when `perso_len` is 0. A personalization string
  longer than the DRBG accepts returns `InvalidInput = 5` before any draw.
  A failed draw returns `Busy = 32` (retry after a pause) or
- `EntropyUnavailable = 33`, and leaves the handle as it was.
+ `EntropyUnavailable = 33`; the handle keeps its earlier instantiation,
+ except on a take-over (below), where the parent's instance is already
+ reset and the handle is uninstantiated.
 
  On a handle inherited across fork, this is the call that makes it usable
- in the child: it releases the busy flag, which a thread of the parent may
- have held at the fork, instantiates afresh and records the child's
- process id.
+ in the child, including a handle a thread of the parent was instantiating
+ for the first time at the fork. Exactly one thread of the child takes the
+ handle over: it takes the hold, which a thread of the parent may have
+ held at the fork, resets the parent's DRBG instance, instantiates afresh
+ and records the child's process id. Every other thread calling on the handle meanwhile
+ returns `Busy = 32`. If that instantiation fails, the handle holds no
+ state from the parent and returns `Uninstantiated = 8` until it is
+ instantiated.
 
  # Safety
 
@@ -6116,9 +6038,8 @@ void oxi_drbg_free(OxiDrbg *h);
  pause) or `EntropyUnavailable = 33` (the test failed and the module has
  entered its error state). When `label_out` is not NULL, on `0` and `33`
  it is set to a static NUL-terminated label naming the seed path: on `0`
- the path just tested; on `33` the label an earlier successful call in
- this process reported, or `undecided` if there was none. The string must
- not be freed.
+ the path just tested; on `33` the path the process has decided, or
+ `undecided` when no draw has decided it. The string must not be freed.
 
  # Safety
 

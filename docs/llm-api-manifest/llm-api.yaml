@@ -11621,7 +11621,7 @@ functions:
       - name: drbg
         type: OxiHmacDrbgSha256 *
         direction: in
-        description: Live, instantiated HMAC_DRBG-SHA-256 handle from oxi_hmac_drbg_sha256_new + oxi_hmac_drbg_sha256_instantiate
+        description: Live, instantiated HMAC_DRBG-SHA-256 handle from oxi_hmac_drbg_sha256_new + oxi_hmac_drbg_sha256_instantiate_from_module
       - name: private_out
         type: uint8_t *
         direction: out
@@ -14215,6 +14215,92 @@ functions:
       handles_secrets: true
       fips_approved: true
 
+  - name: oxi_hmac_drbg_sha256_instantiate_from_module
+    module: oxicrypt-ffi
+    family: ffi-drbg-lifecycle
+    description: Instantiates the handle's HMAC_DRBG-SHA-256 from the module's seed path with an optional personalization string, replacing any earlier state and recording the calling process.
+    signature: >-
+      int oxi_hmac_drbg_sha256_instantiate_from_module(OxiHmacDrbgSha256 *handle,
+      const uint8_t *perso, size_t perso_len)
+    parameters:
+      - name: handle
+        type: OxiHmacDrbgSha256 *
+        direction: in
+        description: Handle from oxi_hmac_drbg_sha256_new
+      - name: perso
+        type: const uint8_t *
+        direction: in
+        description: Optional personalization string (NULL+0 = none)
+      - name: perso_len
+        type: size_t
+        direction: in
+        description: "Personalization length in bytes (at most 720)"
+    returns:
+      type: int
+      description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
+      error_variants:
+        - name: NotOperational
+          condition: The module is not Operational.
+        - name: InvalidInput
+          condition: perso was NULL with a non-zero length, or perso_len exceeded 720 bytes.
+        - name: AlgorithmRestricted
+          condition: Service is not permitted under the active algorithm profile.
+        - name: Busy
+          condition: The seed path's lock spin bound was exhausted; retry after a pause.
+        - name: EntropyUnavailable
+          condition: The entropy source failed.
+        - name: NullPointer
+          condition: handle was NULL.
+    thread_safety: "not-thread-safe; callers serialise calls on one handle"
+    security:
+      constant_time: false
+      handles_secrets: true
+      fips_approved: true
+
+  - name: oxi_hmac_drbg_sha256_reseed_from_module
+    module: oxicrypt-ffi
+    family: ffi-drbg-lifecycle
+    description: Reseeds the handle's HMAC_DRBG-SHA-256 from the module's seed path with optional additional input.
+    signature: >-
+      int oxi_hmac_drbg_sha256_reseed_from_module(OxiHmacDrbgSha256 *handle,
+      const uint8_t *additional, size_t additional_len)
+    parameters:
+      - name: handle
+        type: OxiHmacDrbgSha256 *
+        direction: in
+        description: Handle from oxi_hmac_drbg_sha256_new
+      - name: additional
+        type: const uint8_t *
+        direction: in
+        description: Optional additional input (NULL+0 = none)
+      - name: additional_len
+        type: size_t
+        direction: in
+        description: "Additional input length in bytes (at most 736)"
+    returns:
+      type: int
+      description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
+      error_variants:
+        - name: NotOperational
+          condition: The module is not Operational.
+        - name: InvalidInput
+          condition: additional was NULL with a non-zero length, or additional_len exceeded 736 bytes, or the handle was instantiated by another process.
+        - name: AlgorithmRestricted
+          condition: Service is not permitted under the active algorithm profile.
+        - name: Uninstantiated
+          condition: The handle was never instantiated.
+        - name: Busy
+          condition: The seed path's lock spin bound was exhausted; retry after a pause.
+        - name: EntropyUnavailable
+          condition: The entropy source failed.
+        - name: NullPointer
+          condition: handle was NULL.
+    thread_safety: "not-thread-safe; callers serialise calls on one handle"
+    security:
+      constant_time: false
+      handles_secrets: true
+      fips_approved: true
+
   - name: oxi_hmac_drbg_sha256_free
     module: oxicrypt-ffi
     family: ffi-drbg-lifecycle
@@ -14234,117 +14320,10 @@ functions:
       handles_secrets: true
       fips_approved: true
 
-  - name: oxi_hmac_drbg_sha256_instantiate
-    module: oxicrypt-ffi
-    family: ffi-drbg-lifecycle
-    description: "HMAC_DRBG-SHA-256 Instantiate (SP 800-90A §10.1.2.3); seeds with caller-supplied entropy, nonce, and personalization (combined length <= 768 bytes, else InvalidInput = 5, each input NULL when its length is 0)."
-    signature: >-
-      int oxi_hmac_drbg_sha256_instantiate(OxiHmacDrbgSha256 *handle,
-      const uint8_t *entropy, size_t entropy_len,
-      const uint8_t *nonce, size_t nonce_len,
-      const uint8_t *personalization, size_t personalization_len)
-    parameters:
-      - name: handle
-        type: OxiHmacDrbgSha256 *
-        direction: in
-        description: Live handle from oxi_hmac_drbg_sha256_new
-      - name: entropy
-        type: const uint8_t *
-        direction: in
-        description: Caller-sourced entropy bytes (SP 800-90A entropy_input)
-      - name: entropy_len
-        type: size_t
-        direction: in
-        description: Entropy length in bytes
-      - name: nonce
-        type: const uint8_t *
-        direction: in
-        description: Caller-sourced nonce bytes (SP 800-90A nonce)
-      - name: nonce_len
-        type: size_t
-        direction: in
-        description: Nonce length in bytes
-      - name: personalization
-        type: const uint8_t *
-        direction: in
-        description: Personalization string (NULL with len=0 OK)
-      - name: personalization_len
-        type: size_t
-        direction: in
-        description: Personalization length in bytes
-    returns:
-      type: int
-      description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
-      error_variants:
-        - name: EntropyInputTooShort
-          condition: "entropy_len < 32 (the security strength; SP 800-90A Rev. 1 Table 2 min_length). Personalization or additional input does not count toward it."
-        - name: NonceTooShort
-          condition: "nonce_len < 16 (half the security strength): the module's nonce floor."
-        - name: InvalidInput
-          condition: An argument was not a valid domain element, such as a scalar out of range or a point not on the curve.
-        - name: NotOperational
-          condition: oxi_init has not completed successfully, or the module has entered the terminal Error state.
-        - name: AlgorithmRestricted
-          condition: The active algorithm profile does not permit this service.
-        - name: NullPointer
-          condition: A pointer argument that the call requires was NULL.
-    security:
-      constant_time: false
-      handles_secrets: true
-      fips_approved: true
-
-  - name: oxi_hmac_drbg_sha256_reseed
-    module: oxicrypt-ffi
-    family: ffi-drbg-lifecycle
-    description: HMAC_DRBG-SHA-256 Reseed (SP 800-90A §10.1.2.4); re-seeds with fresh entropy and optional additional input (NULL when its length is 0), resetting reseed_counter to 1.
-    signature: >-
-      int oxi_hmac_drbg_sha256_reseed(OxiHmacDrbgSha256 *handle,
-      const uint8_t *entropy, size_t entropy_len,
-      const uint8_t *additional_input, size_t additional_input_len)
-    parameters:
-      - name: handle
-        type: OxiHmacDrbgSha256 *
-        direction: in
-        description: Live, instantiated handle
-      - name: entropy
-        type: const uint8_t *
-        direction: in
-        description: Caller-sourced fresh entropy bytes
-      - name: entropy_len
-        type: size_t
-        direction: in
-        description: Entropy length in bytes
-      - name: additional_input
-        type: const uint8_t *
-        direction: in
-        description: Optional additional input (NULL+0 = none)
-      - name: additional_input_len
-        type: size_t
-        direction: in
-        description: Additional input length in bytes
-    returns:
-      type: int
-      description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
-      error_variants:
-        - name: EntropyInputTooShort
-          condition: "entropy_len < 32 (the security strength; SP 800-90A Rev. 1 Table 2 min_length). Personalization or additional input does not count toward it."
-        - name: NotOperational
-          condition: The module has left Operational since the handle was instantiated (or was never started).
-        - name: Uninstantiated
-          condition: generate or reseed was called before instantiate succeeded on this handle.
-        - name: InvalidInput
-          condition: An argument was not a valid domain element, such as a scalar out of range or a point not on the curve.
-        - name: NullPointer
-          condition: A pointer argument that the call requires was NULL.
-    security:
-      constant_time: false
-      handles_secrets: true
-      fips_approved: true
-
   - name: oxi_hmac_drbg_sha256_generate
     module: oxicrypt-ffi
     family: ffi-drbg-lifecycle
-    description: HMAC_DRBG-SHA-256 Generate (SP 800-90A §10.1.2.5); writes out_len pseudorandom bytes into out, advancing (K, V) (additional_input NULL when its length is 0).
+    description: "HMAC_DRBG-SHA-256 Generate (SP 800-90A §10.1.2.5); writes out_len pseudorandom bytes into out, advancing (K, V) (additional_input NULL when its length is 0); the handle must first be instantiated with oxi_hmac_drbg_sha256_instantiate_from_module."
     signature: >-
       int oxi_hmac_drbg_sha256_generate(OxiHmacDrbgSha256 *handle,
       const uint8_t *additional_input, size_t additional_input_len,
@@ -14377,13 +14356,13 @@ functions:
         - name: NotOperational
           condition: The module has left Operational since the handle was instantiated (or was never started).
         - name: Uninstantiated
-          condition: generate or reseed was called before instantiate succeeded on this handle.
+          condition: The handle was never instantiated with oxi_hmac_drbg_sha256_instantiate_from_module.
         - name: ReseedRequired
           condition: The reseed counter reached the SP 800-90A Table 3 reseed interval and fresh entropy is required before further output.
         - name: OutputTooLong
           condition: The requested output length exceeds the maximum this construction permits.
         - name: InvalidInput
-          condition: An argument was not a valid domain element, such as a scalar out of range or a point not on the curve.
+          condition: "An argument was not valid (for example additional_input NULL with a non-zero length, or a length over the limit), or the handle was instantiated by another process."
         - name: NullPointer
           condition: A pointer argument that the call requires was NULL.
     security:
@@ -14970,6 +14949,92 @@ functions:
       handles_secrets: true
       fips_approved: true
 
+  - name: oxi_hmac_drbg_sha384_instantiate_from_module
+    module: oxicrypt-ffi
+    family: ffi-drbg-lifecycle
+    description: Instantiates the handle's HMAC_DRBG-SHA-384 from the module's seed path with an optional personalization string, replacing any earlier state and recording the calling process.
+    signature: >-
+      int oxi_hmac_drbg_sha384_instantiate_from_module(OxiHmacDrbgSha384 *handle,
+      const uint8_t *perso, size_t perso_len)
+    parameters:
+      - name: handle
+        type: OxiHmacDrbgSha384 *
+        direction: in
+        description: Handle from oxi_hmac_drbg_sha384_new
+      - name: perso
+        type: const uint8_t *
+        direction: in
+        description: Optional personalization string (NULL+0 = none)
+      - name: perso_len
+        type: size_t
+        direction: in
+        description: "Personalization length in bytes (at most 720)"
+    returns:
+      type: int
+      description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
+      error_variants:
+        - name: NotOperational
+          condition: The module is not Operational.
+        - name: InvalidInput
+          condition: perso was NULL with a non-zero length, or perso_len exceeded 720 bytes.
+        - name: AlgorithmRestricted
+          condition: Service is not permitted under the active algorithm profile.
+        - name: Busy
+          condition: The seed path's lock spin bound was exhausted; retry after a pause.
+        - name: EntropyUnavailable
+          condition: The entropy source failed.
+        - name: NullPointer
+          condition: handle was NULL.
+    thread_safety: "not-thread-safe; callers serialise calls on one handle"
+    security:
+      constant_time: false
+      handles_secrets: true
+      fips_approved: true
+
+  - name: oxi_hmac_drbg_sha384_reseed_from_module
+    module: oxicrypt-ffi
+    family: ffi-drbg-lifecycle
+    description: Reseeds the handle's HMAC_DRBG-SHA-384 from the module's seed path with optional additional input.
+    signature: >-
+      int oxi_hmac_drbg_sha384_reseed_from_module(OxiHmacDrbgSha384 *handle,
+      const uint8_t *additional, size_t additional_len)
+    parameters:
+      - name: handle
+        type: OxiHmacDrbgSha384 *
+        direction: in
+        description: Handle from oxi_hmac_drbg_sha384_new
+      - name: additional
+        type: const uint8_t *
+        direction: in
+        description: Optional additional input (NULL+0 = none)
+      - name: additional_len
+        type: size_t
+        direction: in
+        description: "Additional input length in bytes (at most 736)"
+    returns:
+      type: int
+      description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
+      error_variants:
+        - name: NotOperational
+          condition: The module is not Operational.
+        - name: InvalidInput
+          condition: additional was NULL with a non-zero length, or additional_len exceeded 736 bytes, or the handle was instantiated by another process.
+        - name: AlgorithmRestricted
+          condition: Service is not permitted under the active algorithm profile.
+        - name: Uninstantiated
+          condition: The handle was never instantiated.
+        - name: Busy
+          condition: The seed path's lock spin bound was exhausted; retry after a pause.
+        - name: EntropyUnavailable
+          condition: The entropy source failed.
+        - name: NullPointer
+          condition: handle was NULL.
+    thread_safety: "not-thread-safe; callers serialise calls on one handle"
+    security:
+      constant_time: false
+      handles_secrets: true
+      fips_approved: true
+
   - name: oxi_hmac_drbg_sha384_free
     module: oxicrypt-ffi
     family: ffi-drbg-lifecycle
@@ -14989,117 +15054,10 @@ functions:
       handles_secrets: true
       fips_approved: true
 
-  - name: oxi_hmac_drbg_sha384_instantiate
-    module: oxicrypt-ffi
-    family: ffi-drbg-lifecycle
-    description: HMAC_DRBG-SHA-384 Instantiate (SP 800-90A §10.1.2.3); instantiated at strength 256 (SP 800-57 Part 1), so entropy >= 256 bits (Table 2 min_length) and nonce >= 128 bits (the module's nonce floor), combined-length ceiling 768 bytes (hash-independent).
-    signature: >-
-      int oxi_hmac_drbg_sha384_instantiate(OxiHmacDrbgSha384 *handle,
-      const uint8_t *entropy, size_t entropy_len,
-      const uint8_t *nonce, size_t nonce_len,
-      const uint8_t *personalization, size_t personalization_len)
-    parameters:
-      - name: handle
-        type: OxiHmacDrbgSha384 *
-        direction: in
-        description: Live handle
-      - name: entropy
-        type: const uint8_t *
-        direction: in
-        description: Caller-sourced entropy bytes
-      - name: entropy_len
-        type: size_t
-        direction: in
-        description: Entropy length in bytes
-      - name: nonce
-        type: const uint8_t *
-        direction: in
-        description: Caller-sourced nonce bytes
-      - name: nonce_len
-        type: size_t
-        direction: in
-        description: Nonce length in bytes
-      - name: personalization
-        type: const uint8_t *
-        direction: in
-        description: Personalization (NULL+0 OK)
-      - name: personalization_len
-        type: size_t
-        direction: in
-        description: Personalization length in bytes
-    returns:
-      type: int
-      description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
-      error_variants:
-        - name: EntropyInputTooShort
-          condition: "entropy_len < 32 (the security strength; SP 800-90A Rev. 1 Table 2 min_length). Personalization or additional input does not count toward it."
-        - name: NonceTooShort
-          condition: "nonce_len < 16 (half the security strength): the module's nonce floor."
-        - name: InvalidInput
-          condition: An argument was not a valid domain element, such as a scalar out of range or a point not on the curve.
-        - name: NotOperational
-          condition: oxi_init has not completed successfully, or the module has entered the terminal Error state.
-        - name: AlgorithmRestricted
-          condition: The active algorithm profile does not permit this service.
-        - name: NullPointer
-          condition: A pointer argument that the call requires was NULL.
-    security:
-      constant_time: false
-      handles_secrets: true
-      fips_approved: true
-
-  - name: oxi_hmac_drbg_sha384_reseed
-    module: oxicrypt-ffi
-    family: ffi-drbg-lifecycle
-    description: HMAC_DRBG-SHA-384 Reseed (SP 800-90A §10.1.2.4).
-    signature: >-
-      int oxi_hmac_drbg_sha384_reseed(OxiHmacDrbgSha384 *handle,
-      const uint8_t *entropy, size_t entropy_len,
-      const uint8_t *additional_input, size_t additional_input_len)
-    parameters:
-      - name: handle
-        type: OxiHmacDrbgSha384 *
-        direction: in
-        description: Live, instantiated handle
-      - name: entropy
-        type: const uint8_t *
-        direction: in
-        description: Fresh entropy bytes
-      - name: entropy_len
-        type: size_t
-        direction: in
-        description: Entropy length in bytes
-      - name: additional_input
-        type: const uint8_t *
-        direction: in
-        description: Optional additional input (NULL+0 = none)
-      - name: additional_input_len
-        type: size_t
-        direction: in
-        description: Additional input length in bytes
-    returns:
-      type: int
-      description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
-      error_variants:
-        - name: EntropyInputTooShort
-          condition: "entropy_len < 32 (the security strength; SP 800-90A Rev. 1 Table 2 min_length). Personalization or additional input does not count toward it."
-        - name: NotOperational
-          condition: The module has left Operational since the handle was instantiated (or was never started).
-        - name: Uninstantiated
-          condition: generate or reseed was called before instantiate succeeded on this handle.
-        - name: InvalidInput
-          condition: An argument was not a valid domain element, such as a scalar out of range or a point not on the curve.
-        - name: NullPointer
-          condition: A pointer argument that the call requires was NULL.
-    security:
-      constant_time: false
-      handles_secrets: true
-      fips_approved: true
-
   - name: oxi_hmac_drbg_sha384_generate
     module: oxicrypt-ffi
     family: ffi-drbg-lifecycle
-    description: HMAC_DRBG-SHA-384 Generate (SP 800-90A §10.1.2.5); same 2^19-bit per-request ceiling.
+    description: "HMAC_DRBG-SHA-384 Generate (SP 800-90A §10.1.2.5); same 2^19-bit per-request ceiling; the handle must first be instantiated with oxi_hmac_drbg_sha384_instantiate_from_module."
     signature: >-
       int oxi_hmac_drbg_sha384_generate(OxiHmacDrbgSha384 *handle,
       const uint8_t *additional_input, size_t additional_input_len,
@@ -15132,13 +15090,13 @@ functions:
         - name: NotOperational
           condition: The module has left Operational since the handle was instantiated (or was never started).
         - name: Uninstantiated
-          condition: generate or reseed was called before instantiate succeeded on this handle.
+          condition: The handle was never instantiated with oxi_hmac_drbg_sha384_instantiate_from_module.
         - name: ReseedRequired
           condition: The reseed counter reached the SP 800-90A Table 3 reseed interval and fresh entropy is required before further output.
         - name: OutputTooLong
           condition: The requested output length exceeds the maximum this construction permits.
         - name: InvalidInput
-          condition: An argument was not a valid domain element, such as a scalar out of range or a point not on the curve.
+          condition: "An argument was not valid (for example additional_input NULL with a non-zero length, or a length over the limit), or the handle was instantiated by another process."
         - name: NullPointer
           condition: A pointer argument that the call requires was NULL.
     security:
@@ -15168,6 +15126,92 @@ functions:
       handles_secrets: true
       fips_approved: true
 
+  - name: oxi_hmac_drbg_sha512_instantiate_from_module
+    module: oxicrypt-ffi
+    family: ffi-drbg-lifecycle
+    description: Instantiates the handle's HMAC_DRBG-SHA-512 from the module's seed path with an optional personalization string, replacing any earlier state and recording the calling process.
+    signature: >-
+      int oxi_hmac_drbg_sha512_instantiate_from_module(OxiHmacDrbgSha512 *handle,
+      const uint8_t *perso, size_t perso_len)
+    parameters:
+      - name: handle
+        type: OxiHmacDrbgSha512 *
+        direction: in
+        description: Handle from oxi_hmac_drbg_sha512_new
+      - name: perso
+        type: const uint8_t *
+        direction: in
+        description: Optional personalization string (NULL+0 = none)
+      - name: perso_len
+        type: size_t
+        direction: in
+        description: "Personalization length in bytes (at most 720)"
+    returns:
+      type: int
+      description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
+      error_variants:
+        - name: NotOperational
+          condition: The module is not Operational.
+        - name: InvalidInput
+          condition: perso was NULL with a non-zero length, or perso_len exceeded 720 bytes.
+        - name: AlgorithmRestricted
+          condition: Service is not permitted under the active algorithm profile.
+        - name: Busy
+          condition: The seed path's lock spin bound was exhausted; retry after a pause.
+        - name: EntropyUnavailable
+          condition: The entropy source failed.
+        - name: NullPointer
+          condition: handle was NULL.
+    thread_safety: "not-thread-safe; callers serialise calls on one handle"
+    security:
+      constant_time: false
+      handles_secrets: true
+      fips_approved: true
+
+  - name: oxi_hmac_drbg_sha512_reseed_from_module
+    module: oxicrypt-ffi
+    family: ffi-drbg-lifecycle
+    description: Reseeds the handle's HMAC_DRBG-SHA-512 from the module's seed path with optional additional input.
+    signature: >-
+      int oxi_hmac_drbg_sha512_reseed_from_module(OxiHmacDrbgSha512 *handle,
+      const uint8_t *additional, size_t additional_len)
+    parameters:
+      - name: handle
+        type: OxiHmacDrbgSha512 *
+        direction: in
+        description: Handle from oxi_hmac_drbg_sha512_new
+      - name: additional
+        type: const uint8_t *
+        direction: in
+        description: Optional additional input (NULL+0 = none)
+      - name: additional_len
+        type: size_t
+        direction: in
+        description: "Additional input length in bytes (at most 736)"
+    returns:
+      type: int
+      description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
+      error_variants:
+        - name: NotOperational
+          condition: The module is not Operational.
+        - name: InvalidInput
+          condition: additional was NULL with a non-zero length, or additional_len exceeded 736 bytes, or the handle was instantiated by another process.
+        - name: AlgorithmRestricted
+          condition: Service is not permitted under the active algorithm profile.
+        - name: Uninstantiated
+          condition: The handle was never instantiated.
+        - name: Busy
+          condition: The seed path's lock spin bound was exhausted; retry after a pause.
+        - name: EntropyUnavailable
+          condition: The entropy source failed.
+        - name: NullPointer
+          condition: handle was NULL.
+    thread_safety: "not-thread-safe; callers serialise calls on one handle"
+    security:
+      constant_time: false
+      handles_secrets: true
+      fips_approved: true
+
   - name: oxi_hmac_drbg_sha512_free
     module: oxicrypt-ffi
     family: ffi-drbg-lifecycle
@@ -15187,117 +15231,10 @@ functions:
       handles_secrets: true
       fips_approved: true
 
-  - name: oxi_hmac_drbg_sha512_instantiate
-    module: oxicrypt-ffi
-    family: ffi-drbg-lifecycle
-    description: HMAC_DRBG-SHA-512 Instantiate (SP 800-90A §10.1.2.3); per Table 2 at strength 256, entropy >= 256 bits and nonce >= 128 bits, wider 64-byte (K, V) state.
-    signature: >-
-      int oxi_hmac_drbg_sha512_instantiate(OxiHmacDrbgSha512 *handle,
-      const uint8_t *entropy, size_t entropy_len,
-      const uint8_t *nonce, size_t nonce_len,
-      const uint8_t *personalization, size_t personalization_len)
-    parameters:
-      - name: handle
-        type: OxiHmacDrbgSha512 *
-        direction: in
-        description: Live handle
-      - name: entropy
-        type: const uint8_t *
-        direction: in
-        description: Entropy bytes
-      - name: entropy_len
-        type: size_t
-        direction: in
-        description: Entropy length
-      - name: nonce
-        type: const uint8_t *
-        direction: in
-        description: Nonce bytes
-      - name: nonce_len
-        type: size_t
-        direction: in
-        description: Nonce length
-      - name: personalization
-        type: const uint8_t *
-        direction: in
-        description: Personalization (NULL+0 OK)
-      - name: personalization_len
-        type: size_t
-        direction: in
-        description: Personalization length
-    returns:
-      type: int
-      description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
-      error_variants:
-        - name: EntropyInputTooShort
-          condition: "entropy_len < 32 (the security strength; SP 800-90A Rev. 1 Table 2 min_length). Personalization or additional input does not count toward it."
-        - name: NonceTooShort
-          condition: "nonce_len < 16 (half the security strength): the module's nonce floor."
-        - name: InvalidInput
-          condition: An argument was not a valid domain element, such as a scalar out of range or a point not on the curve.
-        - name: NotOperational
-          condition: oxi_init has not completed successfully, or the module has entered the terminal Error state.
-        - name: AlgorithmRestricted
-          condition: The active algorithm profile does not permit this service.
-        - name: NullPointer
-          condition: A pointer argument that the call requires was NULL.
-    security:
-      constant_time: false
-      handles_secrets: true
-      fips_approved: true
-
-  - name: oxi_hmac_drbg_sha512_reseed
-    module: oxicrypt-ffi
-    family: ffi-drbg-lifecycle
-    description: HMAC_DRBG-SHA-512 Reseed.
-    signature: >-
-      int oxi_hmac_drbg_sha512_reseed(OxiHmacDrbgSha512 *handle,
-      const uint8_t *entropy, size_t entropy_len,
-      const uint8_t *additional_input, size_t additional_input_len)
-    parameters:
-      - name: handle
-        type: OxiHmacDrbgSha512 *
-        direction: in
-        description: Live, instantiated handle
-      - name: entropy
-        type: const uint8_t *
-        direction: in
-        description: Fresh entropy bytes
-      - name: entropy_len
-        type: size_t
-        direction: in
-        description: Entropy length
-      - name: additional_input
-        type: const uint8_t *
-        direction: in
-        description: Optional additional input
-      - name: additional_input_len
-        type: size_t
-        direction: in
-        description: Additional input length
-    returns:
-      type: int
-      description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
-      error_variants:
-        - name: EntropyInputTooShort
-          condition: "entropy_len < 32 (the security strength; SP 800-90A Rev. 1 Table 2 min_length). Personalization or additional input does not count toward it."
-        - name: NotOperational
-          condition: The module has left Operational since the handle was instantiated (or was never started).
-        - name: Uninstantiated
-          condition: generate or reseed was called before instantiate succeeded on this handle.
-        - name: InvalidInput
-          condition: An argument was not a valid domain element, such as a scalar out of range or a point not on the curve.
-        - name: NullPointer
-          condition: A pointer argument that the call requires was NULL.
-    security:
-      constant_time: false
-      handles_secrets: true
-      fips_approved: true
-
   - name: oxi_hmac_drbg_sha512_generate
     module: oxicrypt-ffi
     family: ffi-drbg-lifecycle
-    description: HMAC_DRBG-SHA-512 Generate.
+    description: "HMAC_DRBG-SHA-512 Generate; the handle must first be instantiated with oxi_hmac_drbg_sha512_instantiate_from_module."
     signature: >-
       int oxi_hmac_drbg_sha512_generate(OxiHmacDrbgSha512 *handle,
       const uint8_t *additional_input, size_t additional_input_len,
@@ -15330,13 +15267,13 @@ functions:
         - name: NotOperational
           condition: The module has left Operational since the handle was instantiated (or was never started).
         - name: Uninstantiated
-          condition: generate or reseed was called before instantiate succeeded on this handle.
+          condition: The handle was never instantiated with oxi_hmac_drbg_sha512_instantiate_from_module.
         - name: ReseedRequired
           condition: The reseed counter reached the SP 800-90A Table 3 reseed interval and fresh entropy is required before further output.
         - name: OutputTooLong
           condition: The requested output length exceeds the maximum this construction permits.
         - name: InvalidInput
-          condition: An argument was not a valid domain element, such as a scalar out of range or a point not on the curve.
+          condition: "An argument was not valid (for example additional_input NULL with a non-zero length, or a length over the limit), or the handle was instantiated by another process."
         - name: NullPointer
           condition: A pointer argument that the call requires was NULL.
     security:
@@ -15369,6 +15306,92 @@ functions:
       handles_secrets: true
       fips_approved: true
 
+  - name: oxi_hash_drbg_sha256_instantiate_from_module
+    module: oxicrypt-ffi
+    family: ffi-drbg-lifecycle
+    description: Instantiates the handle's Hash_DRBG-SHA-256 from the module's seed path with an optional personalization string, replacing any earlier state and recording the calling process.
+    signature: >-
+      int oxi_hash_drbg_sha256_instantiate_from_module(OxiHashDrbgSha256 *handle,
+      const uint8_t *perso, size_t perso_len)
+    parameters:
+      - name: handle
+        type: OxiHashDrbgSha256 *
+        direction: in
+        description: Handle from oxi_hash_drbg_sha256_new
+      - name: perso
+        type: const uint8_t *
+        direction: in
+        description: Optional personalization string (NULL+0 = none)
+      - name: perso_len
+        type: size_t
+        direction: in
+        description: "Personalization length in bytes (at most 720)"
+    returns:
+      type: int
+      description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
+      error_variants:
+        - name: NotOperational
+          condition: The module is not Operational.
+        - name: InvalidInput
+          condition: perso was NULL with a non-zero length, or perso_len exceeded 720 bytes.
+        - name: AlgorithmRestricted
+          condition: Service is not permitted under the active algorithm profile.
+        - name: Busy
+          condition: The seed path's lock spin bound was exhausted; retry after a pause.
+        - name: EntropyUnavailable
+          condition: The entropy source failed.
+        - name: NullPointer
+          condition: handle was NULL.
+    thread_safety: "not-thread-safe; callers serialise calls on one handle"
+    security:
+      constant_time: false
+      handles_secrets: true
+      fips_approved: true
+
+  - name: oxi_hash_drbg_sha256_reseed_from_module
+    module: oxicrypt-ffi
+    family: ffi-drbg-lifecycle
+    description: Reseeds the handle's Hash_DRBG-SHA-256 from the module's seed path with optional additional input.
+    signature: >-
+      int oxi_hash_drbg_sha256_reseed_from_module(OxiHashDrbgSha256 *handle,
+      const uint8_t *additional, size_t additional_len)
+    parameters:
+      - name: handle
+        type: OxiHashDrbgSha256 *
+        direction: in
+        description: Handle from oxi_hash_drbg_sha256_new
+      - name: additional
+        type: const uint8_t *
+        direction: in
+        description: Optional additional input (NULL+0 = none)
+      - name: additional_len
+        type: size_t
+        direction: in
+        description: "Additional input length in bytes (at most 680)"
+    returns:
+      type: int
+      description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
+      error_variants:
+        - name: NotOperational
+          condition: The module is not Operational.
+        - name: InvalidInput
+          condition: additional was NULL with a non-zero length, or additional_len exceeded 680 bytes, or the handle was instantiated by another process.
+        - name: AlgorithmRestricted
+          condition: Service is not permitted under the active algorithm profile.
+        - name: Uninstantiated
+          condition: The handle was never instantiated.
+        - name: Busy
+          condition: The seed path's lock spin bound was exhausted; retry after a pause.
+        - name: EntropyUnavailable
+          condition: The entropy source failed.
+        - name: NullPointer
+          condition: handle was NULL.
+    thread_safety: "not-thread-safe; callers serialise calls on one handle"
+    security:
+      constant_time: false
+      handles_secrets: true
+      fips_approved: true
+
   - name: oxi_hash_drbg_sha256_free
     module: oxicrypt-ffi
     family: ffi-drbg-lifecycle
@@ -15388,115 +15411,10 @@ functions:
       handles_secrets: true
       fips_approved: true
 
-  - name: oxi_hash_drbg_sha256_instantiate
-    module: oxicrypt-ffi
-    family: ffi-drbg-lifecycle
-    description: Hash_DRBG-SHA-256 Instantiate (SP 800-90A §10.1.1.2); per Table 2 at strength 256, entropy >= 256 bits and nonce >= 128 bits, combined-input ceiling HASH_DRBG_MAX_DF_INPUT.
-    signature: >-
-      int oxi_hash_drbg_sha256_instantiate(OxiHashDrbgSha256 *handle,
-      const uint8_t *entropy, size_t entropy_len,
-      const uint8_t *nonce, size_t nonce_len,
-      const uint8_t *personalization, size_t personalization_len)
-    parameters:
-      - name: handle
-        type: OxiHashDrbgSha256 *
-        direction: in
-        description: Live handle
-      - name: entropy
-        type: const uint8_t *
-        direction: in
-        description: Caller-sourced entropy bytes
-      - name: entropy_len
-        type: size_t
-        direction: in
-        description: Entropy length in bytes
-      - name: nonce
-        type: const uint8_t *
-        direction: in
-        description: Caller-sourced nonce bytes
-      - name: nonce_len
-        type: size_t
-        direction: in
-        description: Nonce length in bytes
-      - name: personalization
-        type: const uint8_t *
-        direction: in
-        description: Personalization (NULL+0 OK)
-      - name: personalization_len
-        type: size_t
-        direction: in
-        description: Personalization length in bytes
-    returns:
-      type: int
-      description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
-      error_variants:
-        - name: EntropyInputTooShort
-          condition: "entropy_len < 32 (the security strength; SP 800-90A Rev. 1 Table 2 min_length). Personalization or additional input does not count toward it."
-        - name: NonceTooShort
-          condition: "nonce_len < 16 (half the security strength): the module's nonce floor."
-        - name: InvalidInput
-          condition: An argument was not a valid domain element, such as a scalar out of range or a point not on the curve.
-        - name: NotOperational
-          condition: oxi_init has not completed successfully, or the module has entered the terminal Error state.
-        - name: AlgorithmRestricted
-          condition: The active algorithm profile does not permit this service.
-        - name: NullPointer
-          condition: A pointer argument that the call requires was NULL.
-    security:
-      constant_time: false
-      handles_secrets: true
-      fips_approved: true
-
-  - name: oxi_hash_drbg_sha256_reseed
-    module: oxicrypt-ffi
-    family: ffi-drbg-lifecycle
-    description: Hash_DRBG-SHA-256 Reseed (SP 800-90A §10.1.1.3).
-    signature: >-
-      int oxi_hash_drbg_sha256_reseed(OxiHashDrbgSha256 *handle,
-      const uint8_t *entropy, size_t entropy_len,
-      const uint8_t *additional_input, size_t additional_input_len)
-    parameters:
-      - name: handle
-        type: OxiHashDrbgSha256 *
-        direction: in
-        description: Live, instantiated handle
-      - name: entropy
-        type: const uint8_t *
-        direction: in
-        description: Fresh entropy bytes
-      - name: entropy_len
-        type: size_t
-        direction: in
-        description: Entropy length in bytes
-      - name: additional_input
-        type: const uint8_t *
-        direction: in
-        description: Optional additional input (NULL+0 = none)
-      - name: additional_input_len
-        type: size_t
-        direction: in
-        description: Additional input length in bytes
-    returns:
-      type: int
-      description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
-      error_variants:
-        - name: EntropyInputTooShort
-          condition: "entropy_len < 32 (the security strength; SP 800-90A Rev. 1 Table 2 min_length). Personalization or additional input does not count toward it."
-        - name: Uninstantiated
-          condition: generate or reseed was called before instantiate succeeded on this handle.
-        - name: InvalidInput
-          condition: An argument was not a valid domain element, such as a scalar out of range or a point not on the curve.
-        - name: NullPointer
-          condition: A pointer argument that the call requires was NULL.
-    security:
-      constant_time: false
-      handles_secrets: true
-      fips_approved: true
-
   - name: oxi_hash_drbg_sha256_generate
     module: oxicrypt-ffi
     family: ffi-drbg-lifecycle
-    description: Hash_DRBG-SHA-256 Generate (SP 800-90A §10.1.1.4); same 2^19-bit per-request ceiling.
+    description: "Hash_DRBG-SHA-256 Generate (SP 800-90A §10.1.1.4); same 2^19-bit per-request ceiling; the handle must first be instantiated with oxi_hash_drbg_sha256_instantiate_from_module."
     signature: >-
       int oxi_hash_drbg_sha256_generate(OxiHashDrbgSha256 *handle,
       const uint8_t *additional_input, size_t additional_input_len,
@@ -15527,13 +15445,13 @@ functions:
       description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
       error_variants:
         - name: Uninstantiated
-          condition: generate or reseed was called before instantiate succeeded on this handle.
+          condition: The handle was never instantiated with oxi_hash_drbg_sha256_instantiate_from_module.
         - name: ReseedRequired
           condition: The reseed counter reached the SP 800-90A Table 3 reseed interval and fresh entropy is required before further output.
         - name: OutputTooLong
           condition: The requested output length exceeds the maximum this construction permits.
         - name: InvalidInput
-          condition: An argument was not a valid domain element, such as a scalar out of range or a point not on the curve.
+          condition: "An argument was not valid (for example additional_input NULL with a non-zero length, or a length over the limit), or the handle was instantiated by another process."
         - name: NullPointer
           condition: A pointer argument that the call requires was NULL.
     security:
@@ -15563,6 +15481,92 @@ functions:
       handles_secrets: true
       fips_approved: true
 
+  - name: oxi_hash_drbg_sha384_instantiate_from_module
+    module: oxicrypt-ffi
+    family: ffi-drbg-lifecycle
+    description: Instantiates the handle's Hash_DRBG-SHA-384 from the module's seed path with an optional personalization string, replacing any earlier state and recording the calling process.
+    signature: >-
+      int oxi_hash_drbg_sha384_instantiate_from_module(OxiHashDrbgSha384 *handle,
+      const uint8_t *perso, size_t perso_len)
+    parameters:
+      - name: handle
+        type: OxiHashDrbgSha384 *
+        direction: in
+        description: Handle from oxi_hash_drbg_sha384_new
+      - name: perso
+        type: const uint8_t *
+        direction: in
+        description: Optional personalization string (NULL+0 = none)
+      - name: perso_len
+        type: size_t
+        direction: in
+        description: "Personalization length in bytes (at most 720)"
+    returns:
+      type: int
+      description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
+      error_variants:
+        - name: NotOperational
+          condition: The module is not Operational.
+        - name: InvalidInput
+          condition: perso was NULL with a non-zero length, or perso_len exceeded 720 bytes.
+        - name: AlgorithmRestricted
+          condition: Service is not permitted under the active algorithm profile.
+        - name: Busy
+          condition: The seed path's lock spin bound was exhausted; retry after a pause.
+        - name: EntropyUnavailable
+          condition: The entropy source failed.
+        - name: NullPointer
+          condition: handle was NULL.
+    thread_safety: "not-thread-safe; callers serialise calls on one handle"
+    security:
+      constant_time: false
+      handles_secrets: true
+      fips_approved: true
+
+  - name: oxi_hash_drbg_sha384_reseed_from_module
+    module: oxicrypt-ffi
+    family: ffi-drbg-lifecycle
+    description: Reseeds the handle's Hash_DRBG-SHA-384 from the module's seed path with optional additional input.
+    signature: >-
+      int oxi_hash_drbg_sha384_reseed_from_module(OxiHashDrbgSha384 *handle,
+      const uint8_t *additional, size_t additional_len)
+    parameters:
+      - name: handle
+        type: OxiHashDrbgSha384 *
+        direction: in
+        description: Handle from oxi_hash_drbg_sha384_new
+      - name: additional
+        type: const uint8_t *
+        direction: in
+        description: Optional additional input (NULL+0 = none)
+      - name: additional_len
+        type: size_t
+        direction: in
+        description: "Additional input length in bytes (at most 624)"
+    returns:
+      type: int
+      description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
+      error_variants:
+        - name: NotOperational
+          condition: The module is not Operational.
+        - name: InvalidInput
+          condition: additional was NULL with a non-zero length, or additional_len exceeded 624 bytes, or the handle was instantiated by another process.
+        - name: AlgorithmRestricted
+          condition: Service is not permitted under the active algorithm profile.
+        - name: Uninstantiated
+          condition: The handle was never instantiated.
+        - name: Busy
+          condition: The seed path's lock spin bound was exhausted; retry after a pause.
+        - name: EntropyUnavailable
+          condition: The entropy source failed.
+        - name: NullPointer
+          condition: handle was NULL.
+    thread_safety: "not-thread-safe; callers serialise calls on one handle"
+    security:
+      constant_time: false
+      handles_secrets: true
+      fips_approved: true
+
   - name: oxi_hash_drbg_sha384_free
     module: oxicrypt-ffi
     family: ffi-drbg-lifecycle
@@ -15582,115 +15586,10 @@ functions:
       handles_secrets: true
       fips_approved: true
 
-  - name: oxi_hash_drbg_sha384_instantiate
-    module: oxicrypt-ffi
-    family: ffi-drbg-lifecycle
-    description: Hash_DRBG-SHA-384 Instantiate; instantiated at strength 256 (SP 800-57 Part 1), so entropy >= 256 bits (Table 2 min_length) and nonce >= 128 bits (the module's nonce floor).
-    signature: >-
-      int oxi_hash_drbg_sha384_instantiate(OxiHashDrbgSha384 *handle,
-      const uint8_t *entropy, size_t entropy_len,
-      const uint8_t *nonce, size_t nonce_len,
-      const uint8_t *personalization, size_t personalization_len)
-    parameters:
-      - name: handle
-        type: OxiHashDrbgSha384 *
-        direction: in
-        description: Live handle
-      - name: entropy
-        type: const uint8_t *
-        direction: in
-        description: Entropy bytes
-      - name: entropy_len
-        type: size_t
-        direction: in
-        description: Entropy length
-      - name: nonce
-        type: const uint8_t *
-        direction: in
-        description: Nonce bytes
-      - name: nonce_len
-        type: size_t
-        direction: in
-        description: Nonce length
-      - name: personalization
-        type: const uint8_t *
-        direction: in
-        description: Personalization (NULL+0 OK)
-      - name: personalization_len
-        type: size_t
-        direction: in
-        description: Personalization length
-    returns:
-      type: int
-      description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
-      error_variants:
-        - name: EntropyInputTooShort
-          condition: "entropy_len < 32 (the security strength; SP 800-90A Rev. 1 Table 2 min_length). Personalization or additional input does not count toward it."
-        - name: NonceTooShort
-          condition: "nonce_len < 16 (half the security strength): the module's nonce floor."
-        - name: InvalidInput
-          condition: An argument was not a valid domain element, such as a scalar out of range or a point not on the curve.
-        - name: NotOperational
-          condition: oxi_init has not completed successfully, or the module has entered the terminal Error state.
-        - name: AlgorithmRestricted
-          condition: The active algorithm profile does not permit this service.
-        - name: NullPointer
-          condition: A pointer argument that the call requires was NULL.
-    security:
-      constant_time: false
-      handles_secrets: true
-      fips_approved: true
-
-  - name: oxi_hash_drbg_sha384_reseed
-    module: oxicrypt-ffi
-    family: ffi-drbg-lifecycle
-    description: Hash_DRBG-SHA-384 Reseed.
-    signature: >-
-      int oxi_hash_drbg_sha384_reseed(OxiHashDrbgSha384 *handle,
-      const uint8_t *entropy, size_t entropy_len,
-      const uint8_t *additional_input, size_t additional_input_len)
-    parameters:
-      - name: handle
-        type: OxiHashDrbgSha384 *
-        direction: in
-        description: Live, instantiated handle
-      - name: entropy
-        type: const uint8_t *
-        direction: in
-        description: Fresh entropy bytes
-      - name: entropy_len
-        type: size_t
-        direction: in
-        description: Entropy length
-      - name: additional_input
-        type: const uint8_t *
-        direction: in
-        description: Optional additional input
-      - name: additional_input_len
-        type: size_t
-        direction: in
-        description: Additional input length
-    returns:
-      type: int
-      description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
-      error_variants:
-        - name: EntropyInputTooShort
-          condition: "entropy_len < 32 (the security strength; SP 800-90A Rev. 1 Table 2 min_length). Personalization or additional input does not count toward it."
-        - name: Uninstantiated
-          condition: generate or reseed was called before instantiate succeeded on this handle.
-        - name: InvalidInput
-          condition: An argument was not a valid domain element, such as a scalar out of range or a point not on the curve.
-        - name: NullPointer
-          condition: A pointer argument that the call requires was NULL.
-    security:
-      constant_time: false
-      handles_secrets: true
-      fips_approved: true
-
   - name: oxi_hash_drbg_sha384_generate
     module: oxicrypt-ffi
     family: ffi-drbg-lifecycle
-    description: Hash_DRBG-SHA-384 Generate.
+    description: "Hash_DRBG-SHA-384 Generate; the handle must first be instantiated with oxi_hash_drbg_sha384_instantiate_from_module."
     signature: >-
       int oxi_hash_drbg_sha384_generate(OxiHashDrbgSha384 *handle,
       const uint8_t *additional_input, size_t additional_input_len,
@@ -15721,13 +15620,13 @@ functions:
       description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
       error_variants:
         - name: Uninstantiated
-          condition: generate or reseed was called before instantiate succeeded on this handle.
+          condition: The handle was never instantiated with oxi_hash_drbg_sha384_instantiate_from_module.
         - name: ReseedRequired
           condition: The reseed counter reached the SP 800-90A Table 3 reseed interval and fresh entropy is required before further output.
         - name: OutputTooLong
           condition: The requested output length exceeds the maximum this construction permits.
         - name: InvalidInput
-          condition: An argument was not a valid domain element, such as a scalar out of range or a point not on the curve.
+          condition: "An argument was not valid (for example additional_input NULL with a non-zero length, or a length over the limit), or the handle was instantiated by another process."
         - name: NullPointer
           condition: A pointer argument that the call requires was NULL.
     security:
@@ -15757,6 +15656,92 @@ functions:
       handles_secrets: true
       fips_approved: true
 
+  - name: oxi_hash_drbg_sha512_instantiate_from_module
+    module: oxicrypt-ffi
+    family: ffi-drbg-lifecycle
+    description: Instantiates the handle's Hash_DRBG-SHA-512 from the module's seed path with an optional personalization string, replacing any earlier state and recording the calling process.
+    signature: >-
+      int oxi_hash_drbg_sha512_instantiate_from_module(OxiHashDrbgSha512 *handle,
+      const uint8_t *perso, size_t perso_len)
+    parameters:
+      - name: handle
+        type: OxiHashDrbgSha512 *
+        direction: in
+        description: Handle from oxi_hash_drbg_sha512_new
+      - name: perso
+        type: const uint8_t *
+        direction: in
+        description: Optional personalization string (NULL+0 = none)
+      - name: perso_len
+        type: size_t
+        direction: in
+        description: "Personalization length in bytes (at most 720)"
+    returns:
+      type: int
+      description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
+      error_variants:
+        - name: NotOperational
+          condition: The module is not Operational.
+        - name: InvalidInput
+          condition: perso was NULL with a non-zero length, or perso_len exceeded 720 bytes.
+        - name: AlgorithmRestricted
+          condition: Service is not permitted under the active algorithm profile.
+        - name: Busy
+          condition: The seed path's lock spin bound was exhausted; retry after a pause.
+        - name: EntropyUnavailable
+          condition: The entropy source failed.
+        - name: NullPointer
+          condition: handle was NULL.
+    thread_safety: "not-thread-safe; callers serialise calls on one handle"
+    security:
+      constant_time: false
+      handles_secrets: true
+      fips_approved: true
+
+  - name: oxi_hash_drbg_sha512_reseed_from_module
+    module: oxicrypt-ffi
+    family: ffi-drbg-lifecycle
+    description: Reseeds the handle's Hash_DRBG-SHA-512 from the module's seed path with optional additional input.
+    signature: >-
+      int oxi_hash_drbg_sha512_reseed_from_module(OxiHashDrbgSha512 *handle,
+      const uint8_t *additional, size_t additional_len)
+    parameters:
+      - name: handle
+        type: OxiHashDrbgSha512 *
+        direction: in
+        description: Handle from oxi_hash_drbg_sha512_new
+      - name: additional
+        type: const uint8_t *
+        direction: in
+        description: Optional additional input (NULL+0 = none)
+      - name: additional_len
+        type: size_t
+        direction: in
+        description: "Additional input length in bytes (at most 624)"
+    returns:
+      type: int
+      description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
+      error_variants:
+        - name: NotOperational
+          condition: The module is not Operational.
+        - name: InvalidInput
+          condition: additional was NULL with a non-zero length, or additional_len exceeded 624 bytes, or the handle was instantiated by another process.
+        - name: AlgorithmRestricted
+          condition: Service is not permitted under the active algorithm profile.
+        - name: Uninstantiated
+          condition: The handle was never instantiated.
+        - name: Busy
+          condition: The seed path's lock spin bound was exhausted; retry after a pause.
+        - name: EntropyUnavailable
+          condition: The entropy source failed.
+        - name: NullPointer
+          condition: handle was NULL.
+    thread_safety: "not-thread-safe; callers serialise calls on one handle"
+    security:
+      constant_time: false
+      handles_secrets: true
+      fips_approved: true
+
   - name: oxi_hash_drbg_sha512_free
     module: oxicrypt-ffi
     family: ffi-drbg-lifecycle
@@ -15776,115 +15761,10 @@ functions:
       handles_secrets: true
       fips_approved: true
 
-  - name: oxi_hash_drbg_sha512_instantiate
-    module: oxicrypt-ffi
-    family: ffi-drbg-lifecycle
-    description: Hash_DRBG-SHA-512 Instantiate; per Table 2 at strength 256, entropy >= 256 bits and nonce >= 128 bits.
-    signature: >-
-      int oxi_hash_drbg_sha512_instantiate(OxiHashDrbgSha512 *handle,
-      const uint8_t *entropy, size_t entropy_len,
-      const uint8_t *nonce, size_t nonce_len,
-      const uint8_t *personalization, size_t personalization_len)
-    parameters:
-      - name: handle
-        type: OxiHashDrbgSha512 *
-        direction: in
-        description: Live handle
-      - name: entropy
-        type: const uint8_t *
-        direction: in
-        description: Entropy bytes
-      - name: entropy_len
-        type: size_t
-        direction: in
-        description: Entropy length
-      - name: nonce
-        type: const uint8_t *
-        direction: in
-        description: Nonce bytes
-      - name: nonce_len
-        type: size_t
-        direction: in
-        description: Nonce length
-      - name: personalization
-        type: const uint8_t *
-        direction: in
-        description: Personalization (NULL+0 OK)
-      - name: personalization_len
-        type: size_t
-        direction: in
-        description: Personalization length
-    returns:
-      type: int
-      description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
-      error_variants:
-        - name: EntropyInputTooShort
-          condition: "entropy_len < 32 (the security strength; SP 800-90A Rev. 1 Table 2 min_length). Personalization or additional input does not count toward it."
-        - name: NonceTooShort
-          condition: "nonce_len < 16 (half the security strength): the module's nonce floor."
-        - name: InvalidInput
-          condition: An argument was not a valid domain element, such as a scalar out of range or a point not on the curve.
-        - name: NotOperational
-          condition: oxi_init has not completed successfully, or the module has entered the terminal Error state.
-        - name: AlgorithmRestricted
-          condition: The active algorithm profile does not permit this service.
-        - name: NullPointer
-          condition: A pointer argument that the call requires was NULL.
-    security:
-      constant_time: false
-      handles_secrets: true
-      fips_approved: true
-
-  - name: oxi_hash_drbg_sha512_reseed
-    module: oxicrypt-ffi
-    family: ffi-drbg-lifecycle
-    description: Hash_DRBG-SHA-512 Reseed.
-    signature: >-
-      int oxi_hash_drbg_sha512_reseed(OxiHashDrbgSha512 *handle,
-      const uint8_t *entropy, size_t entropy_len,
-      const uint8_t *additional_input, size_t additional_input_len)
-    parameters:
-      - name: handle
-        type: OxiHashDrbgSha512 *
-        direction: in
-        description: Live, instantiated handle
-      - name: entropy
-        type: const uint8_t *
-        direction: in
-        description: Fresh entropy bytes
-      - name: entropy_len
-        type: size_t
-        direction: in
-        description: Entropy length
-      - name: additional_input
-        type: const uint8_t *
-        direction: in
-        description: Optional additional input
-      - name: additional_input_len
-        type: size_t
-        direction: in
-        description: Additional input length
-    returns:
-      type: int
-      description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
-      error_variants:
-        - name: EntropyInputTooShort
-          condition: "entropy_len < 32 (the security strength; SP 800-90A Rev. 1 Table 2 min_length). Personalization or additional input does not count toward it."
-        - name: Uninstantiated
-          condition: generate or reseed was called before instantiate succeeded on this handle.
-        - name: InvalidInput
-          condition: An argument was not a valid domain element, such as a scalar out of range or a point not on the curve.
-        - name: NullPointer
-          condition: A pointer argument that the call requires was NULL.
-    security:
-      constant_time: false
-      handles_secrets: true
-      fips_approved: true
-
   - name: oxi_hash_drbg_sha512_generate
     module: oxicrypt-ffi
     family: ffi-drbg-lifecycle
-    description: Hash_DRBG-SHA-512 Generate.
+    description: "Hash_DRBG-SHA-512 Generate; the handle must first be instantiated with oxi_hash_drbg_sha512_instantiate_from_module."
     signature: >-
       int oxi_hash_drbg_sha512_generate(OxiHashDrbgSha512 *handle,
       const uint8_t *additional_input, size_t additional_input_len,
@@ -15915,13 +15795,13 @@ functions:
       description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
       error_variants:
         - name: Uninstantiated
-          condition: generate or reseed was called before instantiate succeeded on this handle.
+          condition: The handle was never instantiated with oxi_hash_drbg_sha512_instantiate_from_module.
         - name: ReseedRequired
           condition: The reseed counter reached the SP 800-90A Table 3 reseed interval and fresh entropy is required before further output.
         - name: OutputTooLong
           condition: The requested output length exceeds the maximum this construction permits.
         - name: InvalidInput
-          condition: An argument was not a valid domain element, such as a scalar out of range or a point not on the curve.
+          condition: "An argument was not valid (for example additional_input NULL with a non-zero length, or a length over the limit), or the handle was instantiated by another process."
         - name: NullPointer
           condition: A pointer argument that the call requires was NULL.
     security:
@@ -15936,7 +15816,7 @@ functions:
   - name: oxi_ctr_drbg_aes128_new
     module: oxicrypt-ffi
     family: ffi-drbg-lifecycle
-    description: Allocate a new, uninstantiated CTR_DRBG-AES-128 handle; the caller MUST call exactly one of _instantiate_no_df or _instantiate_df before generate/reseed.
+    description: Allocate a new, uninstantiated CTR_DRBG-AES-128 handle; the caller MUST call _instantiate_from_module before generate/reseed.
     signature: >-
       int oxi_ctr_drbg_aes128_new(OxiCtrDrbgAes128 **out_handle)
     parameters:
@@ -15950,6 +15830,90 @@ functions:
       error_variants:
         - name: NullPointer
           condition: A pointer argument that the call requires was NULL.
+    security:
+      constant_time: false
+      handles_secrets: true
+      fips_approved: true
+
+  - name: oxi_ctr_drbg_aes128_instantiate_from_module
+    module: oxicrypt-ffi
+    description: Instantiates the handle's CTR_DRBG-AES-128 from the module's seed path with an optional personalization string, replacing any earlier state and recording the calling process.
+    signature: >-
+      int oxi_ctr_drbg_aes128_instantiate_from_module(OxiCtrDrbgAes128 *handle,
+      const uint8_t *perso, size_t perso_len)
+    parameters:
+      - name: handle
+        type: OxiCtrDrbgAes128 *
+        direction: in
+        description: Handle from oxi_ctr_drbg_aes128_new
+      - name: perso
+        type: const uint8_t *
+        direction: in
+        description: Optional personalization string (NULL+0 = none)
+      - name: perso_len
+        type: size_t
+        direction: in
+        description: "Personalization length in bytes (at most 144)"
+    returns:
+      type: int
+      description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
+      error_variants:
+        - name: NotOperational
+          condition: The module is not Operational.
+        - name: InvalidInput
+          condition: perso was NULL with a non-zero length, or perso_len exceeded 144 bytes.
+        - name: AlgorithmRestricted
+          condition: Service is not permitted under the active algorithm profile.
+        - name: Busy
+          condition: The seed path's lock spin bound was exhausted; retry after a pause.
+        - name: EntropyUnavailable
+          condition: The entropy source failed.
+        - name: NullPointer
+          condition: handle was NULL.
+    thread_safety: "not-thread-safe; callers serialise calls on one handle"
+    security:
+      constant_time: false
+      handles_secrets: true
+      fips_approved: true
+
+  - name: oxi_ctr_drbg_aes128_reseed_from_module
+    module: oxicrypt-ffi
+    description: Reseeds the handle's CTR_DRBG-AES-128 from the module's seed path with optional additional input.
+    signature: >-
+      int oxi_ctr_drbg_aes128_reseed_from_module(OxiCtrDrbgAes128 *handle,
+      const uint8_t *additional, size_t additional_len)
+    parameters:
+      - name: handle
+        type: OxiCtrDrbgAes128 *
+        direction: in
+        description: Handle from oxi_ctr_drbg_aes128_new
+      - name: additional
+        type: const uint8_t *
+        direction: in
+        description: Optional additional input (NULL+0 = none)
+      - name: additional_len
+        type: size_t
+        direction: in
+        description: "Additional input length in bytes (at most 160)"
+    returns:
+      type: int
+      description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
+      error_variants:
+        - name: NotOperational
+          condition: The module is not Operational.
+        - name: InvalidInput
+          condition: additional was NULL with a non-zero length, or additional_len exceeded 160 bytes, or the handle was instantiated by another process.
+        - name: AlgorithmRestricted
+          condition: Service is not permitted under the active algorithm profile.
+        - name: Uninstantiated
+          condition: The handle was never instantiated.
+        - name: Busy
+          condition: The seed path's lock spin bound was exhausted; retry after a pause.
+        - name: EntropyUnavailable
+          condition: The entropy source failed.
+        - name: NullPointer
+          condition: handle was NULL.
+    thread_safety: "not-thread-safe; callers serialise calls on one handle"
     security:
       constant_time: false
       handles_secrets: true
@@ -15974,229 +15938,9 @@ functions:
       handles_secrets: true
       fips_approved: true
 
-  - name: oxi_ctr_drbg_aes128_instantiate_no_df
-    module: oxicrypt-ffi
-    description: CTR_DRBG-AES-128 Instantiate, no-df (SP 800-90A §10.2.1.3.1); seed_material MUST be exactly 32 bytes, else InvalidInput = 5, and must be a full-entropy string.
-    signature: >-
-      int oxi_ctr_drbg_aes128_instantiate_no_df(OxiCtrDrbgAes128 *handle,
-      const uint8_t *seed_material, size_t seed_material_len)
-    parameters:
-      - name: handle
-        type: OxiCtrDrbgAes128 *
-        direction: in
-        description: Live handle
-      - name: seed_material
-        type: const uint8_t *
-        direction: in
-        description: Caller-supplied seed (= entropy || personalization)
-      - name: seed_material_len
-        type: size_t
-        direction: in
-        description: Must be exactly 32 bytes (SEED_LEN)
-    returns:
-      type: int
-      description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
-      error_variants:
-        - name: InvalidInput
-          condition: An argument was not a valid domain element, such as a scalar out of range or a point not on the curve.
-        - name: NotOperational
-          condition: oxi_init has not completed successfully, or the module has entered the terminal Error state.
-        - name: AlgorithmRestricted
-          condition: The active algorithm profile does not permit this service.
-        - name: NullPointer
-          condition: A pointer argument that the call requires was NULL.
-    security:
-      constant_time: false
-      handles_secrets: true
-      fips_approved: true
-
-  - name: oxi_ctr_drbg_aes128_instantiate_df
-    module: oxicrypt-ffi
-    description: CTR_DRBG-AES-128 Instantiate, df (SP 800-90A §10.2.1.3.2); runs Block_Cipher_df over entropy || nonce || personalization.
-    signature: >-
-      int oxi_ctr_drbg_aes128_instantiate_df(OxiCtrDrbgAes128 *handle,
-      const uint8_t *entropy, size_t entropy_len,
-      const uint8_t *nonce, size_t nonce_len,
-      const uint8_t *personalization, size_t personalization_len)
-    parameters:
-      - name: handle
-        type: OxiCtrDrbgAes128 *
-        direction: in
-        description: Live handle
-      - name: entropy
-        type: const uint8_t *
-        direction: in
-        description: Caller-sourced entropy bytes
-      - name: entropy_len
-        type: size_t
-        direction: in
-        description: Entropy length in bytes
-      - name: nonce
-        type: const uint8_t *
-        direction: in
-        description: Caller-sourced nonce bytes
-      - name: nonce_len
-        type: size_t
-        direction: in
-        description: Nonce length in bytes
-      - name: personalization
-        type: const uint8_t *
-        direction: in
-        description: Personalization (NULL+0 OK)
-      - name: personalization_len
-        type: size_t
-        direction: in
-        description: Personalization length in bytes
-    returns:
-      type: int
-      description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
-      error_variants:
-        - name: EntropyInputTooShort
-          condition: "entropy_len < 16 (the security strength; SP 800-90A Rev. 1 Table 3 min_length). Personalization or additional input does not count toward it."
-        - name: NonceTooShort
-          condition: "nonce_len < 8 (half the security strength): the module's nonce floor."
-        - name: InvalidInput
-          condition: An argument was not a valid domain element, such as a scalar out of range or a point not on the curve.
-        - name: NotOperational
-          condition: oxi_init has not completed successfully, or the module has entered the terminal Error state.
-        - name: AlgorithmRestricted
-          condition: The active algorithm profile does not permit this service.
-        - name: NullPointer
-          condition: A pointer argument that the call requires was NULL.
-    security:
-      constant_time: false
-      handles_secrets: true
-      fips_approved: true
-
-  - name: oxi_ctr_drbg_aes128_reseed_no_df
-    module: oxicrypt-ffi
-    description: CTR_DRBG-AES-128 Reseed, no-df (SP 800-90A §10.2.1.4.1); seed_material MUST be exactly 32 bytes.
-    signature: >-
-      int oxi_ctr_drbg_aes128_reseed_no_df(OxiCtrDrbgAes128 *handle,
-      const uint8_t *seed_material, size_t seed_material_len)
-    parameters:
-      - name: handle
-        type: OxiCtrDrbgAes128 *
-        direction: in
-        description: Live, instantiated handle
-      - name: seed_material
-        type: const uint8_t *
-        direction: in
-        description: Fresh seed (must be exactly SEED_LEN bytes)
-      - name: seed_material_len
-        type: size_t
-        direction: in
-        description: Must be exactly 32 bytes
-    returns:
-      type: int
-      description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
-      error_variants:
-        - name: Uninstantiated
-          condition: generate or reseed was called before instantiate succeeded on this handle.
-        - name: InvalidInput
-          condition: An argument was not a valid domain element, such as a scalar out of range or a point not on the curve.
-        - name: NullPointer
-          condition: A pointer argument that the call requires was NULL.
-    security:
-      constant_time: false
-      handles_secrets: true
-      fips_approved: true
-
-  - name: oxi_ctr_drbg_aes128_reseed_df
-    module: oxicrypt-ffi
-    description: CTR_DRBG-AES-128 Reseed, df (SP 800-90A §10.2.1.4.2); runs Block_Cipher_df over entropy || additional_input.
-    signature: >-
-      int oxi_ctr_drbg_aes128_reseed_df(OxiCtrDrbgAes128 *handle,
-      const uint8_t *entropy, size_t entropy_len,
-      const uint8_t *additional_input, size_t additional_input_len)
-    parameters:
-      - name: handle
-        type: OxiCtrDrbgAes128 *
-        direction: in
-        description: Live, instantiated handle
-      - name: entropy
-        type: const uint8_t *
-        direction: in
-        description: Fresh entropy bytes
-      - name: entropy_len
-        type: size_t
-        direction: in
-        description: Entropy length
-      - name: additional_input
-        type: const uint8_t *
-        direction: in
-        description: Optional additional input
-      - name: additional_input_len
-        type: size_t
-        direction: in
-        description: Additional input length
-    returns:
-      type: int
-      description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
-      error_variants:
-        - name: EntropyInputTooShort
-          condition: "entropy_len < 16 (the security strength; SP 800-90A Rev. 1 Table 3 min_length). Personalization or additional input does not count toward it."
-        - name: Uninstantiated
-          condition: generate or reseed was called before instantiate succeeded on this handle.
-        - name: InvalidInput
-          condition: An argument was not a valid domain element, such as a scalar out of range or a point not on the curve.
-        - name: NullPointer
-          condition: A pointer argument that the call requires was NULL.
-    security:
-      constant_time: false
-      handles_secrets: true
-      fips_approved: true
-
-  - name: oxi_ctr_drbg_aes128_generate_no_df
-    module: oxicrypt-ffi
-    description: CTR_DRBG-AES-128 Generate, no-df (SP 800-90A §10.2.1.5.1); when additional_input is supplied it MUST be exactly 32 bytes, and out_len is bounded by 2^16 bytes.
-    signature: >-
-      int oxi_ctr_drbg_aes128_generate_no_df(OxiCtrDrbgAes128 *handle,
-      const uint8_t *additional_input, size_t additional_input_len,
-      uint8_t *out, size_t out_len)
-    parameters:
-      - name: handle
-        type: OxiCtrDrbgAes128 *
-        direction: in
-        description: Live, instantiated handle
-      - name: additional_input
-        type: const uint8_t *
-        direction: in
-        description: Optional additional input (NULL+0 = upstream None)
-      - name: additional_input_len
-        type: size_t
-        direction: in
-        description: Must be 0 or exactly SEED_LEN bytes
-      - name: out
-        type: uint8_t *
-        direction: out
-        description: Output buffer
-      - name: out_len
-        type: size_t
-        direction: in
-        description: Bytes to produce (≤ 65536)
-    returns:
-      type: int
-      description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
-      error_variants:
-        - name: Uninstantiated
-          condition: generate or reseed was called before instantiate succeeded on this handle.
-        - name: ReseedRequired
-          condition: The reseed counter reached the SP 800-90A Table 3 reseed interval and fresh entropy is required before further output.
-        - name: OutputTooLong
-          condition: The requested output length exceeds the maximum this construction permits.
-        - name: InvalidInput
-          condition: An argument was not a valid domain element, such as a scalar out of range or a point not on the curve.
-        - name: NullPointer
-          condition: A pointer argument that the call requires was NULL.
-    security:
-      constant_time: false
-      handles_secrets: true
-      fips_approved: true
-
   - name: oxi_ctr_drbg_aes128_generate_df
     module: oxicrypt-ffi
-    description: CTR_DRBG-AES-128 Generate, df (SP 800-90A §10.2.1.5.2); additional_input is variable length, passed through Block_Cipher_df before mixing.
+    description: "CTR_DRBG-AES-128 Generate, df (SP 800-90A §10.2.1.5.2); additional_input is variable length, passed through Block_Cipher_df before mixing; the handle must first be instantiated with oxi_ctr_drbg_aes128_instantiate_from_module."
     signature: >-
       int oxi_ctr_drbg_aes128_generate_df(OxiCtrDrbgAes128 *handle,
       const uint8_t *additional_input, size_t additional_input_len,
@@ -16227,13 +15971,13 @@ functions:
       description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
       error_variants:
         - name: Uninstantiated
-          condition: generate or reseed was called before instantiate succeeded on this handle.
+          condition: The handle was never instantiated with oxi_ctr_drbg_aes128_instantiate_from_module.
         - name: ReseedRequired
           condition: The reseed counter reached the SP 800-90A Table 3 reseed interval and fresh entropy is required before further output.
         - name: OutputTooLong
           condition: The requested output length exceeds the maximum this construction permits.
         - name: InvalidInput
-          condition: An argument was not a valid domain element, such as a scalar out of range or a point not on the curve.
+          condition: "An argument was not valid (for example additional_input NULL with a non-zero length, or a length over the limit), or the handle was instantiated by another process."
         - name: NullPointer
           condition: A pointer argument that the call requires was NULL.
     security:
@@ -16263,6 +16007,90 @@ functions:
       handles_secrets: true
       fips_approved: true
 
+  - name: oxi_ctr_drbg_aes192_instantiate_from_module
+    module: oxicrypt-ffi
+    description: Instantiates the handle's CTR_DRBG-AES-192 from the module's seed path with an optional personalization string, replacing any earlier state and recording the calling process.
+    signature: >-
+      int oxi_ctr_drbg_aes192_instantiate_from_module(OxiCtrDrbgAes192 *handle,
+      const uint8_t *perso, size_t perso_len)
+    parameters:
+      - name: handle
+        type: OxiCtrDrbgAes192 *
+        direction: in
+        description: Handle from oxi_ctr_drbg_aes192_new
+      - name: perso
+        type: const uint8_t *
+        direction: in
+        description: Optional personalization string (NULL+0 = none)
+      - name: perso_len
+        type: size_t
+        direction: in
+        description: "Personalization length in bytes (at most 144)"
+    returns:
+      type: int
+      description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
+      error_variants:
+        - name: NotOperational
+          condition: The module is not Operational.
+        - name: InvalidInput
+          condition: perso was NULL with a non-zero length, or perso_len exceeded 144 bytes.
+        - name: AlgorithmRestricted
+          condition: Service is not permitted under the active algorithm profile.
+        - name: Busy
+          condition: The seed path's lock spin bound was exhausted; retry after a pause.
+        - name: EntropyUnavailable
+          condition: The entropy source failed.
+        - name: NullPointer
+          condition: handle was NULL.
+    thread_safety: "not-thread-safe; callers serialise calls on one handle"
+    security:
+      constant_time: false
+      handles_secrets: true
+      fips_approved: true
+
+  - name: oxi_ctr_drbg_aes192_reseed_from_module
+    module: oxicrypt-ffi
+    description: Reseeds the handle's CTR_DRBG-AES-192 from the module's seed path with optional additional input.
+    signature: >-
+      int oxi_ctr_drbg_aes192_reseed_from_module(OxiCtrDrbgAes192 *handle,
+      const uint8_t *additional, size_t additional_len)
+    parameters:
+      - name: handle
+        type: OxiCtrDrbgAes192 *
+        direction: in
+        description: Handle from oxi_ctr_drbg_aes192_new
+      - name: additional
+        type: const uint8_t *
+        direction: in
+        description: Optional additional input (NULL+0 = none)
+      - name: additional_len
+        type: size_t
+        direction: in
+        description: "Additional input length in bytes (at most 160)"
+    returns:
+      type: int
+      description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
+      error_variants:
+        - name: NotOperational
+          condition: The module is not Operational.
+        - name: InvalidInput
+          condition: additional was NULL with a non-zero length, or additional_len exceeded 160 bytes, or the handle was instantiated by another process.
+        - name: AlgorithmRestricted
+          condition: Service is not permitted under the active algorithm profile.
+        - name: Uninstantiated
+          condition: The handle was never instantiated.
+        - name: Busy
+          condition: The seed path's lock spin bound was exhausted; retry after a pause.
+        - name: EntropyUnavailable
+          condition: The entropy source failed.
+        - name: NullPointer
+          condition: handle was NULL.
+    thread_safety: "not-thread-safe; callers serialise calls on one handle"
+    security:
+      constant_time: false
+      handles_secrets: true
+      fips_approved: true
+
   - name: oxi_ctr_drbg_aes192_free
     module: oxicrypt-ffi
     family: ffi-drbg-lifecycle
@@ -16282,229 +16110,9 @@ functions:
       handles_secrets: true
       fips_approved: true
 
-  - name: oxi_ctr_drbg_aes192_instantiate_no_df
-    module: oxicrypt-ffi
-    description: CTR_DRBG-AES-192 Instantiate, no-df; seed_material MUST be exactly 40 bytes.
-    signature: >-
-      int oxi_ctr_drbg_aes192_instantiate_no_df(OxiCtrDrbgAes192 *handle,
-      const uint8_t *seed_material, size_t seed_material_len)
-    parameters:
-      - name: handle
-        type: OxiCtrDrbgAes192 *
-        direction: in
-        description: Live handle
-      - name: seed_material
-        type: const uint8_t *
-        direction: in
-        description: Caller-supplied seed
-      - name: seed_material_len
-        type: size_t
-        direction: in
-        description: Must be exactly 40 bytes
-    returns:
-      type: int
-      description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
-      error_variants:
-        - name: InvalidInput
-          condition: An argument was not a valid domain element, such as a scalar out of range or a point not on the curve.
-        - name: NotOperational
-          condition: oxi_init has not completed successfully, or the module has entered the terminal Error state.
-        - name: AlgorithmRestricted
-          condition: The active algorithm profile does not permit this service.
-        - name: NullPointer
-          condition: A pointer argument that the call requires was NULL.
-    security:
-      constant_time: false
-      handles_secrets: true
-      fips_approved: true
-
-  - name: oxi_ctr_drbg_aes192_instantiate_df
-    module: oxicrypt-ffi
-    description: CTR_DRBG-AES-192 Instantiate, df; per Table 3 at strength 192, entropy >= 192 bits and nonce >= 96 bits.
-    signature: >-
-      int oxi_ctr_drbg_aes192_instantiate_df(OxiCtrDrbgAes192 *handle,
-      const uint8_t *entropy, size_t entropy_len,
-      const uint8_t *nonce, size_t nonce_len,
-      const uint8_t *personalization, size_t personalization_len)
-    parameters:
-      - name: handle
-        type: OxiCtrDrbgAes192 *
-        direction: in
-        description: Live handle
-      - name: entropy
-        type: const uint8_t *
-        direction: in
-        description: Entropy bytes
-      - name: entropy_len
-        type: size_t
-        direction: in
-        description: Entropy length
-      - name: nonce
-        type: const uint8_t *
-        direction: in
-        description: Nonce bytes
-      - name: nonce_len
-        type: size_t
-        direction: in
-        description: Nonce length
-      - name: personalization
-        type: const uint8_t *
-        direction: in
-        description: Personalization (NULL+0 OK)
-      - name: personalization_len
-        type: size_t
-        direction: in
-        description: Personalization length
-    returns:
-      type: int
-      description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
-      error_variants:
-        - name: EntropyInputTooShort
-          condition: "entropy_len < 24 (the security strength; SP 800-90A Rev. 1 Table 3 min_length). Personalization or additional input does not count toward it."
-        - name: NonceTooShort
-          condition: "nonce_len < 12 (half the security strength): the module's nonce floor."
-        - name: InvalidInput
-          condition: An argument was not a valid domain element, such as a scalar out of range or a point not on the curve.
-        - name: NotOperational
-          condition: oxi_init has not completed successfully, or the module has entered the terminal Error state.
-        - name: AlgorithmRestricted
-          condition: The active algorithm profile does not permit this service.
-        - name: NullPointer
-          condition: A pointer argument that the call requires was NULL.
-    security:
-      constant_time: false
-      handles_secrets: true
-      fips_approved: true
-
-  - name: oxi_ctr_drbg_aes192_reseed_no_df
-    module: oxicrypt-ffi
-    description: CTR_DRBG-AES-192 Reseed, no-df; seed_material must be exactly 40 bytes.
-    signature: >-
-      int oxi_ctr_drbg_aes192_reseed_no_df(OxiCtrDrbgAes192 *handle,
-      const uint8_t *seed_material, size_t seed_material_len)
-    parameters:
-      - name: handle
-        type: OxiCtrDrbgAes192 *
-        direction: in
-        description: Live, instantiated handle
-      - name: seed_material
-        type: const uint8_t *
-        direction: in
-        description: Fresh seed
-      - name: seed_material_len
-        type: size_t
-        direction: in
-        description: Must be exactly 40 bytes
-    returns:
-      type: int
-      description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
-      error_variants:
-        - name: Uninstantiated
-          condition: generate or reseed was called before instantiate succeeded on this handle.
-        - name: InvalidInput
-          condition: An argument was not a valid domain element, such as a scalar out of range or a point not on the curve.
-        - name: NullPointer
-          condition: A pointer argument that the call requires was NULL.
-    security:
-      constant_time: false
-      handles_secrets: true
-      fips_approved: true
-
-  - name: oxi_ctr_drbg_aes192_reseed_df
-    module: oxicrypt-ffi
-    description: CTR_DRBG-AES-192 Reseed, df.
-    signature: >-
-      int oxi_ctr_drbg_aes192_reseed_df(OxiCtrDrbgAes192 *handle,
-      const uint8_t *entropy, size_t entropy_len,
-      const uint8_t *additional_input, size_t additional_input_len)
-    parameters:
-      - name: handle
-        type: OxiCtrDrbgAes192 *
-        direction: in
-        description: Live, instantiated handle
-      - name: entropy
-        type: const uint8_t *
-        direction: in
-        description: Fresh entropy
-      - name: entropy_len
-        type: size_t
-        direction: in
-        description: Entropy length
-      - name: additional_input
-        type: const uint8_t *
-        direction: in
-        description: Optional additional input
-      - name: additional_input_len
-        type: size_t
-        direction: in
-        description: Additional input length
-    returns:
-      type: int
-      description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
-      error_variants:
-        - name: EntropyInputTooShort
-          condition: "entropy_len < 24 (the security strength; SP 800-90A Rev. 1 Table 3 min_length). Personalization or additional input does not count toward it."
-        - name: Uninstantiated
-          condition: generate or reseed was called before instantiate succeeded on this handle.
-        - name: InvalidInput
-          condition: An argument was not a valid domain element, such as a scalar out of range or a point not on the curve.
-        - name: NullPointer
-          condition: A pointer argument that the call requires was NULL.
-    security:
-      constant_time: false
-      handles_secrets: true
-      fips_approved: true
-
-  - name: oxi_ctr_drbg_aes192_generate_no_df
-    module: oxicrypt-ffi
-    description: CTR_DRBG-AES-192 Generate, no-df; when additional_input is supplied it MUST be exactly 40 bytes.
-    signature: >-
-      int oxi_ctr_drbg_aes192_generate_no_df(OxiCtrDrbgAes192 *handle,
-      const uint8_t *additional_input, size_t additional_input_len,
-      uint8_t *out, size_t out_len)
-    parameters:
-      - name: handle
-        type: OxiCtrDrbgAes192 *
-        direction: in
-        description: Live, instantiated handle
-      - name: additional_input
-        type: const uint8_t *
-        direction: in
-        description: Optional additional input
-      - name: additional_input_len
-        type: size_t
-        direction: in
-        description: Must be 0 or exactly SEED_LEN bytes
-      - name: out
-        type: uint8_t *
-        direction: out
-        description: Output buffer
-      - name: out_len
-        type: size_t
-        direction: in
-        description: Bytes to produce (≤ 65536)
-    returns:
-      type: int
-      description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
-      error_variants:
-        - name: Uninstantiated
-          condition: generate or reseed was called before instantiate succeeded on this handle.
-        - name: ReseedRequired
-          condition: The reseed counter reached the SP 800-90A Table 3 reseed interval and fresh entropy is required before further output.
-        - name: OutputTooLong
-          condition: The requested output length exceeds the maximum this construction permits.
-        - name: InvalidInput
-          condition: An argument was not a valid domain element, such as a scalar out of range or a point not on the curve.
-        - name: NullPointer
-          condition: A pointer argument that the call requires was NULL.
-    security:
-      constant_time: false
-      handles_secrets: true
-      fips_approved: true
-
   - name: oxi_ctr_drbg_aes192_generate_df
     module: oxicrypt-ffi
-    description: CTR_DRBG-AES-192 Generate, df.
+    description: "CTR_DRBG-AES-192 Generate, df; the handle must first be instantiated with oxi_ctr_drbg_aes192_instantiate_from_module."
     signature: >-
       int oxi_ctr_drbg_aes192_generate_df(OxiCtrDrbgAes192 *handle,
       const uint8_t *additional_input, size_t additional_input_len,
@@ -16535,13 +16143,13 @@ functions:
       description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
       error_variants:
         - name: Uninstantiated
-          condition: generate or reseed was called before instantiate succeeded on this handle.
+          condition: The handle was never instantiated with oxi_ctr_drbg_aes192_instantiate_from_module.
         - name: ReseedRequired
           condition: The reseed counter reached the SP 800-90A Table 3 reseed interval and fresh entropy is required before further output.
         - name: OutputTooLong
           condition: The requested output length exceeds the maximum this construction permits.
         - name: InvalidInput
-          condition: An argument was not a valid domain element, such as a scalar out of range or a point not on the curve.
+          condition: "An argument was not valid (for example additional_input NULL with a non-zero length, or a length over the limit), or the handle was instantiated by another process."
         - name: NullPointer
           condition: A pointer argument that the call requires was NULL.
     security:
@@ -16571,6 +16179,90 @@ functions:
       handles_secrets: true
       fips_approved: true
 
+  - name: oxi_ctr_drbg_aes256_instantiate_from_module
+    module: oxicrypt-ffi
+    description: Instantiates the handle's CTR_DRBG-AES-256 from the module's seed path with an optional personalization string, replacing any earlier state and recording the calling process.
+    signature: >-
+      int oxi_ctr_drbg_aes256_instantiate_from_module(OxiCtrDrbgAes256 *handle,
+      const uint8_t *perso, size_t perso_len)
+    parameters:
+      - name: handle
+        type: OxiCtrDrbgAes256 *
+        direction: in
+        description: Handle from oxi_ctr_drbg_aes256_new
+      - name: perso
+        type: const uint8_t *
+        direction: in
+        description: Optional personalization string (NULL+0 = none)
+      - name: perso_len
+        type: size_t
+        direction: in
+        description: "Personalization length in bytes (at most 144)"
+    returns:
+      type: int
+      description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
+      error_variants:
+        - name: NotOperational
+          condition: The module is not Operational.
+        - name: InvalidInput
+          condition: perso was NULL with a non-zero length, or perso_len exceeded 144 bytes.
+        - name: AlgorithmRestricted
+          condition: Service is not permitted under the active algorithm profile.
+        - name: Busy
+          condition: The seed path's lock spin bound was exhausted; retry after a pause.
+        - name: EntropyUnavailable
+          condition: The entropy source failed.
+        - name: NullPointer
+          condition: handle was NULL.
+    thread_safety: "not-thread-safe; callers serialise calls on one handle"
+    security:
+      constant_time: false
+      handles_secrets: true
+      fips_approved: true
+
+  - name: oxi_ctr_drbg_aes256_reseed_from_module
+    module: oxicrypt-ffi
+    description: Reseeds the handle's CTR_DRBG-AES-256 from the module's seed path with optional additional input.
+    signature: >-
+      int oxi_ctr_drbg_aes256_reseed_from_module(OxiCtrDrbgAes256 *handle,
+      const uint8_t *additional, size_t additional_len)
+    parameters:
+      - name: handle
+        type: OxiCtrDrbgAes256 *
+        direction: in
+        description: Handle from oxi_ctr_drbg_aes256_new
+      - name: additional
+        type: const uint8_t *
+        direction: in
+        description: Optional additional input (NULL+0 = none)
+      - name: additional_len
+        type: size_t
+        direction: in
+        description: "Additional input length in bytes (at most 160)"
+    returns:
+      type: int
+      description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
+      error_variants:
+        - name: NotOperational
+          condition: The module is not Operational.
+        - name: InvalidInput
+          condition: additional was NULL with a non-zero length, or additional_len exceeded 160 bytes, or the handle was instantiated by another process.
+        - name: AlgorithmRestricted
+          condition: Service is not permitted under the active algorithm profile.
+        - name: Uninstantiated
+          condition: The handle was never instantiated.
+        - name: Busy
+          condition: The seed path's lock spin bound was exhausted; retry after a pause.
+        - name: EntropyUnavailable
+          condition: The entropy source failed.
+        - name: NullPointer
+          condition: handle was NULL.
+    thread_safety: "not-thread-safe; callers serialise calls on one handle"
+    security:
+      constant_time: false
+      handles_secrets: true
+      fips_approved: true
+
   - name: oxi_ctr_drbg_aes256_free
     module: oxicrypt-ffi
     family: ffi-drbg-lifecycle
@@ -16590,229 +16282,9 @@ functions:
       handles_secrets: true
       fips_approved: true
 
-  - name: oxi_ctr_drbg_aes256_instantiate_no_df
-    module: oxicrypt-ffi
-    description: CTR_DRBG-AES-256 Instantiate, no-df; seed_material MUST be exactly 48 bytes.
-    signature: >-
-      int oxi_ctr_drbg_aes256_instantiate_no_df(OxiCtrDrbgAes256 *handle,
-      const uint8_t *seed_material, size_t seed_material_len)
-    parameters:
-      - name: handle
-        type: OxiCtrDrbgAes256 *
-        direction: in
-        description: Live handle
-      - name: seed_material
-        type: const uint8_t *
-        direction: in
-        description: Caller-supplied seed
-      - name: seed_material_len
-        type: size_t
-        direction: in
-        description: Must be exactly 48 bytes
-    returns:
-      type: int
-      description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
-      error_variants:
-        - name: InvalidInput
-          condition: An argument was not a valid domain element, such as a scalar out of range or a point not on the curve.
-        - name: NotOperational
-          condition: oxi_init has not completed successfully, or the module has entered the terminal Error state.
-        - name: AlgorithmRestricted
-          condition: The active algorithm profile does not permit this service.
-        - name: NullPointer
-          condition: A pointer argument that the call requires was NULL.
-    security:
-      constant_time: false
-      handles_secrets: true
-      fips_approved: true
-
-  - name: oxi_ctr_drbg_aes256_instantiate_df
-    module: oxicrypt-ffi
-    description: CTR_DRBG-AES-256 Instantiate, df; per Table 3 at strength 256, entropy >= 256 bits and nonce >= 128 bits.
-    signature: >-
-      int oxi_ctr_drbg_aes256_instantiate_df(OxiCtrDrbgAes256 *handle,
-      const uint8_t *entropy, size_t entropy_len,
-      const uint8_t *nonce, size_t nonce_len,
-      const uint8_t *personalization, size_t personalization_len)
-    parameters:
-      - name: handle
-        type: OxiCtrDrbgAes256 *
-        direction: in
-        description: Live handle
-      - name: entropy
-        type: const uint8_t *
-        direction: in
-        description: Entropy bytes
-      - name: entropy_len
-        type: size_t
-        direction: in
-        description: Entropy length
-      - name: nonce
-        type: const uint8_t *
-        direction: in
-        description: Nonce bytes
-      - name: nonce_len
-        type: size_t
-        direction: in
-        description: Nonce length
-      - name: personalization
-        type: const uint8_t *
-        direction: in
-        description: Personalization (NULL+0 OK)
-      - name: personalization_len
-        type: size_t
-        direction: in
-        description: Personalization length
-    returns:
-      type: int
-      description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
-      error_variants:
-        - name: EntropyInputTooShort
-          condition: "entropy_len < 32 (the security strength; SP 800-90A Rev. 1 Table 3 min_length). Personalization or additional input does not count toward it."
-        - name: NonceTooShort
-          condition: "nonce_len < 16 (half the security strength): the module's nonce floor."
-        - name: InvalidInput
-          condition: An argument was not a valid domain element, such as a scalar out of range or a point not on the curve.
-        - name: NotOperational
-          condition: oxi_init has not completed successfully, or the module has entered the terminal Error state.
-        - name: AlgorithmRestricted
-          condition: The active algorithm profile does not permit this service.
-        - name: NullPointer
-          condition: A pointer argument that the call requires was NULL.
-    security:
-      constant_time: false
-      handles_secrets: true
-      fips_approved: true
-
-  - name: oxi_ctr_drbg_aes256_reseed_no_df
-    module: oxicrypt-ffi
-    description: CTR_DRBG-AES-256 Reseed, no-df; seed_material must be exactly 48 bytes.
-    signature: >-
-      int oxi_ctr_drbg_aes256_reseed_no_df(OxiCtrDrbgAes256 *handle,
-      const uint8_t *seed_material, size_t seed_material_len)
-    parameters:
-      - name: handle
-        type: OxiCtrDrbgAes256 *
-        direction: in
-        description: Live, instantiated handle
-      - name: seed_material
-        type: const uint8_t *
-        direction: in
-        description: Fresh seed
-      - name: seed_material_len
-        type: size_t
-        direction: in
-        description: Must be exactly 48 bytes
-    returns:
-      type: int
-      description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
-      error_variants:
-        - name: Uninstantiated
-          condition: generate or reseed was called before instantiate succeeded on this handle.
-        - name: InvalidInput
-          condition: An argument was not a valid domain element, such as a scalar out of range or a point not on the curve.
-        - name: NullPointer
-          condition: A pointer argument that the call requires was NULL.
-    security:
-      constant_time: false
-      handles_secrets: true
-      fips_approved: true
-
-  - name: oxi_ctr_drbg_aes256_reseed_df
-    module: oxicrypt-ffi
-    description: CTR_DRBG-AES-256 Reseed, df.
-    signature: >-
-      int oxi_ctr_drbg_aes256_reseed_df(OxiCtrDrbgAes256 *handle,
-      const uint8_t *entropy, size_t entropy_len,
-      const uint8_t *additional_input, size_t additional_input_len)
-    parameters:
-      - name: handle
-        type: OxiCtrDrbgAes256 *
-        direction: in
-        description: Live, instantiated handle
-      - name: entropy
-        type: const uint8_t *
-        direction: in
-        description: Fresh entropy
-      - name: entropy_len
-        type: size_t
-        direction: in
-        description: Entropy length
-      - name: additional_input
-        type: const uint8_t *
-        direction: in
-        description: Optional additional input
-      - name: additional_input_len
-        type: size_t
-        direction: in
-        description: Additional input length
-    returns:
-      type: int
-      description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
-      error_variants:
-        - name: EntropyInputTooShort
-          condition: "entropy_len < 32 (the security strength; SP 800-90A Rev. 1 Table 3 min_length). Personalization or additional input does not count toward it."
-        - name: Uninstantiated
-          condition: generate or reseed was called before instantiate succeeded on this handle.
-        - name: InvalidInput
-          condition: An argument was not a valid domain element, such as a scalar out of range or a point not on the curve.
-        - name: NullPointer
-          condition: A pointer argument that the call requires was NULL.
-    security:
-      constant_time: false
-      handles_secrets: true
-      fips_approved: true
-
-  - name: oxi_ctr_drbg_aes256_generate_no_df
-    module: oxicrypt-ffi
-    description: CTR_DRBG-AES-256 Generate, no-df; when additional_input is supplied it MUST be exactly 48 bytes.
-    signature: >-
-      int oxi_ctr_drbg_aes256_generate_no_df(OxiCtrDrbgAes256 *handle,
-      const uint8_t *additional_input, size_t additional_input_len,
-      uint8_t *out, size_t out_len)
-    parameters:
-      - name: handle
-        type: OxiCtrDrbgAes256 *
-        direction: in
-        description: Live, instantiated handle
-      - name: additional_input
-        type: const uint8_t *
-        direction: in
-        description: Optional additional input
-      - name: additional_input_len
-        type: size_t
-        direction: in
-        description: Must be 0 or exactly SEED_LEN bytes
-      - name: out
-        type: uint8_t *
-        direction: out
-        description: Output buffer
-      - name: out_len
-        type: size_t
-        direction: in
-        description: Bytes to produce (≤ 65536)
-    returns:
-      type: int
-      description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
-      error_variants:
-        - name: Uninstantiated
-          condition: generate or reseed was called before instantiate succeeded on this handle.
-        - name: ReseedRequired
-          condition: The reseed counter reached the SP 800-90A Table 3 reseed interval and fresh entropy is required before further output.
-        - name: OutputTooLong
-          condition: The requested output length exceeds the maximum this construction permits.
-        - name: InvalidInput
-          condition: An argument was not a valid domain element, such as a scalar out of range or a point not on the curve.
-        - name: NullPointer
-          condition: A pointer argument that the call requires was NULL.
-    security:
-      constant_time: false
-      handles_secrets: true
-      fips_approved: true
-
   - name: oxi_ctr_drbg_aes256_generate_df
     module: oxicrypt-ffi
-    description: CTR_DRBG-AES-256 Generate, df.
+    description: "CTR_DRBG-AES-256 Generate, df; the handle must first be instantiated with oxi_ctr_drbg_aes256_instantiate_from_module."
     signature: >-
       int oxi_ctr_drbg_aes256_generate_df(OxiCtrDrbgAes256 *handle,
       const uint8_t *additional_input, size_t additional_input_len,
@@ -16843,13 +16315,13 @@ functions:
       description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
       error_variants:
         - name: Uninstantiated
-          condition: generate or reseed was called before instantiate succeeded on this handle.
+          condition: The handle was never instantiated with oxi_ctr_drbg_aes256_instantiate_from_module.
         - name: ReseedRequired
           condition: The reseed counter reached the SP 800-90A Table 3 reseed interval and fresh entropy is required before further output.
         - name: OutputTooLong
           condition: The requested output length exceeds the maximum this construction permits.
         - name: InvalidInput
-          condition: An argument was not a valid domain element, such as a scalar out of range or a point not on the curve.
+          condition: "An argument was not valid (for example additional_input NULL with a non-zero length, or a length over the limit), or the handle was instantiated by another process."
         - name: NullPointer
           condition: A pointer argument that the call requires was NULL.
     security:
