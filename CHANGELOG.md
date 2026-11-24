@@ -46,6 +46,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Breaking:** the C DRBG instantiate and reseed functions that took caller-supplied entropy are removed: `oxi_hmac_drbg_*_instantiate` and `_reseed`, `oxi_hash_drbg_*_instantiate` and `_reseed`, and the CTR_DRBG `_instantiate_no_df`, `_instantiate_df`, `_reseed_no_df`, `_reseed_df` and `_generate_no_df` functions. The module seeds every DRBG itself; the `OxiDrbg` handle and the `_from_module` functions replace them, and `oxi_abi_version()` returns 2.
 - **Breaking:** the `oxicrypt` Rust binding crate does not provide `HmacDrbgSha256`, `Module::hmac_drbg_sha256` or `DrbgSeed`; use `Drbg` through `Module::drbg`.
 
+### Fixed
+
+- `oxicrypt-hmac` wipes its copy of the inner digest after the outer hash consumes it.
+
 ## [0.26.1] - 2026-11-14
 
 ### Added

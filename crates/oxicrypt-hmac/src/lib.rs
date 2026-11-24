@@ -254,12 +254,15 @@ impl<H: BlockHash<B, L>, const B: usize, const L: usize> Hmac<H, B, L> {
     pub fn finalize_with(&mut self, started: &SelfTestStarted) -> [u8; L] {
         // inner_digest = H( K0 XOR ipad || text )
         let inner = core::mem::replace(&mut self.inner, self.blank.clone());
-        let inner_digest = inner.block_finalize(started);
+        let mut inner_digest = inner.block_finalize(started);
 
         // outer_digest = H( K0 XOR opad || inner_digest )
         let mut outer = self.outer.clone();
         outer.block_update(&inner_digest);
-        outer.block_finalize(started)
+        let mac = outer.block_finalize(started);
+        // The inner digest is key-derived; it does not outlive this call.
+        oxicrypt_zeroize::zeroize(&mut inner_digest);
+        mac
     }
 }
 
