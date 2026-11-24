@@ -3,7 +3,8 @@
 //! This is one of the in-boundary crates in the oxicrypt workspace that
 //! use `unsafe`. It provides four functions — [`zeroize`],
 //! [`zeroize_u32`], [`zeroize_i32`] and [`zeroize_u64`] — that write zeroes
-//! through volatile stores.
+//! through volatile stores, and one type, the wrapper [`Zeroizing`], whose
+//! `Drop` calls [`zeroize`] on the byte buffer it holds.
 //! The workspace's `AGENTS.md` names the in-boundary crates that use
 //! `unsafe`, and `tools/doc-guard` checks that list against the crates.
 //! Every in-boundary crate outside that list is
@@ -23,12 +24,10 @@
 //! determines the memory is never read. `write_volatile` is the
 //! portable, stable mechanism to prevent that.
 //!
-//! Isolating the `unsafe` in four small loops makes
-//! the security-relevant code trivially auditable: there are
-//! exactly four `unsafe` blocks in this crate, each a
-//! `write_volatile` of a zero, and the soundness argument for each
-//! is that it writes to owned, aligned, valid
-//! memory — the same memory the caller already has a mutable
+//! Outside its tests the crate has four `unsafe` blocks, one in each
+//! of the four loops, each a `write_volatile` of a zero, and the
+//! soundness argument for each is that it writes to owned, aligned,
+//! valid memory — the same memory the caller already has a mutable
 //! reference to.
 //!
 //! # Constant-time note
@@ -39,9 +38,6 @@
 //! comparison or copy.
 
 #![no_std]
-// This crate deliberately uses unsafe for volatile writes.
-// The workspace's `AGENTS.md` names the other in-boundary crates that
-// use unsafe; every other in-boundary crate forbids it.
 #![deny(unsafe_op_in_unsafe_fn)]
 
 /// Overwrite `buf` with zeroes using a volatile store.
@@ -115,6 +111,57 @@ pub fn zeroize_u64(buf: &mut [u64]) {
     }
 }
 
+/// A byte buffer whose contents are a critical security parameter,
+/// wiped with a volatile store when dropped.
+///
+/// The wrapper dereferences to the buffer it holds, and its `Drop`
+/// implementation passes `as_mut()` to [`zeroize`].
+///
+/// # Examples
+///
+/// ```
+/// use oxicrypt_zeroize::Zeroizing;
+///
+/// let mut key = Zeroizing::new([0u8; 32]);
+/// key[0] = 0x42;
+/// assert_eq!(key[0], 0x42);
+/// // The 32 bytes are zeroed when `key` goes out of scope.
+/// ```
+pub struct Zeroizing<T: AsMut<[u8]>>(T);
+
+impl<T: AsMut<[u8]>> Zeroizing<T> {
+    /// Wraps `value`, a byte buffer whose contents are a critical
+    /// security parameter, so that its bytes are wiped with a volatile
+    /// store when the wrapper is dropped.
+    #[inline]
+    pub fn new(value: T) -> Self {
+        Self(value)
+    }
+}
+
+impl<T: AsMut<[u8]>> core::ops::Deref for Zeroizing<T> {
+    type Target = T;
+
+    #[inline]
+    fn deref(&self) -> &T {
+        &self.0
+    }
+}
+
+impl<T: AsMut<[u8]>> core::ops::DerefMut for Zeroizing<T> {
+    #[inline]
+    fn deref_mut(&mut self) -> &mut T {
+        &mut self.0
+    }
+}
+
+impl<T: AsMut<[u8]>> Drop for Zeroizing<T> {
+    #[inline]
+    fn drop(&mut self) {
+        zeroize(self.0.as_mut());
+    }
+}
+
 #[cfg(test)]
 #[allow(clippy::unwrap_used)]
 mod tests {
@@ -139,6 +186,31 @@ mod tests {
         let mut buf = [-0x0123_4567_i32; 256];
         zeroize_i32(&mut buf);
         assert!(buf.iter().all(|&c| c == 0));
+    }
+
+    #[test]
+    fn zeroizing_wipes_on_drop() {
+        let mut z = Zeroizing::new([0xAA_u8; 32]);
+        let p: *const u8 = z.as_ptr();
+        // SAFETY: `z` is a live local, properly aligned and initialised;
+        // `drop_in_place` runs its destructor without releasing the
+        // storage, and `z` is forgotten below so it is never dropped again.
+        unsafe { core::ptr::drop_in_place(&raw mut z) };
+        // SAFETY: `p` points at the 32 bytes inside `z`, which is still in
+        // scope, so the storage remains allocated and initialised.
+        let after = unsafe { core::slice::from_raw_parts(p, 32) };
+        assert!(after.iter().all(|&b| b == 0));
+        core::mem::forget(z);
+
+        // Control: a plain array has no destructor, so the same sequence
+        // must leave its bytes untouched.
+        let mut plain = [0xAA_u8; 32];
+        let q: *const u8 = plain.as_ptr();
+        // SAFETY: as above; dropping a `[u8; 32]` in place is a no-op.
+        unsafe { core::ptr::drop_in_place(&raw mut plain) };
+        // SAFETY: `plain` is still in scope, so its storage is live.
+        let untouched = unsafe { core::slice::from_raw_parts(q, 32) };
+        assert!(untouched.iter().all(|&b| b == 0xAA));
     }
 
     #[test]

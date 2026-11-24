@@ -240,7 +240,7 @@ modules:
       - oxicrypt-sha
 
   - name: oxicrypt-zeroize
-    description: "Volatile-write zeroization for CSP buffers: zeroize() for byte slices, zeroize_u32() for u32 arrays, zeroize_i32() for i32 arrays, zeroize_u64() for u64 arrays."
+    description: "Volatile-write zeroization for CSP buffers: zeroize() for byte slices, zeroize_u32() for u32 arrays, zeroize_i32() for i32 arrays, zeroize_u64() for u64 arrays, and the Zeroizing<T> wrapper that wipes its byte buffer on drop."
     no_std: true
     depends_on: []
 
@@ -2214,6 +2214,15 @@ types:
       contains_secret: false
       zeroize_on_drop: false
       constant_time: false
+
+  - name: Zeroizing
+    module: oxicrypt-zeroize
+    kind: struct
+    description: "Wrapper over a byte buffer T: AsMut<[u8]> whose contents are a critical security parameter; dereferences to T and wipes every byte with zeroize() when dropped."
+    security:
+      contains_secret: true
+      zeroize_on_drop: true
+      constant_time: true
 
 # ─────────────────────────────────────────────────────────────────────
 # Functions
@@ -5038,6 +5047,29 @@ functions:
     returns:
       type: "Option<MinEntropy>"
       description: Floored fixed-point value; None on zero denominator or overflow.
+
+  - name: MinEntropy::from_fraction_floor_const
+    module: oxicrypt-entropy
+    description: const form of MinEntropy::from_fraction_floor for const tables and const assertions, rounding num/den bits down to the 1/256-bit grid.
+    signature: "pub const fn from_fraction_floor_const(num: u64, den: u64) -> MinEntropy"
+    parameters:
+      - name: num
+        type: "u64"
+        direction: in
+        description: Numerator of the claim expressed as num/den bits.
+        constraints:
+          nullability: required
+          valid_range: any
+      - name: den
+        type: "u64"
+        direction: in
+        description: Denominator of the claim; the value is rounded down to the 1/256-bit grid, never up.
+        constraints:
+          nullability: required
+          valid_range: non-zero; zero panics
+    returns:
+      type: "MinEntropy"
+      description: Floored fixed-point value, equal to from_fraction_floor's Some value; panics on a zero denominator or a value that does not fit u32 steps, which in a const context is a compile-time error.
 
   - name: SourceSpec::new
     module: oxicrypt-entropy
@@ -16540,6 +16572,24 @@ functions:
       description: No value; the effect is entirely on buf.
     postconditions:
     - description: Every limb of buf is 0.
+    thread_safety: thread-safe
+    security:
+      constant_time: true
+      handles_secrets: true
+      fips_approved: false
+
+  - name: Zeroizing::new
+    module: oxicrypt-zeroize
+    description: Wrap a byte buffer whose contents are a critical security parameter; the wrapper wipes its bytes with a volatile store when dropped.
+    signature: 'pub fn new(value: T) -> Zeroizing<T>'
+    parameters:
+    - name: value
+      type: 'T: AsMut<[u8]>'
+      direction: in
+      description: Buffer to take ownership of; every byte that as_mut() exposes is zeroed on drop.
+    returns:
+      type: Zeroizing<T>
+      description: The wrapper, which dereferences to value.
     thread_safety: thread-safe
     security:
       constant_time: true

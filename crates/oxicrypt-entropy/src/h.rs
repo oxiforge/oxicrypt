@@ -1,9 +1,8 @@
 //! Fixed-point min-entropy type — the `H` that flows through the pipeline.
 //!
-//! Min-entropy values are exact fixed-point numbers in steps of 1/256 bit
-//! (design decision, 2026-06-12). This keeps every comparison and every
-//! health-test cutoff derivation in pure integer arithmetic — no `f32`/`f64`
-//! exists anywhere on the claimed-H or cutoff path.
+//! Min-entropy values are exact fixed-point numbers in steps of 1/256 bit,
+//! so every comparison and every health-test cutoff derivation on them is
+//! integer arithmetic.
 //!
 //! Two roles, one type:
 //!
@@ -21,7 +20,7 @@ pub const H_STEPS_PER_BIT: u32 = 256;
 /// Min-entropy in exact 1/256-bit steps.
 ///
 /// Ordering is the natural numeric ordering, so ceiling checks are plain
-/// comparisons. The type is deliberately tiny and `Copy`.
+/// comparisons.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub struct MinEntropy(u32);
 
@@ -45,13 +44,77 @@ impl MinEntropy {
 
     /// Constructs from a rational `num/den` bits, rounding **down** to the
     /// 1/256-bit grid (the conservative direction — the claim is never
-    /// overstated). Returns `None` if `den` is zero or the value overflows.
+    /// overstated).
+    ///
+    /// Returns `None` in two cases: `den` is zero, or the result does not
+    /// fit in `u32` steps. Every other `num/den` converts, including a
+    /// full-width `num`.
     #[must_use]
     pub fn from_fraction_floor(num: u64, den: u64) -> Option<Self> {
-        let steps = num
-            .saturating_mul(u64::from(H_STEPS_PER_BIT))
-            .checked_div(den)?;
+        if den == 0 {
+            return None;
+        }
+        #[allow(
+            clippy::integer_division,
+            clippy::arithmetic_side_effects,
+            reason = "a u64 times 256 fits in u128, `den` is non-zero, and floor division is the documented rounding"
+        )]
+        let steps = (u128::from(num) * u128::from(H_STEPS_PER_BIT)) / u128::from(den);
         u32::try_from(steps).ok().map(Self)
+    }
+
+    /// `const` form of [`from_fraction_floor`](Self::from_fraction_floor),
+    /// for `const` tables and `const` assertions, where an `Option` cannot
+    /// be unwrapped.
+    ///
+    /// Rounds `num/den` bits down to the 1/256-bit grid exactly as
+    /// `from_fraction_floor` does, and returns the same value wherever that
+    /// function returns `Some`.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `den` is zero or if the result does not fit in `u32` steps:
+    /// the two cases in which `from_fraction_floor` returns `None`.
+    /// In a `const` context the panic is a compile-time error, so an
+    /// unrepresentable fraction in a table cannot reach a running module.
+    ///
+    /// ```compile_fail
+    /// use oxicrypt_entropy::h::MinEntropy;
+    /// const _: MinEntropy = MinEntropy::from_fraction_floor_const(1, 0);
+    /// ```
+    ///
+    /// ```compile_fail
+    /// use oxicrypt_entropy::h::MinEntropy;
+    /// const _: MinEntropy = MinEntropy::from_fraction_floor_const(u64::MAX, 1);
+    /// ```
+    ///
+    /// One step above `u32::MAX`, `2^32 / 256` bits, is refused:
+    ///
+    /// ```compile_fail
+    /// use oxicrypt_entropy::h::MinEntropy;
+    /// const _: MinEntropy = MinEntropy::from_fraction_floor_const(1 << 32, 256);
+    /// ```
+    #[must_use]
+    #[allow(
+        clippy::cast_possible_truncation,
+        reason = "the value is checked against u32::MAX on the line before"
+    )]
+    pub const fn from_fraction_floor_const(num: u64, den: u64) -> MinEntropy {
+        assert!(
+            den != 0,
+            "MinEntropy::from_fraction_floor_const: zero denominator"
+        );
+        #[allow(
+            clippy::integer_division,
+            clippy::arithmetic_side_effects,
+            reason = "a u64 times 256 fits in u128, `den` is non-zero, and floor division is the documented rounding"
+        )]
+        let steps = (num as u128 * H_STEPS_PER_BIT as u128) / den as u128;
+        assert!(
+            steps <= u32::MAX as u128,
+            "MinEntropy::from_fraction_floor_const: value exceeds u32 steps"
+        );
+        Self(steps as u32)
     }
 
     /// Raw value in 1/256-bit steps.
@@ -91,6 +154,48 @@ mod tests {
         assert_eq!(MinEntropy::from_fraction_floor(1, 2).unwrap().steps(), 128);
         // Zero denominator is rejected, not panicking.
         assert!(MinEntropy::from_fraction_floor(1, 0).is_none());
+    }
+
+    #[test]
+    fn fraction_handles_a_full_width_numerator() {
+        const FULL: MinEntropy = MinEntropy::from_fraction_floor_const(u64::MAX, u64::MAX);
+        // u64::MAX / u64::MAX is exactly one bit, though u64::MAX * 256
+        // does not fit in u64.
+        assert_eq!(
+            MinEntropy::from_fraction_floor(u64::MAX, u64::MAX).map(MinEntropy::steps),
+            Some(256)
+        );
+        // u64::MAX bits exceeds u32 steps.
+        assert!(MinEntropy::from_fraction_floor(u64::MAX, 1).is_none());
+        // The const form agrees.
+        assert_eq!(FULL.steps(), 256);
+    }
+
+    #[test]
+    fn fraction_accepts_exactly_u32_max_steps() {
+        let top = u64::from(u32::MAX);
+        assert_eq!(
+            MinEntropy::from_fraction_floor(top, 256).map(MinEntropy::steps),
+            Some(u32::MAX)
+        );
+        assert!(MinEntropy::from_fraction_floor(top + 1, 256).is_none());
+        // The const form agrees, called at run time so a refusal fails this
+        // test rather than the build.
+        assert_eq!(
+            MinEntropy::from_fraction_floor_const(top, 256).steps(),
+            u32::MAX
+        );
+    }
+
+    #[test]
+    fn from_fraction_floor_const_matches_from_fraction_floor() {
+        const HALF: MinEntropy = MinEntropy::from_fraction_floor_const(1, 2);
+        assert_eq!(HALF.steps(), 128);
+        for (num, den, steps) in [(1, 2, 128), (1, 5, 51), (3, 1, 768)] {
+            let h = MinEntropy::from_fraction_floor_const(num, den);
+            assert_eq!(h.steps(), steps);
+            assert_eq!(h, MinEntropy::from_fraction_floor(num, den).unwrap());
+        }
     }
 
     #[test]
