@@ -28,6 +28,19 @@ item_types = ["enums", "structs", "opaque", "typedefs", "functions"]
 # oxi_abi_version, oxi_active_profile, oxi_is_operational and
 # oxi_integrity_status.
 include = ["OxiResult"]
+# The fault-injection test symbols, declared in include/oxicrypt-test.h.
+exclude = [
+    "oxi_test_set_seed_stream",
+    "oxi_test_hold_busy",
+    "oxi_test_corrupt_next_key",
+    "oxi_test_poison_entropy",
+    "oxi_test_fail_next_on_demand",
+    "oxi_test_last_freed_bytes_zero",
+    "oxi_test_fail_next_alloc",
+    "oxi_test_park_before_output",
+    "oxi_test_release_parked",
+    "oxi_test_is_parked",
+]
 
 [enum]
 prefix_with_name = true

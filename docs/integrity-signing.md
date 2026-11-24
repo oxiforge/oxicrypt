@@ -540,6 +540,8 @@ self-test by name and ends with an explicit indicator line. The integrity line
 shows the verdict from the process's start; the algorithm self-tests run again
 on the operational module. It does not re-enter the pre-operational sequence,
 which is one-shot per process. A failure places the module in the error state.
+Once a test has put the module in that state, every later test is listed as
+not run, left out of the count, and makes the command exit 1.
 
 ## The project's own CLI
 
@@ -732,7 +734,7 @@ oxicrypt-integrity-sign --keygen <dir>                      # once, outside any 
 OXICRYPT_INTEGRITY_VERIFY_KEY=<dir>/integrity-verify.pub cargo build --release -p oxicrypt-ffi
 
 # Deliver it under its SONAME, liboxicrypt_ffi.so.<ABI>, with the plain name a link to it
-name="$(scripts/library-file-name.sh target/release/liboxicrypt_ffi.so)"   # liboxicrypt_ffi.so.1
+name="$(scripts/library-file-name.sh target/release/liboxicrypt_ffi.so)"   # liboxicrypt_ffi.so.2
 cp target/release/liboxicrypt_ffi.so <lib>/"$name"
 ln -s "$name" <lib>/liboxicrypt_ffi.so
 oxicrypt-integrity-sign --sign --key <dir>/integrity-signing.key <lib>/"$name"

@@ -19,8 +19,8 @@ public class Sha256 {
         }
         String os = System.getProperty("os.name").toLowerCase();
         String name = os.startsWith("windows") ? "oxicrypt_ffi.dll"
-                : os.startsWith("mac") ? "liboxicrypt_ffi.1.dylib"
-                : "liboxicrypt_ffi.so.1";
+                : os.startsWith("mac") ? "liboxicrypt_ffi.2.dylib"
+                : "liboxicrypt_ffi.so.2";
         Linker linker = Linker.nativeLinker();
         try (Arena arena = Arena.ofConfined()) {
             SymbolLookup lib = SymbolLookup.libraryLookup(Path.of(args[0], name), arena);

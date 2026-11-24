@@ -41,6 +41,7 @@ fn norm_type(t: &str) -> String {
 fn frozen(abi: i32) -> Option<(usize, u64)> {
     match abi {
         1 => Some((316, 0xe5b4_7830_6154_6473)),
+        2 => Some((336, 0x359a_23a8_ffd9_837d)),
         _ => None,
     }
 }

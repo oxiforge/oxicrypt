@@ -292,7 +292,7 @@ modules:
       - acvp-harness
 
   - name: oxicrypt-ffi
-    description: C ABI wrappers (extern "C") for language bindings, built as cdylib and staticlib.
+    description: C ABI wrappers (extern "C") for language bindings, built as cdylib and staticlib, including the shared DRBG handle seeded by the module.
     no_std: false
     depends_on:
       - oxicrypt-module
@@ -1479,6 +1479,11 @@ types:
     kind: opaque
     module: oxicrypt-ffi
     description: Opaque ECDSA P-384 private-key handle that passed an IG 10.3.A pairwise consistency test at construction; carries the 48-byte scalar d and 97-byte SEC1 public key Q, and zeroises d on drop.
+
+  - name: OxiDrbg
+    kind: opaque
+    module: oxicrypt-ffi
+    description: Opaque shared handle for the nine SP 800-90A DRBGs seeded by the module, where a forked child constructs a new handle or re-instantiates the inherited one with oxi_drbg_instantiate, a process id reused after the parent exits is not detected, Busy = 32 means retry after a pause, and freeing a handle another thread is using is undefined behaviour.
 
   - name: OxiHmacDrbgSha384
     kind: opaque
@@ -5230,6 +5235,42 @@ functions:
         type: "DrawFn"
         direction: in
         description: "The replacement draw."
+    returns:
+      type: "()"
+      description: "Nothing."
+    thread_safety: thread-safe
+    security:
+      constant_time: false
+      handles_secrets: false
+      fips_approved: false
+
+  - name: "seam::set_corrupt_next_key"
+    module: oxicrypt-drbg
+    description: "Sets or clears the flag corrupt_next_key_armed reports; available with the fault-injection feature or in the crate's own tests."
+    signature: "pub fn set_corrupt_next_key(on: bool)"
+    parameters:
+      - name: "on"
+        type: "bool"
+        direction: in
+        description: "True sets the flag, false clears it."
+    returns:
+      type: "()"
+      description: "Nothing."
+    thread_safety: thread-safe
+    security:
+      constant_time: false
+      handles_secrets: false
+      fips_approved: false
+
+  - name: "seam::set_slow_write"
+    module: oxicrypt-drbg
+    description: "Sets or clears the flag slow_write_armed reports; available with the fault-injection feature or in the crate's own tests."
+    signature: "pub fn set_slow_write(on: bool)"
+    parameters:
+      - name: "on"
+        type: "bool"
+        direction: in
+        description: "True sets the flag, false clears it."
     returns:
       type: "()"
       description: "Nothing."
@@ -14349,6 +14390,560 @@ functions:
       constant_time: false
       handles_secrets: true
       fips_approved: true
+
+  - name: oxi_hmac_drbg_sha256_new_rbg
+    module: oxicrypt-ffi
+    family: ffi-drbg-lifecycle
+    description: "Allocate an uninstantiated shared handle holding HMAC_DRBG with SHA-256, writing an owned OxiDrbg pointer through out; instantiate it with oxi_drbg_instantiate before generating."
+    signature: >-
+      int oxi_hmac_drbg_sha256_new_rbg(OxiDrbg **out)
+    parameters:
+      - name: out
+        type: "OxiDrbg **"
+        direction: out
+        description: "Receives the heap-allocated opaque handle pointer on success, left unchanged on failure"
+    returns:
+      type: int
+      description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
+      error_variants:
+        - name: NullPointer
+          condition: A pointer argument that the call requires was NULL.
+        - name: Internal
+          condition: The allocation failed.
+    thread_safety: "thread-safe"
+    security:
+      constant_time: false
+      handles_secrets: true
+      fips_approved: true
+
+  - name: oxi_hmac_drbg_sha384_new_rbg
+    module: oxicrypt-ffi
+    family: ffi-drbg-lifecycle
+    description: "Allocate an uninstantiated shared handle holding HMAC_DRBG with SHA-384, writing an owned OxiDrbg pointer through out; instantiate it with oxi_drbg_instantiate before generating."
+    signature: >-
+      int oxi_hmac_drbg_sha384_new_rbg(OxiDrbg **out)
+    parameters:
+      - name: out
+        type: "OxiDrbg **"
+        direction: out
+        description: "Receives the heap-allocated opaque handle pointer on success, left unchanged on failure"
+    returns:
+      type: int
+      description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
+      error_variants:
+        - name: NullPointer
+          condition: A pointer argument that the call requires was NULL.
+        - name: Internal
+          condition: The allocation failed.
+    thread_safety: "thread-safe"
+    security:
+      constant_time: false
+      handles_secrets: true
+      fips_approved: true
+
+  - name: oxi_hmac_drbg_sha512_new_rbg
+    module: oxicrypt-ffi
+    family: ffi-drbg-lifecycle
+    description: "Allocate an uninstantiated shared handle holding HMAC_DRBG with SHA-512, writing an owned OxiDrbg pointer through out; instantiate it with oxi_drbg_instantiate before generating."
+    signature: >-
+      int oxi_hmac_drbg_sha512_new_rbg(OxiDrbg **out)
+    parameters:
+      - name: out
+        type: "OxiDrbg **"
+        direction: out
+        description: "Receives the heap-allocated opaque handle pointer on success, left unchanged on failure"
+    returns:
+      type: int
+      description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
+      error_variants:
+        - name: NullPointer
+          condition: A pointer argument that the call requires was NULL.
+        - name: Internal
+          condition: The allocation failed.
+    thread_safety: "thread-safe"
+    security:
+      constant_time: false
+      handles_secrets: true
+      fips_approved: true
+
+  - name: oxi_hash_drbg_sha256_new_rbg
+    module: oxicrypt-ffi
+    family: ffi-drbg-lifecycle
+    description: "Allocate an uninstantiated shared handle holding Hash_DRBG with SHA-256, writing an owned OxiDrbg pointer through out; instantiate it with oxi_drbg_instantiate before generating."
+    signature: >-
+      int oxi_hash_drbg_sha256_new_rbg(OxiDrbg **out)
+    parameters:
+      - name: out
+        type: "OxiDrbg **"
+        direction: out
+        description: "Receives the heap-allocated opaque handle pointer on success, left unchanged on failure"
+    returns:
+      type: int
+      description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
+      error_variants:
+        - name: NullPointer
+          condition: A pointer argument that the call requires was NULL.
+        - name: Internal
+          condition: The allocation failed.
+    thread_safety: "thread-safe"
+    security:
+      constant_time: false
+      handles_secrets: true
+      fips_approved: true
+
+  - name: oxi_hash_drbg_sha384_new_rbg
+    module: oxicrypt-ffi
+    family: ffi-drbg-lifecycle
+    description: "Allocate an uninstantiated shared handle holding Hash_DRBG with SHA-384, writing an owned OxiDrbg pointer through out; instantiate it with oxi_drbg_instantiate before generating."
+    signature: >-
+      int oxi_hash_drbg_sha384_new_rbg(OxiDrbg **out)
+    parameters:
+      - name: out
+        type: "OxiDrbg **"
+        direction: out
+        description: "Receives the heap-allocated opaque handle pointer on success, left unchanged on failure"
+    returns:
+      type: int
+      description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
+      error_variants:
+        - name: NullPointer
+          condition: A pointer argument that the call requires was NULL.
+        - name: Internal
+          condition: The allocation failed.
+    thread_safety: "thread-safe"
+    security:
+      constant_time: false
+      handles_secrets: true
+      fips_approved: true
+
+  - name: oxi_hash_drbg_sha512_new_rbg
+    module: oxicrypt-ffi
+    family: ffi-drbg-lifecycle
+    description: "Allocate an uninstantiated shared handle holding Hash_DRBG with SHA-512, writing an owned OxiDrbg pointer through out; instantiate it with oxi_drbg_instantiate before generating."
+    signature: >-
+      int oxi_hash_drbg_sha512_new_rbg(OxiDrbg **out)
+    parameters:
+      - name: out
+        type: "OxiDrbg **"
+        direction: out
+        description: "Receives the heap-allocated opaque handle pointer on success, left unchanged on failure"
+    returns:
+      type: int
+      description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
+      error_variants:
+        - name: NullPointer
+          condition: A pointer argument that the call requires was NULL.
+        - name: Internal
+          condition: The allocation failed.
+    thread_safety: "thread-safe"
+    security:
+      constant_time: false
+      handles_secrets: true
+      fips_approved: true
+
+  - name: oxi_ctr_drbg_aes128_new_rbg
+    module: oxicrypt-ffi
+    family: ffi-drbg-lifecycle
+    description: "Allocate an uninstantiated shared handle holding CTR_DRBG with AES-128 and the derivation function, writing an owned OxiDrbg pointer through out; instantiate it with oxi_drbg_instantiate before generating."
+    signature: >-
+      int oxi_ctr_drbg_aes128_new_rbg(OxiDrbg **out)
+    parameters:
+      - name: out
+        type: "OxiDrbg **"
+        direction: out
+        description: "Receives the heap-allocated opaque handle pointer on success, left unchanged on failure"
+    returns:
+      type: int
+      description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
+      error_variants:
+        - name: NullPointer
+          condition: A pointer argument that the call requires was NULL.
+        - name: Internal
+          condition: The allocation failed.
+    thread_safety: "thread-safe"
+    security:
+      constant_time: false
+      handles_secrets: true
+      fips_approved: true
+
+  - name: oxi_ctr_drbg_aes192_new_rbg
+    module: oxicrypt-ffi
+    family: ffi-drbg-lifecycle
+    description: "Allocate an uninstantiated shared handle holding CTR_DRBG with AES-192 and the derivation function, writing an owned OxiDrbg pointer through out; instantiate it with oxi_drbg_instantiate before generating."
+    signature: >-
+      int oxi_ctr_drbg_aes192_new_rbg(OxiDrbg **out)
+    parameters:
+      - name: out
+        type: "OxiDrbg **"
+        direction: out
+        description: "Receives the heap-allocated opaque handle pointer on success, left unchanged on failure"
+    returns:
+      type: int
+      description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
+      error_variants:
+        - name: NullPointer
+          condition: A pointer argument that the call requires was NULL.
+        - name: Internal
+          condition: The allocation failed.
+    thread_safety: "thread-safe"
+    security:
+      constant_time: false
+      handles_secrets: true
+      fips_approved: true
+
+  - name: oxi_ctr_drbg_aes256_new_rbg
+    module: oxicrypt-ffi
+    family: ffi-drbg-lifecycle
+    description: "Allocate an uninstantiated shared handle holding CTR_DRBG with AES-256 and the derivation function, writing an owned OxiDrbg pointer through out; instantiate it with oxi_drbg_instantiate before generating."
+    signature: >-
+      int oxi_ctr_drbg_aes256_new_rbg(OxiDrbg **out)
+    parameters:
+      - name: out
+        type: "OxiDrbg **"
+        direction: out
+        description: "Receives the heap-allocated opaque handle pointer on success, left unchanged on failure"
+    returns:
+      type: int
+      description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
+      error_variants:
+        - name: NullPointer
+          condition: A pointer argument that the call requires was NULL.
+        - name: Internal
+          condition: The allocation failed.
+    thread_safety: "thread-safe"
+    security:
+      constant_time: false
+      handles_secrets: true
+      fips_approved: true
+
+  - name: oxi_drbg_instantiate
+    module: oxicrypt-ffi
+    family: ffi-drbg-lifecycle
+    description: "Instantiate the handle from the module seed path with an optional personalization string, replacing any earlier instantiation; this also makes a handle inherited across fork usable in the child."
+    signature: >-
+      int oxi_drbg_instantiate(OxiDrbg *h, const uint8_t *perso, uintptr_t perso_len)
+    parameters:
+      - name: h
+        type: "OxiDrbg *"
+        direction: in
+        description: "Live handle from a _new_rbg function"
+      - name: perso
+        type: "const uint8_t *"
+        direction: in
+        description: "Optional personalization string (NULL with perso_len 0 for none)"
+      - name: perso_len
+        type: "uintptr_t"
+        direction: in
+        description: "Personalization length in bytes"
+    returns:
+      type: int
+      description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
+      error_variants:
+        - name: NullPointer
+          condition: A pointer argument that the call requires was NULL.
+        - name: InvalidInput
+          condition: An argument was not valid: a required length or overlap rule was broken, or the handle was instantiated by another process.
+        - name: NotOperational
+          condition: oxi_init has not completed successfully, or the module has entered the terminal Error state.
+        - name: AlgorithmRestricted
+          condition: The active algorithm profile does not permit this service.
+        - name: Busy
+          condition: Another call holds the handle, or the seed path was held too long; retry after a pause.
+        - name: EntropyUnavailable
+          condition: The entropy source failed and the module has entered its error state.
+    thread_safety: "not-thread-safe; a concurrent call on the same handle returns Busy = 32"
+    security:
+      constant_time: false
+      handles_secrets: true
+      fips_approved: true
+
+  - name: oxi_drbg_reseed
+    module: oxicrypt-ffi
+    family: ffi-drbg-lifecycle
+    description: "Reseed the handle from the module seed path with optional additional input."
+    signature: >-
+      int oxi_drbg_reseed(OxiDrbg *h, const uint8_t *additional, uintptr_t additional_len)
+    parameters:
+      - name: h
+        type: "OxiDrbg *"
+        direction: in
+        description: "Live, instantiated handle"
+      - name: additional
+        type: "const uint8_t *"
+        direction: in
+        description: "Optional additional input (NULL with additional_len 0 for none)"
+      - name: additional_len
+        type: "uintptr_t"
+        direction: in
+        description: "Additional input length in bytes"
+    returns:
+      type: int
+      description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
+      error_variants:
+        - name: NullPointer
+          condition: A pointer argument that the call requires was NULL.
+        - name: InvalidInput
+          condition: An argument was not valid: a required length or overlap rule was broken, or the handle was instantiated by another process.
+        - name: NotOperational
+          condition: oxi_init has not completed successfully, or the module has entered the terminal Error state.
+        - name: AlgorithmRestricted
+          condition: The active algorithm profile does not permit this service.
+        - name: Uninstantiated
+          condition: The handle has not been instantiated.
+        - name: Busy
+          condition: Another call holds the handle, or the seed path was held too long; retry after a pause.
+        - name: EntropyUnavailable
+          condition: The entropy source failed and the module has entered its error state.
+    thread_safety: "not-thread-safe; a concurrent call on the same handle returns Busy = 32"
+    security:
+      constant_time: false
+      handles_secrets: true
+      fips_approved: true
+
+  - name: oxi_drbg_generate
+    module: oxicrypt-ffi
+    family: ffi-drbg-lifecycle
+    description: "Write out_len pseudorandom bytes into out with optional additional input, reseeding from the module seed path at the reseed interval; out is written only on success."
+    signature: >-
+      int oxi_drbg_generate(OxiDrbg *h, const uint8_t *additional,
+      uintptr_t additional_len, uint8_t *out, uintptr_t out_len)
+    parameters:
+      - name: h
+        type: "OxiDrbg *"
+        direction: in
+        description: "Live, instantiated handle"
+      - name: additional
+        type: "const uint8_t *"
+        direction: in
+        description: "Optional additional input (NULL with additional_len 0 for none)"
+      - name: additional_len
+        type: "uintptr_t"
+        direction: in
+        description: "Additional input length in bytes"
+      - name: out
+        type: "uint8_t *"
+        direction: out
+        description: "Output buffer of at least out_len writable bytes"
+      - name: out_len
+        type: "uintptr_t"
+        direction: in
+        description: "Number of bytes to produce (at most 65536)"
+    returns:
+      type: int
+      description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
+      error_variants:
+        - name: NullPointer
+          condition: A pointer argument that the call requires was NULL.
+        - name: InvalidInput
+          condition: An argument was not valid: a required length or overlap rule was broken, or the handle was instantiated by another process.
+        - name: NotOperational
+          condition: oxi_init has not completed successfully, or the module has entered the terminal Error state.
+        - name: AlgorithmRestricted
+          condition: The active algorithm profile does not permit this service.
+        - name: Uninstantiated
+          condition: The handle has not been instantiated.
+        - name: OutputTooLong
+          condition: The requested output length exceeds 65536 bytes.
+        - name: Busy
+          condition: Another call holds the handle, or the seed path was held too long; retry after a pause.
+        - name: EntropyUnavailable
+          condition: The entropy source failed and the module has entered its error state.
+    thread_safety: "not-thread-safe; a concurrent call on the same handle returns Busy = 32"
+    security:
+      constant_time: false
+      handles_secrets: true
+      fips_approved: true
+
+  - name: oxi_drbg_strength_bits
+    module: oxicrypt-ffi
+    family: ffi-drbg-lifecycle
+    description: "Write the security strength in bits of the handle's DRBG to out."
+    signature: >-
+      int oxi_drbg_strength_bits(const OxiDrbg *h, uint32_t *out)
+    parameters:
+      - name: h
+        type: "const OxiDrbg *"
+        direction: in
+        description: "Live, instantiated handle"
+      - name: out
+        type: "uint32_t *"
+        direction: out
+        description: "Receives the strength in bits"
+    returns:
+      type: int
+      description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
+      error_variants:
+        - name: NullPointer
+          condition: A pointer argument that the call requires was NULL.
+        - name: InvalidInput
+          condition: An argument was not valid: a required length or overlap rule was broken, or the handle was instantiated by another process.
+        - name: NotOperational
+          condition: oxi_init has not completed successfully, or the module has entered the terminal Error state.
+        - name: AlgorithmRestricted
+          condition: The active algorithm profile does not permit this service.
+        - name: Uninstantiated
+          condition: The handle has not been instantiated.
+        - name: Busy
+          condition: Another call holds the handle, or the seed path was held too long; retry after a pause.
+    thread_safety: "not-thread-safe; a concurrent call on the same handle returns Busy = 32"
+    security:
+      constant_time: false
+      handles_secrets: false
+      fips_approved: true
+
+  - name: oxi_drbg_free
+    module: oxicrypt-ffi
+    family: ffi-drbg-lifecycle
+    description: "Free a shared DRBG handle, wiping its key material and then every byte of the handle before release; NULL is a no-op and freeing a handle another thread is using is undefined behaviour."
+    signature: >-
+      void oxi_drbg_free(OxiDrbg *h)
+    parameters:
+      - name: h
+        type: "OxiDrbg *"
+        direction: in
+        description: "Handle from a _new_rbg function that no other thread is using, or NULL"
+    returns:
+      type: void
+      description: "No return value"
+    thread_safety: "not-thread-safe; freeing a handle another thread is using is undefined behaviour"
+    security:
+      constant_time: false
+      handles_secrets: true
+      fips_approved: true
+
+  - name: oxi_entropy_on_demand_test
+    module: oxicrypt-ffi
+    family: ffi-drbg-lifecycle
+    description: "Run the entropy source on-demand test on the module seed path and report the seed path label."
+    signature: >-
+      int oxi_entropy_on_demand_test(const char **label_out)
+    parameters:
+      - name: label_out
+        type: "const char **"
+        direction: out
+        description: "Optional receiver (NULL allowed) of a static NUL-terminated seed path label that must not be freed"
+    returns:
+      type: int
+      description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
+      error_variants:
+        - name: NotOperational
+          condition: oxi_init has not completed successfully, or the module has entered the terminal Error state.
+        - name: Busy
+          condition: Another call holds the handle, or the seed path was held too long; retry after a pause.
+        - name: EntropyUnavailable
+          condition: The entropy source failed and the module has entered its error state.
+    thread_safety: "thread-safe"
+    security:
+      constant_time: false
+      handles_secrets: false
+      fips_approved: false
+
+  - name: oxi_test_set_seed_stream
+    module: oxicrypt-ffi
+    description: "Serve every later seed path draw from a fixed byte stream in order, with a draw past its end failing; available with the fault-injection feature"
+    signature: >-
+      void oxi_test_set_seed_stream(const uint8_t *seed, uintptr_t len)
+    parameters:
+      - name: seed
+        type: "const uint8_t *"
+        direction: in
+        description: "Stream bytes"
+      - name: len
+        type: "uintptr_t"
+        direction: in
+        description: "Stream length in bytes"
+    returns:
+      type: void
+      description: "No return value"
+    thread_safety: "thread-safe"
+    security:
+      constant_time: false
+      handles_secrets: false
+      fips_approved: false
+
+  - name: oxi_test_hold_busy
+    module: oxicrypt-ffi
+    description: "Set or clear the handle busy flag as a call in progress on another thread would; available with the fault-injection feature"
+    signature: >-
+      void oxi_test_hold_busy(OxiDrbg *h, int on)
+    parameters:
+      - name: h
+        type: "OxiDrbg *"
+        direction: in
+        description: "Live handle, or NULL for no effect"
+      - name: on
+        type: "int"
+        direction: in
+        description: "Non-zero sets the flag, zero clears it"
+    returns:
+      type: void
+      description: "No return value"
+    thread_safety: "thread-safe"
+    security:
+      constant_time: false
+      handles_secrets: false
+      fips_approved: false
+
+  - name: oxi_test_corrupt_next_key
+    module: oxicrypt-ffi
+    description: "Arm or disarm a pairwise consistency test failure in the next key generation; available with the fault-injection feature"
+    signature: >-
+      void oxi_test_corrupt_next_key(int on)
+    parameters:
+      - name: on
+        type: "int"
+        direction: in
+        description: "Non-zero arms, zero disarms"
+    returns:
+      type: void
+      description: "No return value"
+    thread_safety: "thread-safe"
+    security:
+      constant_time: false
+      handles_secrets: false
+      fips_approved: false
+
+  - name: oxi_test_poison_entropy
+    module: oxicrypt-ffi
+    description: "Make the entropy source fail its start-up health tests, which puts the module into its error state; available with the fault-injection feature"
+    signature: >-
+      void oxi_test_poison_entropy(void)
+    returns:
+      type: void
+      description: "No return value"
+    thread_safety: "thread-safe"
+    security:
+      constant_time: false
+      handles_secrets: false
+      fips_approved: false
+
+  - name: oxi_test_last_freed_bytes_zero
+    module: oxicrypt-ffi
+    description: "Report whether the last freed DRBG handle read as all zero before its memory was released; available with the fault-injection feature"
+    signature: >-
+      int oxi_test_last_freed_bytes_zero(void)
+    returns:
+      type: int
+      description: "1 when the last freed handle was all zero, 0 when it was not, -1 when no handle has been freed"
+    thread_safety: "thread-safe"
+    security:
+      constant_time: false
+      handles_secrets: false
+      fips_approved: false
+
+  - name: oxi_test_fail_next_alloc
+    module: oxicrypt-ffi
+    description: "Make the next _new_rbg call return Internal = 255 without allocating; available with the fault-injection feature"
+    signature: >-
+      void oxi_test_fail_next_alloc(void)
+    returns:
+      type: void
+      description: "No return value"
+    thread_safety: "thread-safe"
+    security:
+      constant_time: false
+      handles_secrets: false
+      fips_approved: false
 
   # ── HMAC-DRBG-SHA-384 / -SHA-512 — additive variants ──
 

@@ -6,16 +6,24 @@
 //! in a [`SpinCell`] of their own. With no seam armed, the seed path takes
 //! its production branch unchanged.
 //!
-//! An armed fault is checked where the real failure of its class is
-//! classified, takes the branch that failure takes (the module enters its
-//! error state and the draw returns [`RbgError::EntropyUnavailable`]), and
-//! is consumed:
+//! An armed fault is consumed by the next call it names. For the entropy
+//! source and the operating-system generator it replaces that call's
+//! result with an error of the call's own type, so the seed path's
+//! production error arm classifies it as it classifies a real failure:
+//! the module enters its error state and the draw returns
+//! [`RbgError::EntropyUnavailable`].
 //!
-//! - [`FaultClass::StartupHealth`]: after the pipeline's startup tests.
-//! - [`FaultClass::ConditionerKat`]: after the pipeline is constructed.
-//! - [`FaultClass::ContinuousHealth`]: before the next conditioned block.
-//! - [`FaultClass::OnDemand`]: in [`crate::entropy_on_demand_test`].
-//! - [`FaultClass::OsGenerator`]: in the operating-system fill.
+//! - [`FaultClass::StartupHealth`]: the result of the pipeline's startup
+//!   tests, as a health-test failure.
+//! - [`FaultClass::ConditionerKat`]: the result of the pipeline's startup
+//!   tests, as a conditioning known-answer test failure.
+//! - [`FaultClass::ContinuousHealth`]: the result of the next conditioned
+//!   block, as a health-test failure.
+//! - [`FaultClass::OsGenerator`]: the result of the next platform
+//!   generator call, queued through
+//!   `oxicrypt_platform::testing::set_os_random_result`.
+//! - [`FaultClass::OnDemand`]: in [`crate::entropy_on_demand_test`],
+//!   before the test runs.
 //! - [`FaultClass::SecondDraw`]: at the second draw of an instantiate.
 
 use core::sync::atomic::{AtomicBool, AtomicU8, AtomicU64, Ordering};
@@ -77,6 +85,8 @@ pub const STREAM_CAPACITY: usize = 4096;
 const PARK_BOUND: u64 = 1 << 32;
 
 static DRAWS: AtomicU64 = AtomicU64::new(0);
+static WIPED_DRAWS: AtomicU64 = AtomicU64::new(0);
+static UNWIPED_DRAWS: AtomicU64 = AtomicU64::new(0);
 static CONSTRUCTIONS: AtomicU64 = AtomicU64::new(0);
 static FAULTS: AtomicU8 = AtomicU8::new(0);
 static TIMER_INADEQUATE: AtomicBool = AtomicBool::new(false);
@@ -113,6 +123,7 @@ pub fn clear_all() {
     *locked(&DRAW) = None;
     *locked(&FORCED) = None;
     *locked(&STREAM) = None;
+    oxicrypt_platform::testing::set_os_random_result(None);
     FAULTS.store(0, Ordering::SeqCst);
     TIMER_INADEQUATE.store(false, Ordering::SeqCst);
     PARK_ARMED.store(false, Ordering::SeqCst);
@@ -121,6 +132,8 @@ pub fn clear_all() {
     SLOW_WRITE.store(false, Ordering::SeqCst);
     *locked(seed::seed_cell()) = None;
     DRAWS.store(0, Ordering::SeqCst);
+    WIPED_DRAWS.store(0, Ordering::SeqCst);
+    UNWIPED_DRAWS.store(0, Ordering::SeqCst);
     CONSTRUCTIONS.store(0, Ordering::SeqCst);
 }
 
@@ -149,6 +162,23 @@ pub(crate) fn count_draw() {
     DRAWS.fetch_add(1, Ordering::SeqCst);
 }
 
+/// The number of seed-draw buffers of a module-seeded instantiate or reseed
+/// that read as all zero when they were dropped, after their wipe.
+pub fn wiped_draw_count() -> u64 {
+    WIPED_DRAWS.load(Ordering::SeqCst)
+}
+
+/// The number of seed-draw buffers that held a non-zero byte when they were
+/// dropped, after their wipe.
+pub fn unwiped_draw_count() -> u64 {
+    UNWIPED_DRAWS.load(Ordering::SeqCst)
+}
+
+pub(crate) fn record_draw_dropped(wiped: bool) {
+    let counter = if wiped { &WIPED_DRAWS } else { &UNWIPED_DRAWS };
+    counter.fetch_add(1, Ordering::SeqCst);
+}
+
 /// The number of seed-path states constructed, whichever path they chose.
 pub fn construction_count() -> u64 {
     CONSTRUCTIONS.load(Ordering::SeqCst)
@@ -170,7 +200,9 @@ pub fn force_operating_system_path() {
 }
 
 /// Makes the next seed-path decision the assessed path under the first
-/// assessed row, independent of the running target's own match and timer.
+/// assessed row, independent of the running target's own match. The row's
+/// timer still runs the adequacy check, and a timer that fails it makes the
+/// path the operating system's generator.
 pub fn force_assessed_path() {
     if let Some(row) = ROWS.first() {
         force_seed_choice(SeedChoice::Assessed(row));
@@ -213,6 +245,12 @@ pub(crate) fn hold_lock() -> HeldSeedCell {
 
 /// Arms one failure of `class`, consumed by the next point that checks it.
 pub fn fail_next(class: FaultClass) {
+    if class == FaultClass::OsGenerator {
+        oxicrypt_platform::testing::set_os_random_result(Some(Err(
+            oxicrypt_platform::OsRandomError::Unavailable,
+        )));
+        return;
+    }
     FAULTS.fetch_or(class.bit(), Ordering::SeqCst);
 }
 
@@ -222,10 +260,6 @@ pub(crate) fn take_fault(class: FaultClass) -> bool {
 }
 
 /// Consumes an armed [`FaultClass::SecondDraw`] failure.
-#[allow(
-    dead_code,
-    reason = "called by the per-type instantiate path at its second draw"
-)]
 pub(crate) fn take_second_draw_fault() -> bool {
     take_fault(FaultClass::SecondDraw)
 }
@@ -247,7 +281,7 @@ pub fn draw(out: &mut [u8]) -> Result<(), RbgError> {
 }
 
 /// While `true`, the next service to reach its output re-check parks there
-/// until [`release_parked`].
+/// until [`release_parked`], or until 2^32 spins have passed.
 pub fn park_before_output(on: bool) {
     PARK_ARMED.store(on, Ordering::SeqCst);
 }
@@ -287,6 +321,16 @@ pub fn corrupt_next_key_armed() -> bool {
 /// Whether `slow-write` was armed through [`arm_from_env`].
 pub fn slow_write_armed() -> bool {
     SLOW_WRITE.load(Ordering::SeqCst)
+}
+
+/// Sets or clears the flag [`corrupt_next_key_armed`] reports.
+pub fn set_corrupt_next_key(on: bool) {
+    CORRUPT_NEXT_KEY.store(on, Ordering::SeqCst);
+}
+
+/// Sets or clears the flag [`slow_write_armed`] reports.
+pub fn set_slow_write(on: bool) {
+    SLOW_WRITE.store(on, Ordering::SeqCst);
 }
 
 /// Arms the seams named in the value of the `OXI_FAULT` environment

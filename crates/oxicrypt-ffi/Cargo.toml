@@ -43,6 +43,12 @@ oxicrypt-xmss = { workspace = true }
 oxicrypt-kdf = { workspace = true }
 oxicrypt-tls-kdf = { workspace = true }
 oxicrypt-zeroize = { workspace = true }
+oxicrypt-platform = { workspace = true }
+
+[features]
+default = []
+# Exports the oxi_test_* symbols of include/oxicrypt-test.h; never in a release build.
+fault-injection = ["oxicrypt-drbg/fault-injection"]
 
 [package.metadata.lama]
 # Registry discovery (LAMA SPEC.md, "Package registry discovery"). Must be a

@@ -70,6 +70,9 @@ mod drbg;
 mod error;
 mod handle;
 mod power_up;
+mod rbg;
+#[cfg(feature = "fault-injection")]
+mod test_api;
 
 include!("abi_version.rs");
 pub use aes::{
@@ -102,6 +105,18 @@ pub use drbg::{
     oxi_hmac_drbg_sha512_instantiate, oxi_hmac_drbg_sha512_new, oxi_hmac_drbg_sha512_reseed,
 };
 pub use error::OxiResult;
+pub use rbg::{
+    OxiDrbg, oxi_ctr_drbg_aes128_new_rbg, oxi_ctr_drbg_aes192_new_rbg, oxi_ctr_drbg_aes256_new_rbg,
+    oxi_drbg_free, oxi_drbg_generate, oxi_drbg_instantiate, oxi_drbg_reseed,
+    oxi_drbg_strength_bits, oxi_entropy_on_demand_test, oxi_hash_drbg_sha256_new_rbg,
+    oxi_hash_drbg_sha384_new_rbg, oxi_hash_drbg_sha512_new_rbg, oxi_hmac_drbg_sha256_new_rbg,
+    oxi_hmac_drbg_sha384_new_rbg, oxi_hmac_drbg_sha512_new_rbg,
+};
+#[cfg(feature = "fault-injection")]
+pub use test_api::{
+    oxi_test_corrupt_next_key, oxi_test_fail_next_alloc, oxi_test_hold_busy,
+    oxi_test_last_freed_bytes_zero, oxi_test_poison_entropy, oxi_test_set_seed_stream,
+};
 
 use crate::error::{OxiResult as R, status_kdf, status_module};
 use crate::handle::OxiHandle;
@@ -281,6 +296,10 @@ pub extern "C" fn oxi_abi_version() -> c_int {
 /// No pointers; always safe to call.
 #[unsafe(no_mangle)]
 pub extern "C" fn oxi_init(profile: c_int) -> c_int {
+    // A library built for fault-injection testing arms the seams named in
+    // `OXI_FAULT`; a value it cannot arm is ignored.
+    #[cfg(feature = "fault-injection")]
+    let _ = oxicrypt_drbg::seam::arm_from_env(std::env::var("OXI_FAULT").ok().as_deref());
     let p = match profile {
         0 => oxicrypt_module::AlgorithmProfile::Unrestricted,
         1 => oxicrypt_module::AlgorithmProfile::Cnsa2,

@@ -1,9 +1,8 @@
 //! C ABI error codes and mapping from per-crate Error types.
 //!
-//! Each Rust error variant maps to a distinct `OxiResult` discriminant.
+//! Each Rust error variant maps to an `OxiResult` discriminant.
 //! `OxiResult::Internal = 255` is reserved for "should-never-happen"
-//! cases. The mapping is exhaustive, so two failure modes never share a
-//! code.
+//! cases.
 //!
 //! Discriminants are banded by source crate so reviewers can locate
 //! the originating failure mode at a glance:
@@ -13,13 +12,32 @@
 //! - 8-9:         `oxicrypt_drbg::DrbgError` variants
 //! - 10-12:       FFI-layer errors (null pointer, buffer too small, output too long)
 //! - 20-27:       `oxicrypt_aes::ModeError` variants
-//! - 28-30:       appended after the bands above: `IntegrityUnverified`
+//! - 28-30:       `IntegrityUnverified`
 //!   (`oxicrypt_module::Error`), then the DRBG minimum-length refusals
 //!   `EntropyInputTooShort` and `NonceTooShort`
+//! - 31-33:       random bit generator refusals: `RbgTooWeak`
+//!   (`oxicrypt_module::Error::RbgTooWeak`), then `Busy` and
+//!   `EntropyUnavailable` (`oxicrypt_module::RbgError` variants; `Busy` is
+//!   also returned by a DRBG handle another thread is using)
 //! - 255:         Catch-all `Internal` (reserved)
 //!
-//! Future per-crate error types (sha, hmac, ecdsa, etc.) extend
-//! this banded space as their FFI wrappers land in subsequent chunks.
+//! Four codes are mapped but returned by no exported function at ABI 2:
+//! `ReseedRequired = 9`, `EntropyInputTooShort = 29`, `NonceTooShort = 30`
+//! and `RbgTooWeak = 31`.
+//!
+//! `RbgTooWeak` is unreachable because no exported function hands an
+//! `OxiDrbg` to a service that checks its strength, and the one typed DRBG
+//! handle the services take, HMAC_DRBG-SHA-256, is instantiated at 256
+//! bits, above every service's strength requirement.
+//!
+//! The other three are unreachable because the C interface takes no
+//! entropy input or nonce. Every C DRBG instantiate and reseed function
+//! draws from the module's seed path, which supplies a full-length
+//! entropy input and nonce, and a module-seeded DRBG reseeds itself at
+//! its reseed interval. The forms that return these codes take a
+//! caller-supplied entropy input and nonce: the `oxicrypt_drbg` testing
+//! interface used by the CAVP tests (its `testing-interfaces` feature),
+//! which this crate does not call.
 
 use core::ffi::c_int;
 
@@ -59,11 +77,16 @@ pub enum OxiResult {
     // DRBG errors (oxicrypt_drbg::DrbgError) — state-machine preconditions
     // distinct from `InvalidInput = 5` (input bounds) so callers can
     // structure error-handling correctly: Uninstantiated triggers an
-    // `instantiate` call; ReseedRequired triggers a `reseed` call.
+    // `instantiate` call.
     /// `generate` (or `reseed`) called before `instantiate` succeeded on this DRBG handle.
     Uninstantiated = 8,
-    /// `reseed_counter` reached the SP 800-90A Table 3 reseed-interval bound; caller MUST
-    /// call `reseed` with fresh entropy before `generate` will return more output.
+    /// The DRBG's reseed counter passed the SP 800-90A Table 3 reseed
+    /// interval and the DRBG cannot reseed itself. No exported function
+    /// returns it at ABI 2: every C DRBG handle is seeded by the module and
+    /// reseeds itself at the interval. It is returned by `generate` on an
+    /// `oxicrypt_drbg` instance instantiated through the testing interface
+    /// with a caller-supplied entropy input, which does not reseed itself at
+    /// the interval.
     ReseedRequired = 9,
 
     // FFI-layer errors
@@ -87,13 +110,12 @@ pub enum OxiResult {
     ///
     /// Covers BOTH AEAD tag verification (AES-GCM, AES-CCM, AES-KW, AES-KWP)
     /// AND signature verification (ECDSA `Ok(false)` from FIPS 186-5 §6.4.2,
-    /// and future RSA-PSS / EdDSA / ML-DSA / SLH-DSA / LMS / XMSS verify
-    /// fns). The semantic is uniform: "the cryptographic verification
-    /// primitive ran cleanly but the result disagrees with the claimed
-    /// value." Distinct from [`OxiResult::InvalidInput`] (= 5), which
-    /// signals input that failed to decode BEFORE any cryptographic
-    /// comparison. AEAD plaintext output buffer contents are UNDEFINED
-    /// when this code is returned.
+    /// and the other `_verify` functions). The semantic is uniform: "the
+    /// cryptographic verification primitive ran cleanly but the result
+    /// disagrees with the claimed value." Distinct from
+    /// [`OxiResult::InvalidInput`] (= 5), which signals input that failed
+    /// to decode BEFORE any cryptographic comparison. AEAD plaintext
+    /// output buffer contents are UNDEFINED when this code is returned.
     TagMismatch = 22,
     /// Input/output buffer length pair is mismatched (e.g. plaintext.len() != ciphertext.len()).
     LengthMismatch = 23,
@@ -109,21 +131,41 @@ pub enum OxiResult {
     /// integrity test, so it was never verified against its integrity
     /// signature. Distinct from `SelfTestFailed`: no test failed, none ran.
     IntegrityUnverified = 28,
-    /// A DRBG `_instantiate` or `_reseed` was given an entropy input shorter
-    /// than the minimum for the instantiated security strength (SP 800-90A
-    /// Rev. 1 Tables 2 and 3). Distinct from `InvalidInput = 5`, which an
-    /// over-long input returns, as does CTR_DRBG `_no_df` seed material
-    /// that is not exactly `seedlen` bytes.
+    /// A DRBG instantiate or reseed was given an entropy input shorter than
+    /// the minimum for the instantiated security strength (SP 800-90A Rev. 1
+    /// Tables 2 and 3). No exported function returns it at ABI 2: the C
+    /// interface takes no entropy input, and the module's seed path supplies
+    /// a full-length one. It is returned by the `oxicrypt_drbg` testing
+    /// interface's caller-entropy forms: HMAC_DRBG and Hash_DRBG
+    /// `instantiate` and `reseed`, and CTR_DRBG `instantiate_df` and
+    /// `reseed_df`. Distinct from `InvalidInput = 5`, which an over-long
+    /// input returns, as does CTR_DRBG `instantiate_no_df` or `reseed_no_df`
+    /// seed material that is not exactly `seedlen` bytes.
     EntropyInputTooShort = 29,
-    /// A DRBG `_instantiate` was given a nonce shorter than half the
+    /// A DRBG instantiate was given a nonce shorter than half the
     /// instantiated security strength, the module's nonce floor
     /// (permitted by SP 800-90A Rev. 1 §9.1 step 8; a shorter nonce that
-    /// would meet only the uniqueness condition of §8.6.7 is refused).
+    /// would meet only the uniqueness condition of §8.6.7 is refused). No
+    /// exported function returns it at ABI 2: the C interface takes no
+    /// nonce, and the module's seed path supplies a full-length one. It is
+    /// returned by the `oxicrypt_drbg` testing interface's caller-nonce
+    /// forms: HMAC_DRBG and Hash_DRBG `instantiate`, and CTR_DRBG
+    /// `instantiate_df`.
     NonceTooShort = 30,
+    /// The random bit generator handed to a service has a security strength
+    /// below what that service requires. Pass a DRBG of a higher strength.
+    RbgTooWeak = 31,
+    /// The DRBG handle is in use by another call, or the module's seed path
+    /// was held by another thread for longer than its wait bound. Nothing
+    /// was changed; retry after a pause.
+    Busy = 32,
+    /// The entropy source failed while seeding or testing. The module has
+    /// entered its error state, and every later service returns
+    /// `NotOperational = 1` until the process restarts.
+    EntropyUnavailable = 33,
 
-    /// Catch-all for "should-never-happen" cases. New error sources should
-    /// be paired with new `OxiResult` variants in the same change set —
-    /// reaching `Internal` is a flag for reviewer attention.
+    /// Catch-all for "should-never-happen" cases, including an error variant
+    /// this mapping does not name.
     Internal = 255,
 }
 
@@ -146,11 +188,18 @@ impl From<oxicrypt_module::Error> for OxiResult {
             oxicrypt_module::Error::IntegrityNotAttested => OxiResult::IntegrityUnverified,
             oxicrypt_module::Error::EntropyInputTooShort => OxiResult::EntropyInputTooShort,
             oxicrypt_module::Error::NonceTooShort => OxiResult::NonceTooShort,
+            oxicrypt_module::Error::Rbg(rbg) => match rbg {
+                oxicrypt_module::RbgError::Uninstantiated => OxiResult::Uninstantiated,
+                oxicrypt_module::RbgError::ReseedRequired => OxiResult::ReseedRequired,
+                oxicrypt_module::RbgError::RequestTooLong => OxiResult::OutputTooLong,
+                oxicrypt_module::RbgError::EntropyUnavailable => OxiResult::EntropyUnavailable,
+                oxicrypt_module::RbgError::NotOperational => OxiResult::NotOperational,
+                oxicrypt_module::RbgError::Busy => OxiResult::Busy,
+            },
+            oxicrypt_module::Error::RbgTooWeak => OxiResult::RbgTooWeak,
             // `oxicrypt_module::Error` is non-exhaustive, so a variant it
             // adds later reaches this arm and reports `Internal` until it is
-            // mapped above. No test here can see such a variant; the test
-            // `module_error_maps_to_distinct_oxi_results` checks only the eleven
-            // variants it names.
+            // mapped above.
             _ => OxiResult::Internal,
         }
     }
@@ -229,15 +278,6 @@ impl From<oxicrypt_drbg::DrbgError> for OxiResult {
     }
 }
 
-/// Convert a `Result<(), oxicrypt_drbg::DrbgError>` into the C `int` status code.
-#[allow(dead_code)] // call sites land in drbg.rs alongside this impl
-pub(crate) fn status_drbg(r: Result<(), oxicrypt_drbg::DrbgError>) -> c_int {
-    match r {
-        Ok(()) => OxiResult::Ok as c_int,
-        Err(e) => OxiResult::from(e) as c_int,
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -305,6 +345,37 @@ mod tests {
             assert_ne!(got, OxiResult::Internal);
             assert_eq!(got, expected);
         }
+    }
+
+    #[test]
+    fn rbg_error_codes_map() {
+        use oxicrypt_module::{Error, RbgError};
+        let mappings = [
+            (Error::Rbg(RbgError::Uninstantiated), 8),
+            (Error::Rbg(RbgError::ReseedRequired), 9),
+            (Error::Rbg(RbgError::RequestTooLong), 12),
+            (Error::Rbg(RbgError::EntropyUnavailable), 33),
+            (Error::Rbg(RbgError::NotOperational), 1),
+            (Error::Rbg(RbgError::Busy), 32),
+            (Error::RbgTooWeak, 31),
+        ];
+        assert_eq!(mappings.len(), 7);
+        for (error, code) in mappings {
+            assert_eq!(OxiResult::from(error) as i32, code, "{error:?}");
+        }
+        assert_eq!(OxiResult::RbgTooWeak as i32, 31);
+        assert_eq!(OxiResult::Busy as i32, 32);
+        assert_eq!(OxiResult::EntropyUnavailable as i32, 33);
+        // A DRBG input over its length bound is `InvalidInput`, and a
+        // request over the per-request limit is `OutputTooLong`.
+        assert_eq!(
+            OxiResult::from(oxicrypt_drbg::DrbgError::InputTooLong) as i32,
+            5
+        );
+        assert_eq!(
+            OxiResult::from(oxicrypt_drbg::DrbgError::RequestTooLong) as i32,
+            12
+        );
     }
 
     #[test]

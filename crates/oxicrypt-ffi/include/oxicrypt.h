@@ -154,6 +154,23 @@ typedef enum {
    */
   OXI_RESULT_NONCE_TOO_SHORT = 30,
   /*
+   The random bit generator handed to a service has a security strength
+   below what that service requires. Pass a DRBG of a higher strength.
+   */
+  OXI_RESULT_RBG_TOO_WEAK = 31,
+  /*
+   The DRBG handle is in use by another call, or the module's seed path
+   was held by another thread for longer than its wait bound. Nothing
+   was changed; retry after a pause.
+   */
+  OXI_RESULT_BUSY = 32,
+  /*
+   The entropy source failed while seeding or testing. The module has
+   entered its error state, and every later service returns
+   `NotOperational = 1` until the process restarts.
+   */
+  OXI_RESULT_ENTROPY_UNAVAILABLE = 33,
+  /*
    Catch-all for "should-never-happen" cases. New error sources should
    be paired with new `OxiResult` variants in the same change set —
    reaching `Internal` is a flag for reviewer attention.
@@ -187,6 +204,24 @@ typedef struct OxiCtrDrbgAes192 OxiCtrDrbgAes192;
 
  */
 typedef struct OxiCtrDrbgAes256 OxiCtrDrbgAes256;
+
+/*
+ Opaque handle to one of the nine SP 800-90A DRBGs, seeded by the module.
+
+ After fork, the child inherits a copy of every handle. The copy is refused in the child with
+ `InvalidInput = 5` until the child either constructs a new handle or re-instantiates the
+ inherited one with `oxi_drbg_instantiate`, so parent and child never produce the same output.
+ The check compares the process id recorded at instantiation with the caller's, so a
+ process id reused after the parent exits is not detected.
+
+ A call that finds the handle in use by another call returns `Busy = 32` and changes nothing:
+ retry after a pause. Calls on one handle from several threads are otherwise safe.
+
+ Calling `oxi_drbg_free` on a handle another thread is using is undefined behaviour, as for
+ every handle.
+
+ */
+typedef struct OxiDrbg OxiDrbg;
 
 /*
  Opaque ECDSA P-256 private-key handle that has passed an IG 10.3.A
@@ -5885,6 +5920,211 @@ int oxi_ctr_drbg_aes256_generate_df(OxiCtrDrbgAes256 *handle,
                                     uintptr_t additional_input_len,
                                     uint8_t *out,
                                     uintptr_t out_len);
+
+/*
+ Construct an uninstantiated handle holding HMAC_DRBG with SHA-256.
+
+ Writes the handle to `*out` and returns `Ok = 0`. The caller owns it and
+ releases it with `oxi_drbg_free`. Instantiate it with
+ `oxi_drbg_instantiate` before generating: until then `oxi_drbg_generate`,
+ `oxi_drbg_reseed` and `oxi_drbg_strength_bits` return
+ `Uninstantiated = 8`.
+
+ Returns `NullPointer = 10` when `out` is NULL, and `Internal = 255`
+ when the allocation fails, leaving `*out` unchanged in both cases.
+
+ # Safety
+
+ `out` must be NULL or valid for a write of one pointer.
+ */
+int oxi_hmac_drbg_sha256_new_rbg(OxiDrbg **out);
+
+/*
+ Construct an uninstantiated handle holding HMAC_DRBG with SHA-384.
+ Otherwise as `oxi_hmac_drbg_sha256_new_rbg`.
+
+ # Safety
+
+ `out` must be NULL or valid for a write of one pointer.
+ */
+int oxi_hmac_drbg_sha384_new_rbg(OxiDrbg **out);
+
+/*
+ Construct an uninstantiated handle holding HMAC_DRBG with SHA-512.
+ Otherwise as `oxi_hmac_drbg_sha256_new_rbg`.
+
+ # Safety
+
+ `out` must be NULL or valid for a write of one pointer.
+ */
+int oxi_hmac_drbg_sha512_new_rbg(OxiDrbg **out);
+
+/*
+ Construct an uninstantiated handle holding Hash_DRBG with SHA-256.
+ Otherwise as `oxi_hmac_drbg_sha256_new_rbg`.
+
+ # Safety
+
+ `out` must be NULL or valid for a write of one pointer.
+ */
+int oxi_hash_drbg_sha256_new_rbg(OxiDrbg **out);
+
+/*
+ Construct an uninstantiated handle holding Hash_DRBG with SHA-384.
+ Otherwise as `oxi_hmac_drbg_sha256_new_rbg`.
+
+ # Safety
+
+ `out` must be NULL or valid for a write of one pointer.
+ */
+int oxi_hash_drbg_sha384_new_rbg(OxiDrbg **out);
+
+/*
+ Construct an uninstantiated handle holding Hash_DRBG with SHA-512.
+ Otherwise as `oxi_hmac_drbg_sha256_new_rbg`.
+
+ # Safety
+
+ `out` must be NULL or valid for a write of one pointer.
+ */
+int oxi_hash_drbg_sha512_new_rbg(OxiDrbg **out);
+
+/*
+ Construct an uninstantiated handle holding CTR_DRBG with AES-128 and the
+ derivation function. Otherwise as `oxi_hmac_drbg_sha256_new_rbg`.
+
+ # Safety
+
+ `out` must be NULL or valid for a write of one pointer.
+ */
+int oxi_ctr_drbg_aes128_new_rbg(OxiDrbg **out);
+
+/*
+ Construct an uninstantiated handle holding CTR_DRBG with AES-192 and the
+ derivation function. Otherwise as `oxi_hmac_drbg_sha256_new_rbg`.
+
+ # Safety
+
+ `out` must be NULL or valid for a write of one pointer.
+ */
+int oxi_ctr_drbg_aes192_new_rbg(OxiDrbg **out);
+
+/*
+ Construct an uninstantiated handle holding CTR_DRBG with AES-256 and the
+ derivation function. Otherwise as `oxi_hmac_drbg_sha256_new_rbg`.
+
+ # Safety
+
+ `out` must be NULL or valid for a write of one pointer.
+ */
+int oxi_ctr_drbg_aes256_new_rbg(OxiDrbg **out);
+
+/*
+ Instantiate the handle's DRBG from the module's seed path, with an
+ optional personalization string, replacing any earlier instantiation.
+
+ `perso` may be NULL when `perso_len` is 0. A personalization string
+ longer than the DRBG accepts returns `InvalidInput = 5` before any draw.
+ A failed draw returns `Busy = 32` (retry after a pause) or
+ `EntropyUnavailable = 33`, and leaves the handle as it was.
+
+ On a handle inherited across fork, this is the call that makes it usable
+ in the child: it releases the busy flag, which a thread of the parent may
+ have held at the fork, instantiates afresh and records the child's
+ process id.
+
+ # Safety
+
+ `h` must be NULL or a live handle from a `_new_rbg` function. A non-NULL
+ `perso` must be valid for reads of `perso_len` bytes.
+ */
+int oxi_drbg_instantiate(OxiDrbg *h, const uint8_t *perso, uintptr_t perso_len);
+
+/*
+ Reseed the handle's DRBG from the module's seed path, with optional
+ additional input.
+
+ `additional` may be NULL when `additional_len` is 0. Additional input
+ longer than the DRBG accepts returns `InvalidInput = 5` before any draw.
+ A failed draw returns `Busy = 32` (retry after a pause) or
+ `EntropyUnavailable = 33`.
+
+ # Safety
+
+ `h` must be NULL or a live handle from a `_new_rbg` function. A non-NULL
+ `additional` must be valid for reads of `additional_len` bytes.
+ */
+int oxi_drbg_reseed(OxiDrbg *h, const uint8_t *additional, uintptr_t additional_len);
+
+/*
+ Fill `out` with `out_len` bytes from the handle's DRBG, with optional
+ additional input.
+
+ `additional` may be NULL when `additional_len` is 0; additional input
+ longer than the DRBG accepts from a reseed returns `InvalidInput = 5`.
+ A request above 65536 bytes returns `OutputTooLong = 12`. A handle that
+ reaches its reseed interval reseeds itself from the seed path first, and
+ a failed draw then returns `Busy = 32` or `EntropyUnavailable = 33`.
+ `out` is written only on success, and must not overlap `additional`.
+
+ # Safety
+
+ `h` must be NULL or a live handle from a `_new_rbg` function. `out` must
+ be valid for writes of `out_len` bytes. A non-NULL `additional` must be
+ valid for reads of `additional_len` bytes.
+ */
+int oxi_drbg_generate(OxiDrbg *h,
+                      const uint8_t *additional,
+                      uintptr_t additional_len,
+                      uint8_t *out,
+                      uintptr_t out_len);
+
+/*
+ Write the security strength, in bits, of the handle's DRBG to `*out`.
+
+ Returns `Uninstantiated = 8` for a handle never instantiated.
+
+ # Safety
+
+ `h` must be NULL or a live handle from a `_new_rbg` function. `out` must
+ be NULL or valid for a write of one `uint32_t`.
+ */
+int oxi_drbg_strength_bits(const OxiDrbg *h, uint32_t *out);
+
+/*
+ Free a handle. NULL is a no-op.
+
+ The held DRBG's key material is wiped, then every byte of the handle,
+ before its memory is released. Freeing a handle another thread is using,
+ or freeing one twice, is undefined behaviour.
+
+ # Safety
+
+ `h` must be NULL or a live handle from a `_new_rbg` function that no
+ other thread is using.
+ */
+void oxi_drbg_free(OxiDrbg *h);
+
+/*
+ Run the entropy source's on-demand test on the module's seed path.
+
+ On the jitter path this runs the source's SP 800-90B on-demand health
+ tests; on the operating-system path it performs one fill. The first call
+ in a process decides the seed path, as the first draw does.
+
+ Returns `Ok = 0`, `NotOperational = 1`, `Busy = 32` (retry after a
+ pause) or `EntropyUnavailable = 33` (the test failed and the module has
+ entered its error state). When `label_out` is not NULL, on `0` and `33`
+ it is set to a static NUL-terminated label naming the seed path: on `0`
+ the path just tested; on `33` the label an earlier successful call in
+ this process reported, or `undecided` if there was none. The string must
+ not be freed.
+
+ # Safety
+
+ `label_out` must be NULL or valid for a write of one pointer.
+ */
+int oxi_entropy_on_demand_test(const char **label_out);
 
 #ifdef __cplusplus
 }  // extern "C"

@@ -701,6 +701,7 @@ dependencies = [
  "oxicrypt-ml-dsa",
  "oxicrypt-ml-kem",
  "oxicrypt-module",
+ "oxicrypt-platform",
  "oxicrypt-rsa",
  "oxicrypt-sha",
  "oxicrypt-slh-dsa",
