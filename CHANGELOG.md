@@ -13,6 +13,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- The module seeds every DRBG itself: from the in-boundary SP 800-90B jitter source on an assessed operational environment, and from the operating system's random generator elsewhere, decided once per process; `oxi selftest` runs the source's on-demand test, prints an `entropy source` line naming the path in use, and counts it among the self-tests.
+- C handle `OxiDrbg` for all nine SP 800-90A DRBGs, created by `oxi_hmac_drbg_sha256_new_rbg`, `oxi_hmac_drbg_sha384_new_rbg`, `oxi_hmac_drbg_sha512_new_rbg`, `oxi_hash_drbg_sha256_new_rbg`, `oxi_hash_drbg_sha384_new_rbg`, `oxi_hash_drbg_sha512_new_rbg`, `oxi_ctr_drbg_aes128_new_rbg`, `oxi_ctr_drbg_aes192_new_rbg` and `oxi_ctr_drbg_aes256_new_rbg`, and used through `oxi_drbg_instantiate`, `oxi_drbg_reseed`, `oxi_drbg_generate`, `oxi_drbg_strength_bits` and `oxi_drbg_free`; a call that finds the handle in use returns `Busy = 32` and changes nothing.
+- `oxi_hmac_drbg_sha256_instantiate_from_module` and `oxi_hmac_drbg_sha256_reseed_from_module`, with the same pair for the SHA-384 and SHA-512 HMAC_DRBGs, the three Hash_DRBGs and the three CTR_DRBGs, each taking an optional personalization string or additional input and drawing the entropy from the module.
+- `oxi_entropy_on_demand_test` runs the entropy source's on-demand test and reports a label naming the seed path.
+- Result codes `OXI_RESULT_RBG_TOO_WEAK = 31`, `OXI_RESULT_BUSY = 32` and `OXI_RESULT_ENTROPY_UNAVAILABLE = 33`; `EntropyUnavailable` leaves the module in its error state.
+- A DRBG handle instantiated in another process, as after `fork`, returns `InvalidInput = 5` until it is instantiated again with `_instantiate_from_module`.
+- `oxicrypt-drbg` instantiates and reseeds every DRBG type from the module's seed path and exports `entropy_on_demand_test`; the forms taking caller-supplied entropy are behind the `testing-interfaces` feature.
+- The `oxicrypt` Rust binding crate provides `Drbg`, `DrbgKind` and `Module::drbg` for the nine DRBGs, `Module::entropy_on_demand_test`, and the `Error` variants `RbgTooWeak`, `Busy` and `EntropyUnavailable`.
+- The `oxicrypt-platform` crate, inside the module boundary, holds the module's operating-system random generator call, process id and the process-aware spin cell behind the DRBG seed path.
+- The `Rbg` trait in `oxicrypt-module`, with `fill` and `strength_bits`, is the one interface through which services take randomness; all nine DRBG types in `oxicrypt-drbg` implement it and provide `instantiate_from_module` and `reseed_from_module`. `RbgError` states why a generator produced no output, and `Error::Rbg` and `Error::RbgTooWeak` carry the refusals.
+- `oxicrypt_module::require_operational_for_output` checks the module state immediately before a service writes output, so a module that entered its error state during the call writes nothing.
 - The release workflow extracts each CLI archive it builds and runs `oxi --integrity` and `oxi selftest --quiet` from the extracted bundle, requiring both pass lines and the leg's verify-key fingerprint. (#300)
 - The release workflow runs the README's C and Python examples against each extracted library archive on the Linux, macOS and Windows legs, requiring the SHA-256 of `"abc"` from each. (#300)
 - Loader examples in Go (cgo), Node.js (`koffi`), Java (Foreign Function & Memory API) and C# (P/Invoke) under `examples/`, each with a `run.sh <bundle-dir>`; the release workflow runs each one whose toolchain the leg's runner has, and fails if one the leg lists as required cannot run. (#301)
@@ -22,7 +33,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- The shared library's file names are `liboxicrypt_ffi.so.2` on Linux and `liboxicrypt_ffi.2.dylib` on macOS, and the `oxicrypt` crate requires a library reporting ABI 2.
+- A DRBG's `generate` reseeds from the module at the SP 800-90A reseed interval, so `ReseedRequired = 9` is not returned.
+- ECDSA P-256 and P-384 key generation and signing, ECDH and finite-field DH key generation, RSA key generation, OAEP encryption and PSS signing, and Ed25519 key generation take any `Rbg` where they took an `HmacDrbgSha256`.
+- `oxi rand` draws from a DRBG the module seeds from its own seed path.
+- `oxicrypt-integrity-sign` key generation seeds its DRBG from the module's seed path.
 - `scripts/git-hooks/pre-push` run with nothing on stdin scans `HEAD`, and runs no scan when every pushed ref is a deletion. (#299)
+- Once a self-test places the module in its error state, `oxi selftest` reports every later self-test as not run (the rest of its group by name, later groups by count), leaves them out of the count, and exits 1.
+
+### Removed
+
+- **Breaking:** the C DRBG instantiate and reseed functions that took caller-supplied entropy are removed: `oxi_hmac_drbg_*_instantiate` and `_reseed`, `oxi_hash_drbg_*_instantiate` and `_reseed`, and the CTR_DRBG `_instantiate_no_df`, `_instantiate_df`, `_reseed_no_df`, `_reseed_df` and `_generate_no_df` functions. The module seeds every DRBG itself; the `OxiDrbg` handle and the `_from_module` functions replace them, and `oxi_abi_version()` returns 2.
+- **Breaking:** the `oxicrypt` Rust binding crate does not provide `HmacDrbgSha256`, `Module::hmac_drbg_sha256` or `DrbgSeed`; use `Drbg` through `Module::drbg`.
 
 ## [0.26.1] - 2026-11-14
 
