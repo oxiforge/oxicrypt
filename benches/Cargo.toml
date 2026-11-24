@@ -19,8 +19,8 @@ workspace = true
 # the parallel build (`cargo bench -p oxicrypt-bench --features parallel`).
 # Off by default — the default bench build mirrors the CMVP validation-target config.
 default = []
-# The entropy/maxwell benches are OPT-IN, and that is load-bearing rather than
-# tidiness. Cargo unifies features across a single invocation, so a
+# The entropy/maxwell benches are opt-in. Cargo unifies features across a
+# single invocation, so a
 # non-optional `oxicrypt-entropy = { features = ["raw-counter"] }` here would
 # enable raw-counter for EVERY `--workspace` command — re-arming the live
 # jitter tests that `scripts/git-hooks/pre-push` deliberately excludes (their
@@ -66,7 +66,7 @@ oxicrypt-xmss = { workspace = true }
 # plain dependency. `raw-counter` is required by the bench itself, not
 # incidental: `NoiseSource` is sealed and the mock sources are
 # `#[cfg(test)]`-only, so the real jitter source is the only one a bench can
-# construct, and it is also the only one that measures what ISC-88 asks about.
+# construct.
 oxicrypt-entropy = { workspace = true, optional = true }
 oxicrypt-maxwell = { workspace = true, optional = true }
 criterion = { version = "0.5", features = ["html_reports"] }
@@ -120,6 +120,10 @@ name = "power_up"
 harness = false
 
 [[bench]]
+name = "drbg_first_instantiate"
+harness = false
+
+[[bench]]
 name = "conditioned_output"
 harness = false
 required-features = ["entropy-bench"]
@@ -133,6 +137,10 @@ required-features = ["entropy-bench"]
 name = "maxwell"
 harness = false
 required-features = ["entropy-bench"]
+
+[[bin]]
+name = "drbg-first-instantiate-probe"
+path = "src/bin/drbg_first_instantiate_probe.rs"
 
 [[example]]
 name = "gen_noniid"
