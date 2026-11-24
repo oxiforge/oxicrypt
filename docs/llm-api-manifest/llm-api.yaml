@@ -122,13 +122,15 @@ modules:
     depends_on: [oxicrypt-module]
 
   - name: oxicrypt-drbg
-    description: CTR_DRBG (AES-128/192/256), Hash_DRBG and HMAC_DRBG (SHA-256/384/512) per SP 800-90A Rev. 1.
+    description: CTR_DRBG (AES-128/192/256), Hash_DRBG and HMAC_DRBG (SHA-256/384/512) per SP 800-90A Rev. 1, where every DRBG can be seeded by the module itself from an in-boundary entropy source or the operating system's generator.
     no_std: true
     depends_on:
       - oxicrypt-module
       - oxicrypt-aes
       - oxicrypt-sha
       - oxicrypt-hmac
+      - oxicrypt-entropy
+      - oxicrypt-platform
 
   - name: oxicrypt-kdf
     description: SP 800-108r1 KBKDF (counter/feedback/double-pipeline), HKDF (SP 800-56Cr2), and PBKDF2 (SP 800-132).
@@ -724,6 +726,58 @@ types:
       contains_secret: true
       zeroize_on_drop: true
       constant_time: true
+
+  - name: SeedPathReport
+    module: oxicrypt-drbg
+    kind: struct
+    description: What the seed path reports about itself.
+    fields:
+      - name: path
+        type: "&'static str"
+        description: "\"assessed\" or \"operating-system\"."
+      - name: label
+        type: "&'static str"
+        description: The label every surface uses for the path, for example "jitter source, assessed row OE-1".
+
+  - name: "testing::FixedStream"
+    module: oxicrypt-drbg
+    kind: struct
+    description: An Rbg that serves a fixed byte string in order and returns RequestTooLong, consuming nothing, for a request the remaining bytes cannot serve in full; available with the fault-injection feature or in the crate's own tests.
+
+  - name: "seam::FaultClass"
+    module: oxicrypt-drbg
+    kind: enum
+    description: A class of entropy failure that seam::fail_next can simulate; available with the fault-injection feature or in the crate's own tests.
+    variants:
+      - name: StartupHealth
+        description: The pipeline's startup health tests fail.
+      - name: ConditionerKat
+        description: The pipeline's conditioning known-answer test fails.
+      - name: ContinuousHealth
+        description: A continuous health test fails while a block is drawn.
+      - name: OnDemand
+        description: The on-demand test fails.
+      - name: OsGenerator
+        description: The operating system's generator fails.
+      - name: SecondDraw
+        description: The second draw of an instantiate fails.
+
+  - name: "seam::ArmError"
+    module: oxicrypt-drbg
+    kind: enum
+    description: Why seam::arm_from_env refused its value; available with the fault-injection feature or in the crate's own tests.
+    variants:
+      - name: UnknownSeam
+        description: A comma-separated entry names no seam.
+      - name: BadHex
+        description: The seed-stream= value is not an even-length hex string.
+      - name: StreamTooLong
+        description: The seed-stream= value is longer than STREAM_CAPACITY bytes.
+
+  - name: "seam::DrawFn"
+    module: oxicrypt-drbg
+    kind: alias
+    description: "A replacement for the seed path's draw, with signature fn(&mut [u8]) -> Result<(), RbgError>; available with the fault-injection feature or in the crate's own tests."
 
   - name: DrbgError
     module: oxicrypt-drbg
@@ -5040,6 +5094,249 @@ functions:
       handles_secrets: true
       fips_approved: true
       fips_gate: Operational
+
+  - name: entropy_on_demand_test
+    module: oxicrypt-drbg
+    description: "Runs the entropy source's on-demand test and a fill through the seed path, returns NotOperational without touching the entropy source unless the module is Operational, and enters the module error state when the test or the fill fails."
+    signature: "pub fn entropy_on_demand_test() -> Result<SeedPathReport, Error>"
+    returns:
+      type: "Result<SeedPathReport, Error>"
+      description: "The seed path report on success, NotOperational without touching the source unless the module is Operational, Rbg(EntropyUnavailable) with the module in its error state when the test or the fill fails, or Rbg(Busy) when the seed path's lock spin bound was exhausted."
+      error_variants:
+        - name: NotOperational
+          condition: "The module is in any state but Operational; the entropy source is not touched."
+        - name: Rbg
+          condition: "EntropyUnavailable when the test or the fill fails (the module has then entered its error state), or Busy when the seed path's lock spin bound was exhausted."
+    thread_safety: thread-safe
+    security:
+      constant_time: false
+      handles_secrets: false
+      fips_approved: false
+
+  - name: "seam::clear_all"
+    module: oxicrypt-drbg
+    description: "Resets every seam, empties the seed-path cell so the next draw decides the path again, and zeroes the counters; available with the fault-injection feature or in the crate's own tests."
+    signature: "pub fn clear_all()"
+    returns:
+      type: "()"
+      description: "Nothing."
+    thread_safety: thread-safe
+    security:
+      constant_time: false
+      handles_secrets: false
+      fips_approved: false
+
+  - name: "seam::set_get_entropy"
+    module: oxicrypt-drbg
+    description: "Installs draw as the seed path's draw; available with the fault-injection feature or in the crate's own tests."
+    signature: "pub fn set_get_entropy(draw: DrawFn)"
+    parameters:
+      - name: draw
+        type: "DrawFn"
+        direction: in
+        description: "The replacement draw."
+    returns:
+      type: "()"
+      description: "Nothing."
+    thread_safety: thread-safe
+    security:
+      constant_time: false
+      handles_secrets: false
+      fips_approved: false
+
+  - name: "seam::draw_count"
+    module: oxicrypt-drbg
+    description: "The number of seed-path draws made, replaced or not; available with the fault-injection feature or in the crate's own tests."
+    signature: "pub fn draw_count() -> u64"
+    returns:
+      type: "u64"
+      description: "The draw count."
+    thread_safety: thread-safe
+    security:
+      constant_time: false
+      handles_secrets: false
+      fips_approved: false
+
+  - name: "seam::construction_count"
+    module: oxicrypt-drbg
+    description: "The number of seed-path states constructed, whichever path they chose; available with the fault-injection feature or in the crate's own tests."
+    signature: "pub fn construction_count() -> u64"
+    returns:
+      type: "u64"
+      description: "The construction count."
+    thread_safety: thread-safe
+    security:
+      constant_time: false
+      handles_secrets: false
+      fips_approved: false
+
+  - name: "seam::force_operating_system_path"
+    module: oxicrypt-drbg
+    description: "Makes the next seed-path decision the operating system's generator, as on a target no assessed row matches; available with the fault-injection feature or in the crate's own tests."
+    signature: "pub fn force_operating_system_path()"
+    returns:
+      type: "()"
+      description: "Nothing."
+    thread_safety: thread-safe
+    security:
+      constant_time: false
+      handles_secrets: false
+      fips_approved: false
+
+  - name: "seam::force_timer_inadequate"
+    module: oxicrypt-drbg
+    description: "While true, a matching row's timer is treated as failing the adequacy check; available with the fault-injection feature or in the crate's own tests."
+    signature: "pub fn force_timer_inadequate(on: bool)"
+    parameters:
+      - name: on
+        type: "bool"
+        direction: in
+        description: "Whether to force the failure."
+    returns:
+      type: "()"
+      description: "Nothing."
+    thread_safety: thread-safe
+    security:
+      constant_time: false
+      handles_secrets: false
+      fips_approved: false
+
+  - name: "seam::fail_next"
+    module: oxicrypt-drbg
+    description: "Arms one failure of class, consumed by the next point that checks it; available with the fault-injection feature or in the crate's own tests."
+    signature: "pub fn fail_next(class: FaultClass)"
+    parameters:
+      - name: class
+        type: "FaultClass"
+        direction: in
+        description: "The failure class to arm."
+    returns:
+      type: "()"
+      description: "Nothing."
+    thread_safety: thread-safe
+    security:
+      constant_time: false
+      handles_secrets: false
+      fips_approved: false
+
+  - name: "seam::poison_pipeline"
+    module: oxicrypt-drbg
+    description: "Poisons the seed path by arming StartupHealth and drawing, so a pipeline constructed by that draw fails its startup tests; available with the fault-injection feature or in the crate's own tests."
+    signature: "pub fn poison_pipeline() -> Result<(), RbgError>"
+    returns:
+      type: "Result<(), RbgError>"
+      description: "The draw's result."
+    thread_safety: thread-safe
+    security:
+      constant_time: false
+      handles_secrets: false
+      fips_approved: false
+
+  - name: "seam::draw"
+    module: oxicrypt-drbg
+    description: "Draws out through the seed path, as instantiate and reseed do; available with the fault-injection feature or in the crate's own tests."
+    signature: "pub fn draw(out: &mut [u8]) -> Result<(), RbgError>"
+    parameters:
+      - name: out
+        type: "&mut [u8]"
+        direction: out
+        description: "Buffer to fill."
+    returns:
+      type: "Result<(), RbgError>"
+      description: "Ok when out was filled."
+    thread_safety: thread-safe
+    security:
+      constant_time: false
+      handles_secrets: false
+      fips_approved: false
+
+  - name: "seam::park_before_output"
+    module: oxicrypt-drbg
+    description: "While true, the next service to reach its output re-check parks there until release_parked; available with the fault-injection feature or in the crate's own tests."
+    signature: "pub fn park_before_output(on: bool)"
+    parameters:
+      - name: on
+        type: "bool"
+        direction: in
+        description: "Whether to arm the park."
+    returns:
+      type: "()"
+      description: "Nothing."
+    thread_safety: thread-safe
+    security:
+      constant_time: false
+      handles_secrets: false
+      fips_approved: false
+
+  - name: "seam::release_parked"
+    module: oxicrypt-drbg
+    description: "Releases a service parked at its output re-check; available with the fault-injection feature or in the crate's own tests."
+    signature: "pub fn release_parked()"
+    returns:
+      type: "()"
+      description: "Nothing."
+    thread_safety: thread-safe
+    security:
+      constant_time: false
+      handles_secrets: false
+      fips_approved: false
+
+  - name: "seam::is_parked"
+    module: oxicrypt-drbg
+    description: "Whether a service is parked at its output re-check; available with the fault-injection feature or in the crate's own tests."
+    signature: "pub fn is_parked() -> bool"
+    returns:
+      type: "bool"
+      description: "True while a service is parked."
+    thread_safety: thread-safe
+    security:
+      constant_time: false
+      handles_secrets: false
+      fips_approved: false
+
+  - name: "seam::corrupt_next_key_armed"
+    module: oxicrypt-drbg
+    description: "Whether corrupt-next-key was armed through arm_from_env; available with the fault-injection feature or in the crate's own tests."
+    signature: "pub fn corrupt_next_key_armed() -> bool"
+    returns:
+      type: "bool"
+      description: "True when armed."
+    thread_safety: thread-safe
+    security:
+      constant_time: false
+      handles_secrets: false
+      fips_approved: false
+
+  - name: "seam::slow_write_armed"
+    module: oxicrypt-drbg
+    description: "Whether slow-write was armed through arm_from_env; available with the fault-injection feature or in the crate's own tests."
+    signature: "pub fn slow_write_armed() -> bool"
+    returns:
+      type: "bool"
+      description: "True when armed."
+    thread_safety: thread-safe
+    security:
+      constant_time: false
+      handles_secrets: false
+      fips_approved: false
+
+  - name: "seam::arm_from_env"
+    module: oxicrypt-drbg
+    description: "Arms the seams named in the value of the OXI_FAULT environment variable (seed-stream=<hex>, poison-entropy, corrupt-next-key, slow-write, comma-separated); None and an empty value arm nothing; available with the fault-injection feature or in the crate's own tests."
+    signature: "pub fn arm_from_env(value: Option<&str>) -> Result<(), ArmError>"
+    parameters:
+      - name: value
+        type: "Option<&str>"
+        direction: in
+        description: "The OXI_FAULT value, read and passed in by a binary with std."
+    returns:
+      type: "Result<(), ArmError>"
+      description: "Ok when every entry was armed, or an ArmError for the first entry that cannot be armed, with entries before it staying armed."
+    thread_safety: thread-safe
+    security:
+      constant_time: false
+      handles_secrets: false
+      fips_approved: false
 
   # ── Entropy (SP 800-90B scaffolding) ──────────────────────────────
 
@@ -19852,6 +20149,12 @@ constants:
     type: "&[KatEntry]"
     value: "24 entries"
     description: Power-up KAT slice for this crate, 12 CTR_DRBG, Hash_DRBG and HMAC_DRBG known-answer tests without prediction resistance, nine with prediction resistance and three SP 800-90A health tests, passed in the tests argument of oxicrypt_module::initialize_with_tests or initialize_with_profile.
+
+  - name: "seam::STREAM_CAPACITY"
+    module: oxicrypt-drbg
+    type: usize
+    value: "4096"
+    description: "The longest stream seed-stream=<hex> can install, in bytes; available with the fault-injection feature or in the crate's own tests."
 
   - name: KATS
     module: oxicrypt-ecdsa

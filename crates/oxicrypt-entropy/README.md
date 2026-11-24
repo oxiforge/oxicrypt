@@ -1,21 +1,20 @@
 # oxicrypt-entropy
 
-SP 800-90B entropy-source scaffolding: noise-source abstraction, claimed-H pipeline, cited spec constants.
+The SP 800-90B entropy source of the oxicrypt module: a noise-source abstraction, the continuous health tests, the SHA-256 conditioner and the pipeline that runs them, which the DRBG seed path in `oxicrypt-drbg` draws from on an assessed environment.
 
-> **Phase-0 scaffolding. Read this before anything else.** This crate makes **no entropy
-> claim and no conformance claim**, and nothing in it has been assessed by any laboratory
-> or validation program. It has not been run against NIST's ESV demo server. It is also
-> **not a dependency of `oxicrypt-module` or `oxicrypt-drbg`** — the DRBGs take entropy as
-> a caller-supplied argument, so nothing in the module is seeded from it.
+> **Read this before anything else.** This crate makes **no entropy claim and no
+> conformance claim**, and nothing in it has been assessed by any laboratory or
+> validation program. On an environment listed in the seed path's assessed-environment
+> table, `oxicrypt-drbg` seeds every module DRBG from this crate's pipeline; elsewhere it
+> seeds them from the operating system's generator.
 >
-> It supplies the *shape* of an SP 800-90B entropy source — noise-source abstraction,
-> health tests, min-entropy accounting, conditioner — not an assessed one. Claimed
-> min-entropy is a required argument you must supply and justify yourself; this crate
-> will never assert one on your behalf.
+> Claimed min-entropy is a required argument of the pipeline. The seed path supplies the
+> value recorded for its assessed environment; any other caller supplies and justifies its
+> own, and this crate never asserts one on the caller's behalf.
 
 Part of [oxicrypt](https://github.com/oxiforge/oxicrypt), a cryptographic module written
-entirely in Rust. The module as a whole targets FIPS 140-3 Level 1; this crate is listed
-inside its cryptographic boundary at Phase 0, which describes where it sits, not what it
+entirely in Rust. The module as a whole targets FIPS 140-3 Level 1, and this crate is
+listed inside its cryptographic boundary, which describes where it sits, not what it
 has been validated to do.
 
 ## Documentation

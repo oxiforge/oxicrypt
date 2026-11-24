@@ -1,6 +1,6 @@
 [package]
 name = "oxicrypt-entropy"
-description = "SP 800-90B entropy-source scaffolding: noise-source abstraction, claimed-H pipeline, cited spec constants."
+description = "SP 800-90B entropy source for the oxicrypt module: jitter noise source, health tests, vetted conditioner, and the seed pipeline."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -23,10 +23,8 @@ std = []
 raw-counter = ["dep:oxicrypt-timer"]
 # Off-boundary raw-data collection tooling: the `collect` binary, the
 # streaming dataset writer, the versioned dataset layout + sha256 manifest,
-# and the resumable collection-session checkpoint. Pulls in std (fs +
-# serialization) and raw-counter (a real CPU-counter jitter source). This
-# feature is OUTSIDE the cryptographic boundary — the default and library
-# build graphs carry none of it, and `RawCollector` stays crate-private.
+# and the resumable collection-session checkpoint. This feature is OUTSIDE
+# the cryptographic boundary, and `RawCollector` stays crate-private.
 collection = [
     "std",
     "raw-counter",
@@ -35,10 +33,7 @@ collection = [
     "dep:oxicrypt-xof",
 ]
 # rand_core 0.9 compatibility: expose the pipeline's vetted conditioned output
-# as a standard fallible `rand_core::TryRngCore` generator. Default-off and
-# `no_std`-clean — `rand_core` is pulled with `default-features = false`, so
-# this feature adds NO std dependency (unlike `std`/`collection`), keeping the
-# `--no-default-features --features rand-core` build a pure `no_std` graph.
+# as a standard fallible `rand_core::TryRngCore` generator.
 rand-core = ["dep:rand_core"]
 
 [dependencies]
@@ -50,17 +45,15 @@ oxicrypt-integrity = { workspace = true, optional = true }
 oxicrypt-xof = { workspace = true, optional = true }
 oxicrypt-timer = { workspace = true, optional = true }
 oxicrypt-zeroize = { workspace = true }
-# no_std rand_core compat (default-off; see the `rand-core` feature above).
 rand_core = { version = "0.9", optional = true, default-features = false }
 
 # Dev-only: prove the conditioned pipeline output can seed the module-gated
-# DRBG. A test-graph-only dep with no dependency cycle — oxicrypt-drbg
-# does not depend on oxicrypt-entropy.
+# DRBG. The normal dependency runs from oxicrypt-drbg to this crate, so this
+# dev-dependency closes a cycle; cargo permits it because a dev-dependency
+# compiles no shipped code.
 [dev-dependencies]
-oxicrypt-drbg = { path = "../oxicrypt-drbg" }
+oxicrypt-drbg = { path = "../oxicrypt-drbg", features = ["testing-interfaces"] }
 
-# The off-boundary collection binary. Builds ONLY with `--features collection`
-# (or `--all-features`); absent from the default and library build graphs.
 [[bin]]
 name = "collect"
 path = "src/bin/collect.rs"

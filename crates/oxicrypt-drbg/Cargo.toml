@@ -21,6 +21,27 @@ oxicrypt-aes = { workspace = true }
 oxicrypt-sha = { workspace = true }
 oxicrypt-hmac = { workspace = true }
 oxicrypt-zeroize = { workspace = true }
+oxicrypt-entropy = { workspace = true }
+oxicrypt-platform = { workspace = true }
+
+# The raw CPU counter is the timer of every assessed environment row, and it
+# exists only on these architectures; elsewhere the seed path draws from the
+# operating system's generator without constructing a timer.
+[target.'cfg(any(target_arch = "x86_64", target_arch = "aarch64"))'.dependencies]
+oxicrypt-entropy = { workspace = true, features = ["raw-counter"] }
+
+[features]
+default = []
+# Test seams in `oxicrypt_drbg::seam` and the `oxicrypt_drbg::testing`
+# fixed-stream generator, plus the platform crate's own seams.
+fault-injection = ["oxicrypt-platform/fault-injection"]
+# The caller-entropy instantiate and reseed forms used by the CAVP tests.
+testing-interfaces = []
+
+[[test]]
+name = "entropy_failure_os_generator"
+path = "tests/entropy_failure_os_generator.rs"
+required-features = ["fault-injection"]
 
 [package.metadata.lama]
 # Registry discovery (LAMA SPEC.md, "Package registry discovery"). Must be a

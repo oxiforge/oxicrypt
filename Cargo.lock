@@ -629,8 +629,10 @@ name = "oxicrypt-drbg"
 version = "0.26.1"
 dependencies = [
  "oxicrypt-aes",
+ "oxicrypt-entropy",
  "oxicrypt-hmac",
  "oxicrypt-module",
+ "oxicrypt-platform",
  "oxicrypt-sha",
  "oxicrypt-zeroize",
 ]

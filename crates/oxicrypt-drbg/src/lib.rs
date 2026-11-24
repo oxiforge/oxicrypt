@@ -10,10 +10,36 @@
 //! | Continuous / health tests | SP 800-90A §11.3 | [`health`] |
 //!
 //! Each DRBG exposes the standard `instantiate → reseed → generate`
-//! life cycle; prediction-resistance requests are satisfied by a
-//! caller-supplied entropy input on each `generate` call (the module
-//! does not bundle an entropy source of its own — see the Security
-//! Policy for the boundary).
+//! life cycle. Every DRBG type can be instantiated and reseeded by the
+//! module itself from the seed path, which on an assessed operational
+//! environment draws from the in-boundary SP 800-90B jitter source and
+//! elsewhere from the operating system's generator, decided once per
+//! process. The forms that take caller-supplied entropy input exist for
+//! the CAVP tests, behind the `testing-interfaces` feature.
+//!
+//! # Seeding
+//!
+//! The seed path has two branches:
+//!
+//! - **Assessed:** the running target's architecture, operating system
+//!   and timer match a row of the Security Policy's §9.3.0 table and the
+//!   timer passes the construction-time adequacy check. The seed comes
+//!   from the jitter source at that row's claimed min-entropy (IG 9.3.A
+//!   scenario 1(b)), labelled `jitter source, assessed row <id>`.
+//! - **Operating system:** every other target, labelled
+//!   `operating-system generator (untested operational environment, IG
+//!   9.3.A AC2)`, with `; timer adequacy not met` appended when a matching
+//!   row's timer failed the adequacy check.
+//!
+//! The branch is decided once per process, on the first draw, and never
+//! changes. An entropy failure on either branch (a health-test,
+//! conditioning or timer failure, or a failed operating-system call) is a
+//! module failure: the module enters its error state and the draw returns
+//! [`oxicrypt_module::RbgError::EntropyUnavailable`].
+//! [`oxicrypt_module::RbgError::Busy`] means the seed path's lock spin
+//! bound was exhausted while another thread held it; nothing failed, and
+//! the caller retries after a pause. [`entropy_on_demand_test`] runs the
+//! source's on-demand test and reports the branch.
 //!
 //! # Power-up self-tests
 //!
@@ -80,11 +106,20 @@
 #![no_std]
 #![forbid(unsafe_code)]
 
+#[cfg(test)]
+extern crate std;
+
 pub mod ctr;
 pub mod hash;
 pub mod health;
 pub mod hmac;
 pub mod kat;
+#[cfg(any(test, feature = "fault-injection"))]
+pub mod seam;
+mod seed;
+mod seed_table;
+#[cfg(any(test, feature = "fault-injection"))]
+pub mod testing;
 
 pub use ctr::{
     Aes128Factory, Aes192Factory, Aes256Factory, CipherFactory, CtrDrbg, CtrDrbgAes128,
@@ -99,6 +134,7 @@ pub use hmac::{
     HmacSha256Alg, HmacSha384Alg, HmacSha512Alg,
 };
 pub use kat::KATS;
+pub use seed::{SeedPathReport, entropy_on_demand_test};
 
 #[cfg(test)]
 pub(crate) mod test_support {

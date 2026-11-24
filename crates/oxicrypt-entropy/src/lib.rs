@@ -1,8 +1,9 @@
-//! SP 800-90B entropy-source scaffolding for the oxicrypt module.
+//! The oxicrypt module's SP 800-90B entropy source.
 //!
 //! # Status — read this first
 //!
-//! **Phase-0 scaffolding.** This crate carries the noise-source abstraction,
+//! This crate is the module's SP 800-90B entropy source, consumed by the
+//! DRBG seed path in `oxicrypt-drbg`. It carries the noise-source abstraction,
 //! the fixed-point min-entropy type, the cited SP 800-90B/90C constants
 //! module, the approved continuous health tests (RCT + APT with startup
 //! gating and permanent failure semantics), a CPU-jitter noise source, the
@@ -12,9 +13,9 @@
 //!
 //! # Approved services
 //!
-//! | Service | Standard | Entry point |
-//! |---------|----------|-------------|
-//! | *(none yet — scaffolding)* | — | — |
+//! None. The crate offers no service of its own: the DRBG seed path draws
+//! from it, and the module's approved services are listed in the Security
+//! Policy.
 //!
 //! # Architecture
 //!
@@ -59,9 +60,9 @@
 //! - **`std`** — enables the OS monotonic-nanosecond-clock timer surface
 //!   (pulls in `std`; brings no third-party dependency).
 //! - **`raw-counter`** — enables the serialized raw CPU counter timer via
-//!   the readily auditable `oxicrypt-timer` crate (`dep:oxicrypt-timer`), the only
-//!   optional dependency.
-//! - **`collection`** (= `std` + `raw-counter`) — the off-boundary
+//!   the readily auditable `oxicrypt-timer` crate (`dep:oxicrypt-timer`).
+//! - **`collection`** (`std`, `raw-counter` and the further dependencies
+//!   the `collect` binary needs) — the off-boundary
 //!   raw-data `collection` module tooling backing the `collect` binary;
 //!   never part of the validation-target surface.
 
