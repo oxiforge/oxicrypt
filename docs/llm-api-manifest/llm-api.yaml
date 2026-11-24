@@ -522,6 +522,33 @@ types:
         description: A DRBG instantiate was given an entropy input shorter than min_length for the instantiated security strength (SP 800-90A Rev. 1 Tables 2 and 3).
       - name: NonceTooShort
         description: A DRBG instantiate was given a nonce shorter than security_strength/2 bits, the module's nonce floor (permitted by SP 800-90A Rev. 1 section 9.1 step 8; a nonce of that length can meet the entropy condition of section 8.6.7, and a shorter one meeting only its uniqueness condition is refused).
+      - name: Rbg
+        description: A random bit generator refused or failed; the inner RbgError says why.
+      - name: RbgTooWeak
+        description: The random bit generator handed to a service has a security strength below what that service requires.
+
+  - name: Rbg
+    module: oxicrypt-module
+    kind: trait
+    description: "Unsealed random bit generator interface (fill(out) -> Result<(), RbgError>, strength_bits()) through which every service needing randomness takes its random bits; implemented by the nine DRBG types of oxicrypt-drbg."
+
+  - name: RbgError
+    module: oxicrypt-module
+    kind: enum
+    description: Reason a Rbg produced no output; contains no Error.
+    variants:
+      - name: Uninstantiated
+        description: The instance has not been instantiated.
+      - name: ReseedRequired
+        description: The reseed counter reached the SP 800-90A interval and the instance cannot reseed itself.
+      - name: RequestTooLong
+        description: The request exceeds the maximum number of bits per request.
+      - name: EntropyUnavailable
+        description: The entropy source failed and the module has entered its error state.
+      - name: NotOperational
+        description: The module is not operational.
+      - name: Busy
+        description: The seed path's lock spin bound was exhausted; retry after a pause.
 
   - name: AlgorithmProfile
     module: oxicrypt-module
@@ -2404,6 +2431,27 @@ functions:
     module: oxicrypt-module
     description: Guard returning Ok(()) if the module is Operational, Err otherwise; called internally by every approved-service function.
     signature: "pub fn require_operational() -> Result<(), Error>"
+    parameters: []
+    returns:
+      type: "Result<(), Error>"
+      description: Ok if Operational, Err otherwise.
+      error_variants:
+        - name: NotOperational
+          condition: Module state is not Operational.
+    preconditions: []
+    postconditions: []
+    thread_safety: thread-safe
+    side_effects: []
+    security:
+      constant_time: false
+      handles_secrets: false
+      fips_approved: false
+      fips_gate: null
+
+  - name: require_operational_for_output
+    module: oxicrypt-module
+    description: "Fresh read of the state word with the semantics of require_operational, called by a service immediately before it writes output into a caller's buffer; a service that observes a non-Operational state zeroizes its result and writes nothing (ISO/IEC 19790 section 7.3.3 and section 7.10.1, output inhibition in the error state)."
+    signature: "pub fn require_operational_for_output() -> Result<(), Error>"
     parameters: []
     returns:
       type: "Result<(), Error>"

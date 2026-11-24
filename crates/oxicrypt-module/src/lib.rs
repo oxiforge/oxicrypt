@@ -157,9 +157,8 @@
 //! that unwinds out of initialisation leaves the module in `Error`.
 //!
 //! A service's check in `Operational` is one acquire load of the state
-//! word and one comparison: a plain load on x86_64, `ldar` on AArch64,
-//! and on a 32-bit target the platform's 64-bit atomic load. The thread id
-//! is asked for only by an `*_internal` call that finds `SelfTest`.
+//! word and one comparison. The thread id is asked for only by an
+//! `*_internal` call that finds `SelfTest`.
 
 #![no_std]
 #![forbid(unsafe_code)]
@@ -219,9 +218,7 @@ impl State {
             4 => Self::IntegrityUnverified,
             // Any unknown discriminant collapses to `Error` so that a
             // corrupted state byte can never be interpreted as
-            // `Operational`. This is defence-in-depth: `AtomicU8`
-            // should only ever hold values written through this
-            // module.
+            // `Operational`.
             _ => Self::Error,
         }
     }
@@ -354,6 +351,27 @@ pub fn require_operational() -> Result<(), Error> {
             current: decode(word),
         })
     }
+}
+
+/// Guard called by a service that has computed its result, immediately
+/// before it writes any output into a caller's buffer.
+///
+/// It performs a fresh read of the state word and has exactly the
+/// semantics of [`require_operational`]: `Ok(())` when the module is
+/// `Operational`, otherwise [`Error::NotOperational`] with the observed
+/// state. A service already running when another thread puts the module
+/// into the error state therefore zeroizes its result and returns
+/// `NotOperational` instead of writing. The property this provides is that
+/// no service begins writing output after it has observed the failure
+/// (ISO/IEC 19790 §7.3.3 and §7.10.1, output inhibition in the error
+/// state).
+///
+/// # Errors
+///
+/// Returns [`Error::NotOperational`] when the module is not `Operational`.
+#[inline]
+pub fn require_operational_for_output() -> Result<(), Error> {
+    require_operational()
 }
 
 /// Guard used at the entry point of every public `*_internal` function.
@@ -497,11 +515,10 @@ pub enum Error {
         service: Service,
     },
     /// A service was invoked for an algorithm that exists in the
-    /// [`Service`] enum but whose implementation has not yet been
-    /// completed. Stub crates return this. The algorithm is
-    /// recognized by the profile system and its gate will pass if
-    /// the profile permits it, but the actual cryptographic
-    /// operation is not yet available.
+    /// [`Service`] enum but whose implementation is not complete. The
+    /// algorithm is recognized by the profile system and its gate will
+    /// pass if the profile permits it, but the cryptographic operation is
+    /// not available.
     NotImplemented,
     /// A DRBG instantiate call was given an entropy input shorter than
     /// the minimum entropy input length (`min_length`) for the
@@ -518,6 +535,11 @@ pub enum Error {
     /// §8.6.7(a), and a shorter one that would meet only §8.6.7(b),
     /// the uniqueness condition, is refused.
     NonceTooShort,
+    /// A random bit generator refused or failed; the inner value says why.
+    Rbg(RbgError),
+    /// The random bit generator handed to a service has a security
+    /// strength below what that service requires.
+    RbgTooWeak,
 }
 
 impl fmt::Display for Error {
@@ -558,7 +580,65 @@ impl fmt::Display for Error {
                 "DRBG nonce is shorter than half the instantiated security strength, \
                  the module's nonce floor (SP 800-90A Rev. 1 §9.1 step 8)",
             ),
+            Self::Rbg(e) => write!(f, "random bit generator: {e}"),
+            Self::RbgTooWeak => f.write_str("random bit generator strength below the requirement"),
         }
+    }
+}
+
+/// A random bit generator: the one interface through which every service
+/// that takes randomness takes its random bits.
+///
+/// The nine DRBG types of the `oxicrypt-drbg` crate implement it. The
+/// trait is not sealed.
+pub trait Rbg {
+    /// Fills `out` with no additional input. On error `out` is zeroized.
+    ///
+    /// A module-seeded instance reseeds itself from the module when its
+    /// reseed counter reaches the SP 800-90A interval, so it never returns
+    /// [`RbgError::ReseedRequired`]; a testing-interface instance does.
+    ///
+    /// # Errors
+    ///
+    /// Returns an [`RbgError`] stating why no output was produced.
+    fn fill(&mut self, out: &mut [u8]) -> Result<(), RbgError>;
+
+    /// SP 800-90A security strength the instance was instantiated at.
+    fn strength_bits(&self) -> u32;
+}
+
+/// Why a [`Rbg`] produced no output.
+///
+/// [`Error`] contains an `RbgError` through [`Error::Rbg`]; `RbgError`
+/// contains no [`Error`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RbgError {
+    /// The instance has not been instantiated.
+    Uninstantiated,
+    /// The reseed counter reached the SP 800-90A interval and the instance
+    /// cannot reseed itself.
+    ReseedRequired,
+    /// The request exceeds the maximum number of bits per request.
+    RequestTooLong,
+    /// The entropy source failed and the module has entered its error
+    /// state.
+    EntropyUnavailable,
+    /// The module is not operational.
+    NotOperational,
+    /// The seed path's lock spin bound was exhausted; retry after a pause.
+    Busy,
+}
+
+impl fmt::Display for RbgError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(match self {
+            Self::Uninstantiated => "uninstantiated",
+            Self::ReseedRequired => "reseed required",
+            Self::RequestTooLong => "request too long",
+            Self::EntropyUnavailable => "entropy unavailable",
+            Self::NotOperational => "not operational",
+            Self::Busy => "busy",
+        })
     }
 }
 
@@ -645,11 +725,10 @@ pub struct KatEntry {
 /// record, the winning call latches `Error` and returns
 /// [`Error::SelfTestFailed`] naming [`THREAD_ID_CHECK`].
 ///
-/// Note: the slice is passed **by reference**, not built up by magic.
-/// This repository deliberately avoids linker-section registration
-/// tricks: the full set of power-up tests is visible in source at
-/// every call site, which makes it straightforward to audit the
-/// module's test inventory against the Security Policy.
+/// The slices are passed **by reference** rather than assembled by
+/// linker-section registration, so the full set of power-up tests is
+/// visible in source at every call site, where it can be audited against
+/// the Security Policy's test inventory.
 pub fn initialize_with_tests(integrity: &[KatEntry], tests: &[KatEntry]) -> Result<(), Error> {
     initialize(integrity, tests, AlgorithmProfile::Unrestricted)
 }
@@ -720,9 +799,6 @@ fn initialize_as(
 
     for entry in integrity.iter().chain(tests) {
         if (entry.run)().is_err() {
-            // Latch the module into Error before returning. Any
-            // subsequent service call will be rejected by
-            // require_operational().
             settle(claim, ERROR);
             return Err(Error::SelfTestFailed { test: entry.name });
         }
@@ -730,8 +806,8 @@ fn initialize_as(
 
     // The only place in the workspace where the module becomes
     // operational. Every entry point reaches it, so the integrity
-    // requirement is enforced once here rather than at the 129
-    // `require_operational` call sites, and no service pays for the
+    // requirement is enforced once here rather than at every
+    // `require_operational` call site, and no service pays for the
     // check on its hot path.
     //
     // The profile is published here, by the call that won the CAS and
@@ -817,8 +893,8 @@ impl Drop for UnwindToError {
 ///
 /// This function is intentionally irreversible: FIPS 140-3 requires
 /// that a module which has entered an error condition stay there
-/// until it is re-initialized, and our "re-initialization" is a
-/// process restart.
+/// until it is re-initialized, and for this module re-initialization
+/// is a process restart.
 pub fn enter_error_state(_reason: &'static str) {
     STATE.store(ERROR, Ordering::Release);
 }
@@ -841,8 +917,7 @@ pub fn enter_error_state(_reason: &'static str) {
 #[repr(u8)]
 pub enum AlgorithmProfile {
     /// All FIPS-approved algorithms are available. This is the
-    /// default and preserves backward compatibility with callers
-    /// that use [`initialize_with_tests`].
+    /// default, and the profile [`initialize_with_tests`] selects.
     Unrestricted = 0,
     /// CNSA 2.0 — CNSSP-15 (March 2025) Annex B: AES-256, ML-KEM-1024,
     /// ML-DSA-87, SHA-384 or SHA-512, and the SP 800-208 stateful
@@ -922,8 +997,8 @@ pub fn active_profile() -> AlgorithmProfile {
 /// [`Error::AlreadyFailed`] when it failed, as [`initialize_with_tests`]
 /// describes.
 ///
-/// See [`initialize_with_tests`] for the backward-compatible wrapper
-/// that uses [`AlgorithmProfile::Unrestricted`].
+/// [`initialize_with_tests`] is this function with
+/// [`AlgorithmProfile::Unrestricted`].
 ///
 /// # Calling context
 ///
@@ -1134,7 +1209,7 @@ pub enum Service {
     MlDsa65Keygen = 318,
 
     // ----- oxicrypt-slh-dsa: FIPS 205 (12 parameter sets × 3 ops = 36 variants) -----
-    // SHA-2 256s claims 320-322 for historical reasons, then the rest of the
+    // SHA-2 256s holds 320-322, then the rest of the
     // SHA-2 family (128s/f, 192s/f, 256f), then the SHAKE family. No SLH-DSA
     // parameter set is permitted under either CNSA profile.
     SlhDsaSha2256sKeygen = 320,
@@ -1275,12 +1350,10 @@ pub enum Service {
     LmsShakeM24H25W4Verify = 657,
     LmsShakeM24H25W8Verify = 659,
 
-    // ----- oxicrypt-xmss: SP 800-208 (stub) -----
-    // Renumbered 340/341 → 370/371 to make room for the SLH-DSA block.
+    // ----- oxicrypt-xmss: SP 800-208, verification only -----
     XmssVerify = 371,
 
-    // ----- oxicrypt-dh: RFC 3526 (stub) -----
-    // Renumbered 350 → 380 to make room for the SLH-DSA block.
+    // ----- oxicrypt-dh: SP 800-56Ar3 / RFC 3526 -----
     Dh3072 = 380,
 }
 
@@ -1884,18 +1957,16 @@ const fn is_cnsa1_allowed(service: Service) -> bool {
 // Test-only utilities
 // -------------------------------------------------------------------------
 //
-// The global `STATE` makes the normal lifecycle effectively run-once per
-// process. Unit tests in this crate need to exercise multiple transitions,
-// so we expose a test-only reset helper gated behind `cfg(test)`. It is
-// **not** part of the public API and is not compiled into release builds.
+// The global `STATE` makes the lifecycle run-once per process. The unit
+// tests in this crate exercise several transitions through a reset helper
+// that exists only under `cfg(test)`.
 
 /// The test-only state lock, in its own module so the guard cannot be forged.
 ///
 /// The globals are a process singleton and cargo runs unit tests on a parallel
 /// thread pool, so without serialisation one test's reset lands inside
 /// another's initialize-then-assert window and the second observes a profile it
-/// did not install. Measured at 1 failure in 20 runs before this lock, on
-/// `require_allowed_returns_restricted_error_under_cnsa2`.
+/// did not install.
 ///
 /// Serialising is deliberate where per-test isolation would be easier: the
 /// singleton is the thing under test, and giving each test private state would
@@ -1906,8 +1977,7 @@ const fn is_cnsa1_allowed(service: Service) -> bool {
 /// mutex would satisfy the type and still reach `reset`. Confining the type
 /// here — field private to this module — means the only way to obtain one is
 /// [`reset_for_test`], which takes the real lock; a sibling module cannot build
-/// a decoy. Editing this module still defeats it. That is the honest bound, and
-/// it is a much smaller one than "every future test must remember".
+/// a decoy. Editing this module still defeats it.
 #[cfg(test)]
 pub(crate) mod state_lock {
     use super::{AlgorithmProfile, Ordering, PROFILE, STATE, State};
@@ -1944,8 +2014,8 @@ pub(crate) mod state_lock {
     /// `clippy -D warnings`, which the workspace gate runs — dropping the guard
     /// early breaks the build rather than reintroducing the race quietly.
     ///
-    /// Residual, stated rather than implied: `let _ = reset_for_test();` still
-    /// drops the guard immediately and does not warn. That is a deliberate act,
+    /// `let _ = reset_for_test();` still drops the guard immediately and
+    /// does not warn. That is a deliberate act,
     /// which is the most this construction can bound.
     ///
     /// A panicking test poisons the mutex. The poison carries no meaning here
@@ -1973,10 +2043,11 @@ extern crate std;
 mod tests {
     use super::state_lock::reset_for_test;
     use super::{
-        AlgorithmProfile, Error, KatEntry, LMS_SERVICES, SelfTest, SelfTestFailure, Service, State,
-        active_profile, enter_error_state, initialize_with_profile, initialize_with_tests,
-        is_allowed, is_lms_service, is_operational, lms_block_contains, require_allowed,
-        require_operational, require_self_test_started, state,
+        AlgorithmProfile, Error, KatEntry, LMS_SERVICES, RbgError, SelfTest, SelfTestFailure,
+        Service, State, active_profile, enter_error_state, initialize_with_profile,
+        initialize_with_tests, is_allowed, is_lms_service, is_operational, lms_block_contains,
+        require_allowed, require_operational, require_operational_for_output,
+        require_self_test_started, state,
     };
     use alloc::string::ToString;
     use core::sync::atomic::Ordering;
@@ -2015,9 +2086,8 @@ mod tests {
         Ok(())
     }
 
-    // All tests in this module share the single global `STATE`, so they
-    // cannot run in parallel. `cargo test` in this crate must be invoked
-    // with `--test-threads=1` — enforced by the CI workflow.
+    // All tests in this module share the single global `STATE`. Each takes
+    // the state lock through `reset_for_test`, which runs them one at a time.
 
     #[test]
     fn initial_state_is_power_off() {
@@ -2557,8 +2627,7 @@ mod tests {
     /// and the policy states outright that algorithms using SHA3 as a
     /// component — LMS and ML-KEM are its examples — do not thereby make
     /// SHA3 an approved hash function. This module is software, so the whole
-    /// family is refused under CNSA 2.0. Pinned as a property because the
-    /// gate permitted all twelve until 2026-08-18.
+    /// family is refused under CNSA 2.0.
     #[test]
     fn cnsa2_refuses_the_keccak_family() {
         let refused = [
@@ -2639,14 +2708,8 @@ mod tests {
     }
 
     /// Every `Service` variant, so a profile's permitted set can be computed
-    /// rather than sampled.
-    ///
-    /// The earlier membership test asserted only that an expected list was a
-    /// SUBSET of what the gate permits, with a length assertion on the test's
-    /// own array — a constant. It therefore could not see a widening: adding
-    /// `RsaKeygen2048` to the CNSA 1.0 gate left it green, which is precisely
-    /// the drift the test existed to catch. Enumerating the enum makes the
-    /// comparison exact in both directions.
+    /// rather than sampled, which makes the membership comparison exact in
+    /// both directions.
     ///
     /// The array type fixes the element count, so the compiler rejects a list
     /// of the wrong length. A variant added to `Service` but not listed here
@@ -3002,13 +3065,10 @@ mod tests {
 
     /// Every profile survives the round trip through the `PROFILE` atomic.
     ///
-    /// `from_u8` had no test at all, and the omission was not visible from the
-    /// membership tests: those call the private `is_allowed` directly, so a
-    /// mutation mapping discriminant 3 to `Cnsa2` left the suite green while
-    /// every Migration deployment silently ran as CNSA 2.0 — refusing ECDSA
-    /// P-384, RSA and DH — and `oxi_active_profile()` reported `1` for a module
-    /// initialised with `3`. This goes through the entry point, which is the
-    /// only place that mapping is exercised.
+    /// The membership tests call the private `is_allowed` directly, so a
+    /// mutation of `from_u8` mapping discriminant 3 to `Cnsa2` would leave
+    /// them green while every Migration deployment ran as CNSA 2.0. This test
+    /// goes through the entry point, the only place that mapping is exercised.
     #[test]
     fn every_profile_round_trips_through_the_active_profile() {
         for profile in [
@@ -3339,9 +3399,7 @@ mod tests {
         // {Keygen, Sign, Verify} = 36 entries) and verifies the
         // fail-safe gating: all 36 are blocked under both CNSA profiles,
         // because CNSSP-15 lists no SLH-DSA parameter set at all; all 36
-        // are permitted under Unrestricted.  If a new SLH-DSA variant is
-        // added without a matching entry in this array, the assertion at
-        // the end catches the gap.
+        // are permitted under Unrestricted.
         let all_36 = [
             // SHA-2 family (18 entries).
             Service::SlhDsaSha2256sKeygen,
@@ -3439,7 +3497,7 @@ mod tests {
         require_allowed(Service::MlKem1024Encaps).unwrap();
     }
 
-    /// Entry-point coverage for the SLH-DSA correction. The exhaustive
+    /// Entry-point coverage for the SLH-DSA gating. The exhaustive
     /// `slh_dsa_gating_*` test calls the private `is_allowed` helper directly,
     /// so it says nothing about whether the public gate reaches that helper.
     /// This one goes through `require_allowed`, which is what every approved
@@ -3466,7 +3524,7 @@ mod tests {
         }
     }
 
-    /// Entry-point coverage for the LMS correction, on the `M=24` sets.
+    /// Entry-point coverage for the LMS gating, on the `M=24` sets.
     /// CNSSP-15 (March 2025) Annex B recommends LMS-SHA-256/192, which is
     /// `M=24`, so these are the parameter sets the policy names by name.
     ///
@@ -3545,6 +3603,44 @@ mod tests {
         );
         assert!(nonce.contains("nonce is shorter than half"), "{nonce}");
         assert_ne!(entropy, Error::InvalidInput.to_string());
+    }
+
+    #[test]
+    fn rbg_error_display_strings() {
+        assert_eq!(RbgError::Uninstantiated.to_string(), "uninstantiated");
+        assert_eq!(RbgError::ReseedRequired.to_string(), "reseed required");
+        assert_eq!(RbgError::RequestTooLong.to_string(), "request too long");
+        assert_eq!(
+            RbgError::EntropyUnavailable.to_string(),
+            "entropy unavailable"
+        );
+        assert_eq!(RbgError::NotOperational.to_string(), "not operational");
+        assert_eq!(RbgError::Busy.to_string(), "busy");
+        assert_eq!(
+            Error::Rbg(RbgError::Busy).to_string(),
+            "random bit generator: busy"
+        );
+        assert_eq!(
+            Error::RbgTooWeak.to_string(),
+            "random bit generator strength below the requirement"
+        );
+    }
+
+    #[test]
+    fn require_operational_for_output_matches_require_operational() {
+        let _guard = reset_for_test();
+        assert_eq!(require_operational_for_output(), require_operational());
+
+        initialize_with_tests(UNSIGNED_TEST_BINARY, &[]).unwrap();
+        assert_eq!(require_operational_for_output(), Ok(()));
+        assert_eq!(require_operational_for_output(), require_operational());
+
+        enter_error_state("test");
+        let expected = Err(Error::NotOperational {
+            current: State::Error,
+        });
+        assert_eq!(require_operational_for_output(), expected);
+        assert_eq!(require_operational(), expected);
     }
 
     #[test]

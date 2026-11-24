@@ -52,9 +52,10 @@ is exactly what does and does not exist.
 - **Module validation (CMVP).** Not submitted. The module is *built* to the
   FIPS 140-3 Level 1 structure — defined boundary, state machine, power-up
   self-tests, profile gating — but it has not been through a CST laboratory.
-- **Entropy source (SP 800-90B).** Work in progress. `oxicrypt-entropy` makes no
-  entropy claim, and nothing inside this boundary is seeded from it: the DRBGs
-  take entropy as a caller-supplied argument.
+- **Entropy source (SP 800-90B).** Work in progress. The module seeds every
+  SP 800-90A DRBG itself, from the in-boundary SP 800-90B source in
+  `oxicrypt-entropy` on an assessed environment and from the operating system's
+  random generator everywhere else. `oxicrypt-entropy` makes no entropy claim.
 
 If you want the approved algorithms implemented in pure Rust, that is what this is.
 If you need to satisfy a requirement for a *validated* module, that means a
