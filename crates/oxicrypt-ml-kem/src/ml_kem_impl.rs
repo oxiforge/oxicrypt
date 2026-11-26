@@ -3,11 +3,6 @@
 //! gated public wrappers) from a small parameter tuple. The power-up
 //! self-tests are in `cast`.
 //!
-//! This is the encoding/wiring single source of truth for ML-KEM-512,
-//! ML-KEM-768, and ML-KEM-1024. It mirrors the
-//! [`define_rsa_wide!`](../../oxicrypt-rsa/src/rsa_wide_impl.rs)
-//! pattern used by RSA-3072 / RSA-4096.
-//!
 //! # Macro inputs
 //!
 //! Per-variant parameters from FIPS 203 Table 2:
@@ -19,6 +14,14 @@
 //! | `eta2` | CBD noise parameter for the second error polynomial |
 //! | `du` | Compression parameter for u (ciphertext polynomial vector) |
 //! | `dv` | Compression parameter for v (ciphertext polynomial) |
+//!
+//! Per-variant module inputs:
+//!
+//! | Input | Meaning |
+//! |-------|---------|
+//! | `svc_keygen`, `svc_expand_key`, `svc_encaps`, `svc_decaps` | The `Service` each public entry point is gated on |
+//! | `rbg_strength_bits` | The RBG security strength key generation and encapsulation require (FIPS 203 §3.3) |
+//! | `pct_reason` | The `reason` of a failed pairwise consistency test |
 //!
 //! Derived constants emitted by the macro:
 //!
@@ -44,25 +47,13 @@
 //! | `expand_a` | private | K-dependent matrix expansion from ρ |
 //! | `sample_noise_vec` | private | K-component noise sampler |
 //! | `kpke_keygen`, `kpke_encrypt`, `kpke_decrypt` | private | FIPS 203 §5 |
-//! | `ml_kem_keygen`, `ml_kem_encaps`, `ml_kem_decaps` | private | FIPS 203 §6 |
-//! | `keygen`, `encapsulate`, `decapsulate` | `pub` | Module-gated entry points |
+//! | `ml_kem_keygen`, `ml_kem_encaps`, `ml_kem_encaps_into`, `ml_kem_decaps`, `ml_kem_decaps_into` | private | FIPS 203 §6 |
+//! | `keygen`, `keygen_with_seed`, `expand_key` | `pub` | Module-gated key generation from an RBG (FIPS 203 Algorithm 19) and expansion of a stored seed, each with the pairwise consistency test |
+//! | `encapsulate`, `decapsulate` | `pub` | Module-gated encapsulation from an RBG (Algorithm 20) and decapsulation (Algorithm 21) |
+//! | `draw_d_z`, `draw_m`, `expand_checked`, `pairwise_consistency` | private | The strength checks and draws, and the expansion with the pairwise consistency test (FIPS 140-3 IG 10.3.A) |
 //! | `keygen_internal`, `encaps_internal`, `decaps_internal` | `pub` (hidden), `testing-interfaces` only | Mirrors without the operational gate (FIPS 203 §3.3: CAVP testing only) |
 //! | `keygen_internal_guarded`, `encaps_internal_guarded`, `decaps_internal_guarded` | `pub(crate)` | The same behind `require_self_test_started`, for the power-up self-tests, the unit tests and the `*_internal` wrappers |
 //! | `keygen_internal_unguarded`, `encaps_internal_unguarded`, `decaps_internal_unguarded` | private | The shared bodies |
-//!
-//! # Architectural note
-//!
-//! The macro is the **single source of truth for every parameter-set
-//! divergence**. There is no parallel hand-written implementation
-//! per variant — every byte of the K-PKE inner scheme and the FO
-//! transform is generated from one macro body. This makes
-//! cross-variant drift mechanically impossible: a bug fix in the
-//! macro body fixes all three variants in lock-step, and a new
-//! parameter set is a single macro invocation with no source-code
-//! duplication. The `EK_LEN`/`DK_LEN`/`CT_LEN` derivation formulas
-//! are also evaluated inside the macro, so the per-variant size
-//! constants cannot drift from FIPS 203 Table 2 without the
-//! parameter inputs themselves drifting.
 
 #![allow(unused_macros)]
 
@@ -74,10 +65,15 @@ macro_rules! ml_kem_impl {
         eta2 = $eta2:expr;
         du = $du:expr;
         dv = $dv:expr;
-        // Service variants.
+        // Per-variant module inputs: the services that gate the public
+        // entry points, the RBG strength (FIPS 203 §3.3) and the reason a
+        // failed pairwise consistency test reports.
         svc_keygen = $svc_keygen:expr;
+        svc_expand_key = $svc_expand_key:expr;
         svc_encaps = $svc_encaps:expr;
         svc_decaps = $svc_decaps:expr;
+        rbg_strength_bits = $rbg_strength_bits:expr;
+        pct_reason = $pct_reason:expr;
     ) => {
         use oxicrypt_module::{Error, Service};
         use oxicrypt_sha::sha3::{SHA3_256_DIGEST_SIZE, SHA3_512_DIGEST_SIZE, Sha3_256, Sha3_512};
@@ -87,6 +83,7 @@ macro_rules! ml_kem_impl {
         use $crate::params::POLY_ENCODED_12;
         use $crate::poly::Poly;
         use $crate::sample::{sample_noise, sample_ntt};
+        use $crate::wipe::{Tagged, WipedBuffer, observed};
 
         /// Module rank (FIPS 203 Table 2).
         pub const K: usize = $k;
@@ -131,44 +128,37 @@ macro_rules! ml_kem_impl {
         /// PRF output bytes for CBD(η2) sampling: 64 · η2.
         pub const PRF_ETA2_BYTES: usize = 64 * ETA2;
 
-        /// A vector of `K` polynomials.
         #[derive(Clone)]
         #[allow(dead_code)]
         pub(crate) struct PolyVec {
-            /// The k polynomial components.
             pub(crate) polys: [Poly; K],
         }
 
         impl PolyVec {
-            /// Zero vector.
             pub(crate) fn zero() -> Self {
                 Self {
                     polys: core::array::from_fn(|_| Poly::zero()),
                 }
             }
 
-            /// Forward NTT on every component.
             pub(crate) fn ntt(&mut self) {
                 for i in 0..K {
                     self.polys[i].ntt();
                 }
             }
 
-            /// Inverse NTT on every component.
             pub(crate) fn inv_ntt(&mut self) {
                 for i in 0..K {
                     self.polys[i].inv_ntt();
                 }
             }
 
-            /// Add `other` to `self` component-wise.
             pub(crate) fn add_assign(&mut self, other: &Self) {
                 for i in 0..K {
                     self.polys[i].add_assign(&other.polys[i]);
                 }
             }
 
-            /// Inner product in NTT domain: ⟨a, b⟩ = Σᵢ aᵢ ◦ bᵢ.
             pub(crate) fn inner_product_ntt(a: &Self, b: &Self) -> Poly {
                 let mut r = Poly::zero();
                 for i in 0..K {
@@ -179,15 +169,12 @@ macro_rules! ml_kem_impl {
             }
         }
 
-        /// A k × k matrix of polynomials (in NTT domain).
         #[allow(dead_code)]
         pub(crate) struct PolyMatrix {
-            /// Row-major: `rows[i][j]` is Â[i][j].
             pub(crate) rows: [[Poly; K]; K],
         }
 
         impl PolyMatrix {
-            /// Multiply matrix by column vector: t̂ = Â · ŝ.
             pub(crate) fn mul_vec(&self, s: &PolyVec) -> PolyVec {
                 let mut t = PolyVec::zero();
                 for i in 0..K {
@@ -199,7 +186,6 @@ macro_rules! ml_kem_impl {
                 t
             }
 
-            /// Multiply transpose of matrix by column vector: û = Âᵀ · r̂.
             pub(crate) fn transpose_mul_vec(&self, r: &PolyVec) -> PolyVec {
                 let mut u = PolyVec::zero();
                 for i in 0..K {
@@ -212,14 +198,8 @@ macro_rules! ml_kem_impl {
             }
         }
 
-        /// Expand the k × k public matrix Â from seed ρ.
-        ///
-        /// Â[i][j] = SampleNTT(XOF(ρ, j, i)) where XOF = SHAKE-128
-        /// and the input is ρ ‖ j ‖ i (column index before row index,
-        /// per FIPS 203 Algorithm 13 step 5).
-        ///
-        /// Sequential build (default, `no_std`): the rows are filled in
-        /// order, each cell from its own fresh local XOF.
+        /// Â[i][j] = SampleNTT(ρ ‖ j ‖ i), column index before row index
+        /// (FIPS 203 Algorithm 13 step 5).
         #[cfg(not(feature = "parallel"))]
         #[allow(clippy::cast_possible_truncation, clippy::needless_range_loop)]
         fn expand_a(rho: &[u8; SEED_LEN]) -> Result<PolyMatrix, Error> {
@@ -238,21 +218,14 @@ macro_rules! ml_kem_impl {
             Ok(PolyMatrix { rows })
         }
 
-        /// Expand the k × k public matrix Â from seed ρ.
+        /// Â[i][j] = SampleNTT(ρ ‖ j ‖ i), column index before row index
+        /// (FIPS 203 Algorithm 13 step 5).
         ///
-        /// Â[i][j] = SampleNTT(XOF(ρ, j, i)) where XOF = SHAKE-128
-        /// and the input is ρ ‖ j ‖ i (column index before row index,
-        /// per FIPS 203 Algorithm 13 step 5).
-        ///
-        /// Parallel build: the *outer* row loop is forked across a
-        /// `rayon` parallel iterator. Each closure owns exactly its row
-        /// `i` and writes only `row[j]`, sampling every cell from a
-        /// fresh local SHAKE-128 XOF that is a pure function of ρ and
-        /// `(i, j)` — there is no shared mutable state. Because each row
-        /// is written into its fixed array slot, the matrix is
-        /// recombined *by position*, never by completion order, so the
-        /// output is byte-identical to the sequential build regardless
-        /// of thread count.
+        /// Each closure owns exactly its row `i` and samples every cell
+        /// from a fresh local XOF that is a pure function of ρ and
+        /// `(i, j)`, and each row is written into its fixed slot, so the
+        /// matrix is byte-identical to the sequential build whatever the
+        /// thread count.
         #[cfg(feature = "parallel")]
         #[allow(clippy::cast_possible_truncation, clippy::needless_range_loop)]
         fn expand_a(rho: &[u8; SEED_LEN]) -> Result<PolyMatrix, Error> {
@@ -280,10 +253,9 @@ macro_rules! ml_kem_impl {
             Ok(PolyMatrix { rows })
         }
 
-        /// Sample a full noise vector (k polynomials) starting from
-        /// counter `nonce`, incrementing after each polynomial.
-        ///
-        /// Returns the vector and the next nonce value.
+        /// K noise polynomials from PRF(σ, N) for N = `nonce`,
+        /// `nonce` + 1, …, and the next N (FIPS 203 Algorithm 13 steps
+        /// 8–15, Algorithm 14 steps 9–16).
         #[allow(clippy::needless_range_loop)]
         fn sample_noise_vec(
             sigma: &[u8; SEED_LEN],
@@ -298,12 +270,9 @@ macro_rules! ml_kem_impl {
             Ok((vec, nonce))
         }
 
-        /// K-PKE.KeyGen (FIPS 203 Algorithm 13).
-        ///
-        /// - `d`: 32 bytes of randomness (caller-supplied from an
-        ///   approved DRBG).
-        /// - `ek_pke`: output encryption key (`EK_LEN` bytes).
-        /// - `dk_pke`: output decryption key (`384 · k` bytes).
+        /// K-PKE.KeyGen (FIPS 203 Algorithm 13), writing `ek_PKE` into the
+        /// first `EK_LEN` bytes of `ek_pke` and `dk_PKE` into the first
+        /// 384 · k bytes of `dk_pke`.
         #[allow(
             clippy::indexing_slicing,
             clippy::arithmetic_side_effects,
@@ -319,43 +288,45 @@ macro_rules! ml_kem_impl {
             debug_assert!(ek_pke.len() >= EK_LEN);
             debug_assert!(dk_pke.len() >= 384 * K);
 
-            // 1. (ρ, σ) ← G(d ‖ k)  where G = SHA3-512
-            let mut g_input = [0u8; 33];
-            g_input[..32].copy_from_slice(d);
-            g_input[32] = K as u8;
+            // Step 1: (ρ, σ) ← G(d ‖ k), G = SHA3-512.
+            let mut g_input = Tagged::<33>::new(WipedBuffer::KeygenGInput);
+            g_input.bytes[..32].copy_from_slice(d);
+            g_input.bytes[32] = K as u8;
 
             let mut g = <Sha3_512>::new_internal()?;
-            g.update(&g_input);
-            let g_out: [u8; SHA3_512_DIGEST_SIZE] = g.finalize()?;
+            g.update(&g_input.bytes);
+            let mut g_out = Tagged::<SHA3_512_DIGEST_SIZE>::new(WipedBuffer::KeygenG);
+            g_out.bytes = g.finalize()?;
 
-            let mut rho = [0u8; 32];
-            let mut sigma = [0u8; 32];
-            rho.copy_from_slice(&g_out[..32]);
-            sigma.copy_from_slice(&g_out[32..64]);
+            let mut rho = Tagged::<32>::new(WipedBuffer::KeygenRho);
+            let mut sigma = Tagged::<32>::new(WipedBuffer::KeygenSigma);
+            rho.bytes.copy_from_slice(&g_out.bytes[..32]);
+            sigma.bytes.copy_from_slice(&g_out.bytes[32..64]);
 
-            // 2. Expand matrix Â from ρ
-            let a_hat = expand_a(&rho)?;
+            // Steps 3–7.
+            let a_hat = observed(WipedBuffer::KeygenA, expand_a(&rho.bytes)?);
 
-            // 3. Sample secret vector s and error vector e
-            let (mut s, nonce) = sample_noise_vec(&sigma, 0, ETA1)?;
-            let (mut e, _nonce) = sample_noise_vec(&sigma, nonce, ETA1)?;
+            // Steps 8–15.
+            let (s, nonce) = sample_noise_vec(&sigma.bytes, 0, ETA1)?;
+            let mut s = observed(WipedBuffer::KeygenS, s);
+            let (e, _nonce) = sample_noise_vec(&sigma.bytes, nonce, ETA1)?;
+            let mut e = observed(WipedBuffer::KeygenE, e);
 
-            // 4. NTT(s), NTT(e)
+            // Steps 16–17.
             s.ntt();
             e.ntt();
 
-            // 5. t̂ = Â ◦ ŝ + ê
-            //    mul_vec produces results with an extra R⁻¹ Montgomery
-            //    factor from basemul.  Convert back to normal form via
-            //    to_mont (multiply by R) before adding ê which is in
-            //    normal form.
-            let mut t_hat = a_hat.mul_vec(&s);
+            // Step 18: t̂ = Â ◦ ŝ + ê. `mul_vec` leaves an extra R⁻¹
+            // Montgomery factor from basemul, so its result is brought back
+            // to normal form with `to_mont` before ê, which is in normal
+            // form, is added.
+            let mut t_hat = observed(WipedBuffer::KeygenTHat, a_hat.mul_vec(&s));
             for i in 0..K {
                 t_hat.polys[i].to_mont();
             }
             t_hat.add_assign(&e);
 
-            // 6. Encode ek_PKE = ByteEncode_12(t̂) ‖ ρ
+            // Step 19: ek_PKE = ByteEncode_12(t̂) ‖ ρ.
             for i in 0..K {
                 t_hat.polys[i].reduce_full();
                 byte_encode(
@@ -364,9 +335,9 @@ macro_rules! ml_kem_impl {
                     &mut ek_pke[i * POLY_ENCODED_12..(i + 1) * POLY_ENCODED_12],
                 );
             }
-            ek_pke[K * POLY_ENCODED_12..K * POLY_ENCODED_12 + 32].copy_from_slice(&rho);
+            ek_pke[K * POLY_ENCODED_12..K * POLY_ENCODED_12 + 32].copy_from_slice(&rho.bytes);
 
-            // 7. Encode dk_PKE = ByteEncode_12(ŝ)
+            // Step 20: dk_PKE = ByteEncode_12(ŝ).
             for i in 0..K {
                 s.polys[i].reduce_full();
                 byte_encode(
@@ -378,12 +349,9 @@ macro_rules! ml_kem_impl {
             Ok(())
         }
 
-        /// K-PKE encryption (FIPS 203 Algorithm 14).
-        ///
-        /// - `ek_pke`: encryption key (`EK_LEN` bytes).
-        /// - `m`: 32-byte message (the shared-secret seed).
-        /// - `r_seed`: 32-byte randomness for re-encryption.
-        /// - `ct`: output ciphertext (`CT_LEN` bytes).
+        /// K-PKE.Encrypt (FIPS 203 Algorithm 14) of the 32-byte message `m`
+        /// under `ek_pke` with randomness `r_seed`, writing the `CT_LEN`-byte
+        /// ciphertext into `ct`.
         #[allow(
             clippy::indexing_slicing,
             clippy::arithmetic_side_effects,
@@ -400,8 +368,8 @@ macro_rules! ml_kem_impl {
             debug_assert!(ek_pke.len() >= EK_LEN);
             debug_assert!(ct.len() >= CT_LEN);
 
-            // 1. Decode t̂ from ek_PKE
-            let mut t_hat = PolyVec::zero();
+            // Step 2.
+            let mut t_hat = observed(WipedBuffer::EncryptTHat, PolyVec::zero());
             for i in 0..K {
                 byte_decode(
                     12,
@@ -410,39 +378,43 @@ macro_rules! ml_kem_impl {
                 );
             }
 
-            // 2. Extract ρ from ek_PKE
-            let mut rho = [0u8; 32];
-            rho.copy_from_slice(&ek_pke[K * POLY_ENCODED_12..K * POLY_ENCODED_12 + 32]);
+            // Step 3.
+            let mut rho = Tagged::<32>::new(WipedBuffer::EncryptRho);
+            rho.bytes
+                .copy_from_slice(&ek_pke[K * POLY_ENCODED_12..K * POLY_ENCODED_12 + 32]);
 
-            // 3. Expand Â from ρ
-            let a_hat = expand_a(&rho)?;
+            // Steps 4–8.
+            let a_hat = observed(WipedBuffer::EncryptA, expand_a(&rho.bytes)?);
 
-            // 4. Sample r, e₁, e₂
-            let (mut r_vec, nonce) = sample_noise_vec(r_seed, 0, ETA1)?;
+            // Steps 9–17.
+            let (r_vec, nonce) = sample_noise_vec(r_seed, 0, ETA1)?;
+            let mut r_vec = observed(WipedBuffer::EncryptY, r_vec);
             let (e1, nonce) = sample_noise_vec(r_seed, nonce, ETA2)?;
-            let e2 = sample_noise(r_seed, nonce, ETA2)?;
+            let e1 = observed(WipedBuffer::EncryptE1, e1);
+            let e2 = observed(WipedBuffer::EncryptE2, sample_noise(r_seed, nonce, ETA2)?);
 
-            // 5. NTT(r)
+            // Step 18.
             r_vec.ntt();
 
-            // 6. u = NTT⁻¹(Âᵀ ◦ r̂) + e₁
-            let mut u = a_hat.transpose_mul_vec(&r_vec);
+            // Step 19: u = NTT⁻¹(Âᵀ ◦ ŷ) + e₁.
+            let mut u = observed(WipedBuffer::EncryptU, a_hat.transpose_mul_vec(&r_vec));
             u.inv_ntt();
             u.add_assign(&e1);
 
-            // 7. v = NTT⁻¹(t̂ᵀ ◦ r̂) + e₂ + Decompress₁(Decode₁(m))
-            let mut v = PolyVec::inner_product_ntt(&t_hat, &r_vec);
+            // Steps 20–21: v = NTT⁻¹(t̂ᵀ ◦ ŷ) + e₂ + Decompress₁(ByteDecode₁(m)).
+            let mut v = observed(
+                WipedBuffer::EncryptV,
+                PolyVec::inner_product_ntt(&t_hat, &r_vec),
+            );
             v.inv_ntt();
             v.add_assign(&e2);
 
-            // Decode message and add Decompress_1(m)
-            let mut m_poly = Poly::zero();
+            let mut m_poly = observed(WipedBuffer::EncryptMu, Poly::zero());
             byte_decode(1, m, &mut m_poly.coeffs);
             decompress_poly(1, &mut m_poly.coeffs);
             v.add_assign(&m_poly);
 
-            // 8. Compress and encode ciphertext
-            // c₁ = ByteEncode_{dᵤ}(Compress_{dᵤ}(u))
+            // Step 22: c₁ = ByteEncode_{dᵤ}(Compress_{dᵤ}(u)).
             for i in 0..K {
                 u.polys[i].reduce_full();
                 compress_poly(DU as u32, &mut u.polys[i].coeffs);
@@ -453,7 +425,7 @@ macro_rules! ml_kem_impl {
                 );
             }
 
-            // c₂ = ByteEncode_{dᵥ}(Compress_{dᵥ}(v))
+            // Step 23: c₂ = ByteEncode_{dᵥ}(Compress_{dᵥ}(v)).
             v.reduce_full();
             compress_poly(DV as u32, &mut v.coeffs);
             byte_encode(
@@ -464,11 +436,8 @@ macro_rules! ml_kem_impl {
             Ok(())
         }
 
-        /// K-PKE decryption (FIPS 203 Algorithm 15).
-        ///
-        /// - `dk_pke`: decryption key (`384 · k` bytes).
-        /// - `ct`: ciphertext (`CT_LEN` bytes).
-        /// - `m`: output 32-byte message.
+        /// K-PKE.Decrypt (FIPS 203 Algorithm 15) of the `CT_LEN`-byte `ct`
+        /// under the 384 · k-byte `dk_pke`, writing the message into `m`.
         #[allow(
             clippy::indexing_slicing,
             clippy::arithmetic_side_effects,
@@ -480,8 +449,8 @@ macro_rules! ml_kem_impl {
             debug_assert!(dk_pke.len() >= 384 * K);
             debug_assert!(ct.len() >= CT_LEN);
 
-            // 1. Decode u from ciphertext
-            let mut u = PolyVec::zero();
+            // Steps 1 and 3.
+            let mut u = observed(WipedBuffer::DecryptU, PolyVec::zero());
             for i in 0..K {
                 byte_decode(
                     DU,
@@ -491,8 +460,8 @@ macro_rules! ml_kem_impl {
                 decompress_poly(DU as u32, &mut u.polys[i].coeffs);
             }
 
-            // 2. Decode v from ciphertext
-            let mut v = Poly::zero();
+            // Steps 2 and 4.
+            let mut v = observed(WipedBuffer::DecryptV, Poly::zero());
             byte_decode(
                 DV,
                 &ct[K * POLY_COMPRESSED_DU..K * POLY_COMPRESSED_DU + POLY_COMPRESSED_DV],
@@ -500,8 +469,8 @@ macro_rules! ml_kem_impl {
             );
             decompress_poly(DV as u32, &mut v.coeffs);
 
-            // 3. Decode ŝ from dk_PKE
-            let mut s_hat = PolyVec::zero();
+            // Step 5.
+            let mut s_hat = observed(WipedBuffer::DecryptSHat, PolyVec::zero());
             for i in 0..K {
                 byte_decode(
                     12,
@@ -510,15 +479,16 @@ macro_rules! ml_kem_impl {
                 );
             }
 
-            // 4. NTT(u)
+            // Step 6: w = v′ − NTT⁻¹(ŝᵀ ◦ NTT(u′)).
             u.ntt();
-
-            // 5. w = v − NTT⁻¹(ŝᵀ ◦ NTT(u))
-            let mut w = PolyVec::inner_product_ntt(&s_hat, &u);
+            let mut w = observed(
+                WipedBuffer::DecryptW,
+                PolyVec::inner_product_ntt(&s_hat, &u),
+            );
             w.inv_ntt();
             v.sub_assign(&w);
 
-            // 6. m = ByteEncode₁(Compress₁(w))
+            // Step 7: m = ByteEncode₁(Compress₁(w)).
             v.reduce_full();
             compress_poly(1, &mut v.coeffs);
             byte_encode(1, &v.coeffs, m);
@@ -537,11 +507,11 @@ macro_rules! ml_kem_impl {
             ek: &mut [u8; EK_LEN],
             dk: &mut [u8; DK_LEN],
         ) -> Result<(), Error> {
-            // 1. Run K-PKE.KeyGen to get (ek_PKE, dk_PKE)
+            // Step 1.
             let dk_pke_len = 384 * K;
             kpke_keygen(d, ek, &mut dk[..dk_pke_len])?;
 
-            // 2. dk = dk_PKE ‖ ek ‖ H(ek) ‖ z
+            // Step 3: dk = dk_PKE ‖ ek ‖ H(ek) ‖ z.
             dk[dk_pke_len..dk_pke_len + EK_LEN].copy_from_slice(ek);
 
             let mut h = <Sha3_256>::new_internal()?;
@@ -553,18 +523,32 @@ macro_rules! ml_kem_impl {
             Ok(())
         }
 
-        /// ML-KEM.Encaps_internal (FIPS 203 Algorithm 17).
+        /// ML-KEM.Encaps_internal (FIPS 203 Algorithm 17), returning
+        /// `(K, c)`.
+        fn ml_kem_encaps(
+            ek: &[u8; EK_LEN],
+            m: &[u8; SEED_LEN],
+        ) -> Result<([u8; SHARED_SECRET_LEN], [u8; CT_LEN]), Error> {
+            let mut k = [0u8; SHARED_SECRET_LEN];
+            let mut ct = [0u8; CT_LEN];
+            ml_kem_encaps_into(ek, m, &mut k, &mut ct)?;
+            Ok((k, ct))
+        }
+
+        /// [`ml_kem_encaps`] writing K into `k_out` and c into `ct_out`.
         #[allow(
             clippy::indexing_slicing,
             clippy::arithmetic_side_effects,
             clippy::similar_names,
             clippy::many_single_char_names
         )]
-        fn ml_kem_encaps(
+        fn ml_kem_encaps_into(
             ek: &[u8; EK_LEN],
             m: &[u8; SEED_LEN],
-        ) -> Result<([u8; SHARED_SECRET_LEN], [u8; CT_LEN]), Error> {
-            // 1. (K, r) ← G(m ‖ H(ek))
+            k_out: &mut [u8; SHARED_SECRET_LEN],
+            ct_out: &mut [u8; CT_LEN],
+        ) -> Result<(), Error> {
+            // Step 1: (K, r) ← G(m ‖ H(ek)).
             let mut h = <Sha3_256>::new_internal()?;
             h.update(ek);
             let h_ek: [u8; SHA3_256_DIGEST_SIZE] = h.finalize()?;
@@ -572,142 +556,208 @@ macro_rules! ml_kem_impl {
             let mut g = <Sha3_512>::new_internal()?;
             g.update(m);
             g.update(&h_ek);
-            let mut g_out: [u8; SHA3_512_DIGEST_SIZE] = g.finalize()?;
+            let mut g_out = Tagged::<SHA3_512_DIGEST_SIZE>::new(WipedBuffer::EncapsG);
+            g_out.bytes = g.finalize()?;
 
-            let mut k = [0u8; 32];
-            let mut r = [0u8; 32];
-            k.copy_from_slice(&g_out[..32]);
-            r.copy_from_slice(&g_out[32..64]);
+            let mut k = Tagged::<32>::new(WipedBuffer::EncapsK);
+            let mut r = Tagged::<32>::new(WipedBuffer::EncapsR);
+            k.bytes.copy_from_slice(&g_out.bytes[..32]);
+            r.bytes.copy_from_slice(&g_out.bytes[32..64]);
 
-            // 2. c ← K-PKE.Encrypt(ek, m, r)
-            let mut ct = [0u8; CT_LEN];
-            let encrypted = kpke_encrypt(ek, m, &r, &mut ct);
-
-            // `k`, `r` and `g_out = K ‖ r` are CSPs from `G(m ‖ H(ek))`
-            // and are wiped here (AS09.32, ISO/IEC 19790:2012 §7.9.7).
-            // The returned tuple holds a copy of `k`; the wipe covers the
-            // local slot.
-            let result = (k, ct);
-            oxicrypt_zeroize::zeroize(&mut k);
-            oxicrypt_zeroize::zeroize(&mut r);
-            oxicrypt_zeroize::zeroize(&mut g_out);
-            // A refusal from the encryption step is reported only after
-            // the wipe above, so it leaves no CSP behind.
-            encrypted?;
-            Ok(result)
+            // Step 2: c ← K-PKE.Encrypt(ek, m, r).
+            kpke_encrypt(ek, m, &r.bytes, ct_out)?;
+            *k_out = k.bytes;
+            Ok(())
         }
 
-        /// ML-KEM.Decaps_internal (FIPS 203 Algorithm 18).
-        ///
-        /// **Implicit rejection**: if the ciphertext is invalid, a
-        /// pseudorandom key derived from the rejection seed `z` is
-        /// returned. The comparison and the selection are constant-time.
+        /// ML-KEM.Decaps_internal (FIPS 203 Algorithm 18), returning the
+        /// shared secret: K′ when the re-encryption matches `ct`, the
+        /// rejection secret K̄ otherwise, selected in constant time.
+        fn ml_kem_decaps(
+            dk: &[u8; DK_LEN],
+            ct: &[u8; CT_LEN],
+        ) -> Result<[u8; SHARED_SECRET_LEN], Error> {
+            let mut k = [0u8; SHARED_SECRET_LEN];
+            ml_kem_decaps_into(dk, ct, &mut k)?;
+            Ok(k)
+        }
+
+        /// [`ml_kem_decaps`] writing the shared secret into `k_out`.
         #[allow(
             clippy::indexing_slicing,
             clippy::arithmetic_side_effects,
             clippy::similar_names,
             clippy::many_single_char_names
         )]
-        fn ml_kem_decaps(
+        fn ml_kem_decaps_into(
             dk: &[u8; DK_LEN],
             ct: &[u8; CT_LEN],
-        ) -> Result<[u8; SHARED_SECRET_LEN], Error> {
+            k_out: &mut [u8; SHARED_SECRET_LEN],
+        ) -> Result<(), Error> {
             let dk_pke_len = 384 * K;
 
-            // Parse dk = dk_PKE ‖ ek ‖ H(ek) ‖ z
+            // Steps 1–4: dk = dk_PKE ‖ ek ‖ H(ek) ‖ z.
             let dk_pke = &dk[..dk_pke_len];
             let ek = &dk[dk_pke_len..dk_pke_len + EK_LEN];
             let h_ek = &dk[dk_pke_len + EK_LEN..dk_pke_len + EK_LEN + 32];
             let z = &dk[dk_pke_len + EK_LEN + 32..dk_pke_len + EK_LEN + 64];
 
-            // The hashers are built before any secret-derived value
-            // exists, so a refusal here returns with nothing to wipe.
             let mut g = <Sha3_512>::new_internal()?;
             let mut j = Shake256::new_internal()?;
 
-            // 1. m' ← K-PKE.Decrypt(dk_PKE, c)
-            let mut m_prime = [0u8; 32];
-            kpke_decrypt(dk_pke, ct, &mut m_prime);
+            // Step 5.
+            let mut m_prime = Tagged::<32>::new(WipedBuffer::DecapsMPrime);
+            kpke_decrypt(dk_pke, ct, &mut m_prime.bytes);
 
-            // 2. (K', r') ← G(m' ‖ H(ek))
-            g.update(&m_prime);
+            // Step 6: (K′, r′) ← G(m′ ‖ h).
+            g.update(&m_prime.bytes);
             g.update(h_ek);
-            let mut g_out: [u8; SHA3_512_DIGEST_SIZE] = g.finalize()?;
+            let mut g_out = Tagged::<SHA3_512_DIGEST_SIZE>::new(WipedBuffer::DecapsG);
+            g_out.bytes = g.finalize()?;
 
-            let mut k_prime = [0u8; 32];
-            let mut r_prime = [0u8; 32];
-            k_prime.copy_from_slice(&g_out[..32]);
-            r_prime.copy_from_slice(&g_out[32..64]);
+            let mut k_prime = Tagged::<32>::new(WipedBuffer::DecapsKPrime);
+            let mut r_prime = Tagged::<32>::new(WipedBuffer::DecapsRPrime);
+            k_prime.bytes.copy_from_slice(&g_out.bytes[..32]);
+            r_prime.bytes.copy_from_slice(&g_out.bytes[32..64]);
 
-            // 3. K̄ ← J(z ‖ c) where J = SHAKE-256, first 32 bytes
+            // Step 7: K̄ ← J(z ‖ c), J = SHAKE-256 to 32 bytes.
             j.update(z);
             j.update(ct);
             j.finalize();
-            let mut k_bar = [0u8; 32];
-            j.squeeze(&mut k_bar)?;
+            let mut k_bar = Tagged::<32>::new(WipedBuffer::DecapsKBar);
+            j.squeeze(&mut k_bar.bytes)?;
 
-            // 4. c' ← K-PKE.Encrypt(ek, m', r')
-            let mut ct_prime = [0u8; CT_LEN];
-            let encrypted = kpke_encrypt(ek, &m_prime, &r_prime, &mut ct_prime);
+            // Step 8.
+            let mut ct_prime = Tagged::<CT_LEN>::new(WipedBuffer::DecapsCtPrime);
+            kpke_encrypt(ek, &m_prime.bytes, &r_prime.bytes, &mut ct_prime.bytes)?;
 
-            // 5. Constant-time comparison: if c == c', return Ok(K'); else K̄
-            //
-            // `ct_select_32` returns a new array, so wiping `k_prime` and
-            // `k_bar` afterwards leaves the result intact.
-            let diff = ct_bytes_eq(ct, &ct_prime);
-            let result = ct_select_32(&k_prime, &k_bar, diff);
-
-            // Every FO-transform intermediate derived from the secret key is
-            // wiped on exit (AS09.32, ISO/IEC 19790:2012 §7.9.7): `m_prime`,
-            // the candidate `k_prime`, the rejection secret `k_bar`,
-            // `r_prime`, `g_out = K′ ‖ r′`, and `ct_prime`, whose equality
-            // with `ct` selects between the two secrets.
-            oxicrypt_zeroize::zeroize(&mut m_prime);
-            oxicrypt_zeroize::zeroize(&mut k_prime);
-            oxicrypt_zeroize::zeroize(&mut k_bar);
-            oxicrypt_zeroize::zeroize(&mut r_prime);
-            oxicrypt_zeroize::zeroize(&mut g_out);
-            oxicrypt_zeroize::zeroize(&mut ct_prime);
-            // A refusal from the re-encryption step is reported only
-            // after the wipe above, so it leaves no CSP behind.
-            encrypted?;
-            Ok(result)
+            // Steps 9–11, in constant time.
+            let diff = ct_bytes_eq(ct, &ct_prime.bytes);
+            *k_out = ct_select_32(&k_prime.bytes, &k_bar.bytes, diff);
+            Ok(())
         }
 
-        /// Generate an ML-KEM key pair.
+        /// The RBG security strength key generation and encapsulation
+        /// require, in bits (FIPS 203 §3.3).
+        const RBG_STRENGTH_BITS: u32 = $rbg_strength_bits;
+
+        /// The `reason` of the [`Error::ConditionalTestFailed`] a failed
+        /// pairwise consistency test returns.
+        const PCT_REASON: &str = $pct_reason;
+
+        /// ML-KEM.KeyGen (FIPS 203 Algorithm 19): checks the strength of
+        /// `rbg`, draws d and then z from it as two 32-byte requests,
+        /// expands the pair and runs the pairwise consistency test. d and z
+        /// are wiped before the function returns.
         ///
-        /// Both `d` and `z` must be 32 bytes of fresh randomness from
-        /// an approved DRBG (SP 800-90A).
+        /// Returns `(ek, dk)`.
         ///
-        /// Returns `(ek, dk)`: the encapsulation key and decapsulation
-        /// key.
-        pub fn keygen(
+        /// # Errors
+        ///
+        /// - [`Error::NotOperational`] unless the module is operational.
+        /// - [`Error::AlgorithmRestricted`] when the active profile does not
+        ///   admit this parameter set's key generation.
+        /// - [`Error::RbgTooWeak`] when `rbg.strength_bits()` is below the
+        ///   parameter set's requirement (128 bits for ML-KEM-512, 192 for
+        ///   ML-KEM-768, 256 for ML-KEM-1024), before any draw.
+        /// - [`Error::Rbg`] when a draw fails.
+        /// - [`Error::ConditionalTestFailed`] when the pairwise consistency
+        ///   test fails (FIPS 140-3 IG 10.3.A); the module has entered its
+        ///   error state.
+        pub fn keygen<R: oxicrypt_module::Rbg>(
+            rbg: &mut R,
+        ) -> Result<([u8; EK_LEN], [u8; DK_LEN]), Error> {
+            oxicrypt_module::require_operational()?;
+            oxicrypt_module::require_allowed($svc_keygen)?;
+            let (d, z) = draw_d_z(rbg)?;
+            expand_checked(&d.bytes, &z.bytes)
+        }
+
+        /// As [`keygen`], and also returns d ‖ z, d first, so that the
+        /// caller can store the pair as its seed and expand it again with
+        /// [`expand_key`]. The seed computes the decapsulation key and needs
+        /// the same safeguards.
+        ///
+        /// # Errors
+        ///
+        /// As [`keygen`].
+        pub fn keygen_with_seed<R: oxicrypt_module::Rbg>(
+            rbg: &mut R,
+        ) -> Result<
+            (
+                oxicrypt_zeroize::Zeroizing<[u8; 2 * SEED_LEN]>,
+                [u8; EK_LEN],
+                [u8; DK_LEN],
+            ),
+            Error,
+        > {
+            oxicrypt_module::require_operational()?;
+            oxicrypt_module::require_allowed($svc_keygen)?;
+            let (d, z) = draw_d_z(rbg)?;
+            let (ek, dk) = expand_checked(&d.bytes, &z.bytes)?;
+            let mut seed = oxicrypt_zeroize::Zeroizing::new([0u8; 2 * SEED_LEN]);
+            seed[..SEED_LEN].copy_from_slice(&d.bytes);
+            seed[SEED_LEN..].copy_from_slice(&z.bytes);
+            Ok((seed, ek, dk))
+        }
+
+        /// Expands the key pair from a stored seed `(d, z)` (FIPS 203
+        /// Algorithm 16) and runs the pairwise consistency test, on every
+        /// call (FIPS 140-3 IG 10.3.A). A seed that did not come from this
+        /// module's [`keygen_with_seed`] is a private key imported from
+        /// outside the boundary. `d` and `z` are the caller's and are not
+        /// modified.
+        ///
+        /// # Errors
+        ///
+        /// - [`Error::NotOperational`] unless the module is operational.
+        /// - [`Error::AlgorithmRestricted`] when the active profile does not
+        ///   admit this parameter set's key expansion.
+        /// - [`Error::ConditionalTestFailed`] as for [`keygen`].
+        pub fn expand_key(
             d: &[u8; SEED_LEN],
             z: &[u8; SEED_LEN],
         ) -> Result<([u8; EK_LEN], [u8; DK_LEN]), Error> {
             oxicrypt_module::require_operational()?;
-            oxicrypt_module::require_allowed($svc_keygen)?;
-            keygen_internal_unguarded(d, z)
+            oxicrypt_module::require_allowed($svc_expand_key)?;
+            expand_checked(d, z)
         }
 
-        /// Encapsulate a shared secret against an encapsulation key.
+        /// ML-KEM.Encaps (FIPS 203 Algorithm 20): checks the strength of
+        /// `rbg`, draws m from it as one 32-byte request and encapsulates
+        /// against `ek`. m is wiped before the function returns.
         ///
-        /// `m` must be 32 bytes of fresh randomness from an approved
-        /// DRBG. Returns `(shared_secret, ciphertext)`.
-        pub fn encapsulate(
+        /// Returns `(shared_secret, ciphertext)`.
+        ///
+        /// # Errors
+        ///
+        /// - [`Error::NotOperational`] unless the module is operational.
+        /// - [`Error::AlgorithmRestricted`] when the active profile does not
+        ///   admit this parameter set's encapsulation.
+        /// - [`Error::RbgTooWeak`] when `rbg.strength_bits()` is below the
+        ///   requirement [`keygen`] states, before any draw.
+        /// - [`Error::Rbg`] when the draw fails.
+        pub fn encapsulate<R: oxicrypt_module::Rbg>(
             ek: &[u8; EK_LEN],
-            m: &[u8; SEED_LEN],
+            rbg: &mut R,
         ) -> Result<([u8; SHARED_SECRET_LEN], [u8; CT_LEN]), Error> {
             oxicrypt_module::require_operational()?;
             oxicrypt_module::require_allowed($svc_encaps)?;
-            encaps_internal_unguarded(ek, m)
+            let m = draw_m(rbg)?;
+            ml_kem_encaps(ek, &m.bytes)
         }
 
-        /// Decapsulate a shared secret from a ciphertext.
+        /// ML-KEM.Decaps (FIPS 203 Algorithm 21) of `ct` under `dk`.
         ///
-        /// Uses implicit rejection: if the ciphertext is invalid, a
-        /// pseudorandom key is returned. The comparison and the
-        /// selection are constant-time.
+        /// Uses implicit rejection: a ciphertext that does not re-encrypt
+        /// to itself yields the pseudorandom J(z ‖ c) rather than an error.
+        /// The comparison and the selection are constant-time.
+        ///
+        /// # Errors
+        ///
+        /// - [`Error::NotOperational`] unless the module is operational.
+        /// - [`Error::AlgorithmRestricted`] when the active profile does not
+        ///   admit this parameter set's decapsulation.
         pub fn decapsulate(
             dk: &[u8; DK_LEN],
             ct: &[u8; CT_LEN],
@@ -715,6 +765,70 @@ macro_rules! ml_kem_impl {
             oxicrypt_module::require_operational()?;
             oxicrypt_module::require_allowed($svc_decaps)?;
             decaps_internal_unguarded(dk, ct)
+        }
+
+        /// Checks the strength of `rbg` against [`RBG_STRENGTH_BITS`], then
+        /// draws d and then z (FIPS 203 Algorithm 19 steps 1 and 2). A
+        /// failure of the second draw drops, and so wipes, d.
+        fn draw_d_z<R: oxicrypt_module::Rbg>(
+            rbg: &mut R,
+        ) -> Result<(Tagged<SEED_LEN>, Tagged<SEED_LEN>), Error> {
+            if rbg.strength_bits() < RBG_STRENGTH_BITS {
+                return Err(Error::RbgTooWeak);
+            }
+            let mut d = Tagged::new(WipedBuffer::D);
+            rbg.fill(&mut d.bytes).map_err(Error::Rbg)?;
+            let mut z = Tagged::new(WipedBuffer::Z);
+            rbg.fill(&mut z.bytes).map_err(Error::Rbg)?;
+            Ok((d, z))
+        }
+
+        /// Checks the strength of `rbg` against [`RBG_STRENGTH_BITS`], then
+        /// draws m (FIPS 203 Algorithm 20 step 1).
+        fn draw_m<R: oxicrypt_module::Rbg>(rbg: &mut R) -> Result<Tagged<SEED_LEN>, Error> {
+            if rbg.strength_bits() < RBG_STRENGTH_BITS {
+                return Err(Error::RbgTooWeak);
+            }
+            let mut m = Tagged::new(WipedBuffer::M);
+            rbg.fill(&mut m.bytes).map_err(Error::Rbg)?;
+            Ok(m)
+        }
+
+        /// Expands the pair from `(d, z)` and runs the pairwise consistency
+        /// test before either half is returned. On a failed test both halves
+        /// are wiped, then the module enters its error state.
+        fn expand_checked(
+            d: &[u8; SEED_LEN],
+            z: &[u8; SEED_LEN],
+        ) -> Result<([u8; EK_LEN], [u8; DK_LEN]), Error> {
+            let mut ek = Tagged::<EK_LEN>::new(WipedBuffer::PublicKey);
+            let mut dk = Tagged::<DK_LEN>::new(WipedBuffer::SecretKey);
+            ml_kem_keygen(d, z, &mut ek.bytes, &mut dk.bytes)?;
+            #[cfg(any(test, feature = "fault-injection"))]
+            if $crate::seam::take_corrupt_next_dk() {
+                dk.bytes[0] ^= 0xFF;
+            }
+            if !pairwise_consistency(&ek.bytes, &dk.bytes)? {
+                drop(ek);
+                drop(dk);
+                oxicrypt_module::enter_error_state(PCT_REASON);
+                return Err(Error::ConditionalTestFailed { reason: PCT_REASON });
+            }
+            Ok((ek.bytes, dk.bytes))
+        }
+
+        /// The pairwise consistency test (FIPS 140-3 IG 10.3.A):
+        /// encapsulates against `ek` with [`oxicrypt_module::PCT_M`],
+        /// decapsulates the ciphertext with `dk`, and compares the two
+        /// shared secrets with the constant-time `ct_bytes_eq`. `false`
+        /// when they differ.
+        fn pairwise_consistency(ek: &[u8; EK_LEN], dk: &[u8; DK_LEN]) -> Result<bool, Error> {
+            let mut k = Tagged::<SHARED_SECRET_LEN>::new(WipedBuffer::PctEncapsK);
+            let mut ct = Tagged::<CT_LEN>::new(WipedBuffer::PctCiphertext);
+            ml_kem_encaps_into(ek, &oxicrypt_module::PCT_M, &mut k.bytes, &mut ct.bytes)?;
+            let mut k_prime = Tagged::<SHARED_SECRET_LEN>::new(WipedBuffer::PctDecapsK);
+            ml_kem_decaps_into(dk, &ct.bytes, &mut k_prime.bytes)?;
+            Ok(ct_bytes_eq(&k.bytes, &k_prime.bytes) == 0)
         }
 
         /// Internal keygen — no operational gate.
@@ -736,8 +850,8 @@ macro_rules! ml_kem_impl {
             keygen_internal_guarded(d, z)
         }
 
-        /// Key generation behind the `require_self_test_started` guard. Called
-        /// by the key-generation self-test (ML-KEM-1024), the crate's unit
+        /// Key generation behind the `require_self_test_started` guard, for
+        /// the key-generation self-test (ML-KEM-1024), the crate's unit
         /// tests and `keygen_internal`.
         pub(crate) fn keygen_internal_guarded(
             d: &[u8; SEED_LEN],
@@ -747,7 +861,6 @@ macro_rules! ml_kem_impl {
             keygen_internal_unguarded(d, z)
         }
 
-        /// Key generation once a caller's guard has passed.
         fn keygen_internal_unguarded(
             d: &[u8; SEED_LEN],
             z: &[u8; SEED_LEN],
@@ -777,9 +890,9 @@ macro_rules! ml_kem_impl {
             encaps_internal_guarded(ek, m)
         }
 
-        /// Encapsulation behind the `require_self_test_started` guard. Called
-        /// by the encapsulation self-test (ML-KEM-1024), the crate's unit
-        /// tests and `encaps_internal`.
+        /// Encapsulation behind the `require_self_test_started` guard, for
+        /// the encapsulation self-test (ML-KEM-1024), the crate's unit tests
+        /// and `encaps_internal`.
         pub(crate) fn encaps_internal_guarded(
             ek: &[u8; EK_LEN],
             m: &[u8; SEED_LEN],
@@ -788,7 +901,6 @@ macro_rules! ml_kem_impl {
             encaps_internal_unguarded(ek, m)
         }
 
-        /// Encapsulation once a caller's guard has passed.
         fn encaps_internal_unguarded(
             ek: &[u8; EK_LEN],
             m: &[u8; SEED_LEN],
@@ -815,8 +927,8 @@ macro_rules! ml_kem_impl {
             decaps_internal_guarded(dk, ct)
         }
 
-        /// Decapsulation behind the `require_self_test_started` guard. Called
-        /// by both decapsulation self-tests (ML-KEM-1024), the crate's unit
+        /// Decapsulation behind the `require_self_test_started` guard, for
+        /// both decapsulation self-tests (ML-KEM-1024), the crate's unit
         /// tests and `decaps_internal`.
         pub(crate) fn decaps_internal_guarded(
             dk: &[u8; DK_LEN],
@@ -826,7 +938,6 @@ macro_rules! ml_kem_impl {
             decaps_internal_unguarded(dk, ct)
         }
 
-        /// Decapsulation once a caller's guard has passed.
         fn decaps_internal_unguarded(
             dk: &[u8; DK_LEN],
             ct: &[u8; CT_LEN],
@@ -838,6 +949,405 @@ macro_rules! ml_kem_impl {
         #[allow(dead_code)]
         const _ASSERT_K_GT_0: usize = K - 1;
 
+        #[cfg(test)]
+        mod rbg_services {
+            extern crate std;
+
+            use super::*;
+            use oxicrypt_module::{Rbg, RbgError};
+
+            /// An RBG that serves `stream` in order at a chosen strength and
+            /// records the length of each draw.
+            pub(super) struct CountingRbg {
+                pub(super) stream: [u8; 2 * SEED_LEN],
+                pub(super) strength: u32,
+                pub(super) draws: std::vec::Vec<usize>,
+                served: usize,
+            }
+
+            impl CountingRbg {
+                pub(super) fn new(stream: [u8; 2 * SEED_LEN], strength: u32) -> Self {
+                    Self {
+                        stream,
+                        strength,
+                        draws: std::vec::Vec::new(),
+                        served: 0,
+                    }
+                }
+            }
+
+            impl Rbg for CountingRbg {
+                fn fill(&mut self, out: &mut [u8]) -> Result<(), RbgError> {
+                    self.draws.push(out.len());
+                    let end = self.served + out.len();
+                    let Some(source) = self.stream.get(self.served..end) else {
+                        return Err(RbgError::RequestTooLong);
+                    };
+                    out.copy_from_slice(source);
+                    self.served = end;
+                    Ok(())
+                }
+
+                fn strength_bits(&self) -> u32 {
+                    self.strength
+                }
+            }
+
+            /// Bytes 0..64 of a stream whose two halves differ, so that
+            /// swapping d and z changes the pair.
+            fn stream() -> [u8; 2 * SEED_LEN] {
+                core::array::from_fn(|i| i as u8 ^ 0x3c)
+            }
+
+            fn halves(s: &[u8; 2 * SEED_LEN]) -> ([u8; SEED_LEN], [u8; SEED_LEN]) {
+                let mut d = [0u8; SEED_LEN];
+                let mut z = [0u8; SEED_LEN];
+                d.copy_from_slice(&s[..SEED_LEN]);
+                z.copy_from_slice(&s[SEED_LEN..]);
+                (d, z)
+            }
+
+            /// `keygen` and `keygen_with_seed` draw d and then z as two
+            /// 32-byte requests and return what the internal core gives for
+            /// that d and z.
+            #[test]
+            fn with_rbg_keygen_matches_internal_core() {
+                crate::test_support::start_module();
+                let stream = stream();
+                let (d, z) = halves(&stream);
+                let expected = keygen_internal_guarded(&d, &z).unwrap();
+                assert_ne!(expected, keygen_internal_guarded(&z, &d).unwrap());
+
+                let mut rbg = CountingRbg::new(stream, RBG_STRENGTH_BITS);
+                assert_eq!(keygen(&mut rbg).unwrap(), expected);
+                assert_eq!(rbg.draws, [SEED_LEN, SEED_LEN]);
+
+                let mut rbg = CountingRbg::new(stream, RBG_STRENGTH_BITS);
+                let (seed, ek, dk) = keygen_with_seed(&mut rbg).unwrap();
+                assert_eq!((*seed, ek, dk), (stream, expected.0, expected.1));
+                assert_eq!(rbg.draws, [SEED_LEN, SEED_LEN]);
+            }
+
+            /// `encapsulate` draws m as one 32-byte request and returns what
+            /// the internal core gives for that m.
+            #[test]
+            fn with_rbg_encapsulate_matches_internal_core() {
+                crate::test_support::start_module();
+                let stream = stream();
+                let (d, z) = halves(&stream);
+                let (ek, dk) = keygen_internal_guarded(&d, &z).unwrap();
+                let expected = encaps_internal_guarded(&ek, &d).unwrap();
+
+                let mut rbg = CountingRbg::new(stream, RBG_STRENGTH_BITS);
+                let (k, ct) = encapsulate(&ek, &mut rbg).unwrap();
+                assert_eq!((k, ct), expected);
+                assert_eq!(rbg.draws, [SEED_LEN]);
+                assert_eq!(decapsulate(&dk, &ct).unwrap(), k);
+            }
+
+            /// An RBG below the set's strength is refused before any draw,
+            /// and an uninstantiated DRBG of sufficient strength is refused
+            /// by its draw.
+            #[test]
+            fn with_rbg_refuses_weak_or_uninstantiated() {
+                crate::test_support::start_module();
+                let (ek, _) =
+                    keygen_internal_guarded(&[0x11; SEED_LEN], &[0x22; SEED_LEN]).unwrap();
+                for strength in [128, 192, 256] {
+                    let mut keygen_rbg = CountingRbg::new(stream(), strength);
+                    let mut seed_rbg = CountingRbg::new(stream(), strength);
+                    let mut encaps_rbg = CountingRbg::new(stream(), strength);
+                    let outcomes = [
+                        keygen(&mut keygen_rbg).map(drop),
+                        keygen_with_seed(&mut seed_rbg).map(drop),
+                        encapsulate(&ek, &mut encaps_rbg).map(drop),
+                    ];
+                    let draws = [keygen_rbg.draws, seed_rbg.draws, encaps_rbg.draws];
+                    if strength < RBG_STRENGTH_BITS {
+                        for outcome in outcomes {
+                            assert_eq!(outcome, Err(Error::RbgTooWeak), "{strength}");
+                        }
+                        assert!(draws.iter().all(|d| d.is_empty()), "{strength}");
+                    } else {
+                        for outcome in outcomes {
+                            assert_eq!(outcome, Ok(()), "{strength}");
+                        }
+                        assert_eq!(draws.map(|d| d.len()), [2, 2, 1], "{strength}");
+                    }
+                }
+
+                // Uninstantiated, so any draw would fail with
+                // `Uninstantiated`: `RbgTooWeak` shows no draw was made.
+                let expected = |strength: u32| {
+                    if strength < RBG_STRENGTH_BITS {
+                        Error::RbgTooWeak
+                    } else {
+                        Error::Rbg(RbgError::Uninstantiated)
+                    }
+                };
+                let mut aes128 = oxicrypt_drbg::CtrDrbgAes128::new();
+                assert_eq!(keygen(&mut aes128).map(drop), Err(expected(128)));
+                assert_eq!(keygen_with_seed(&mut aes128).map(drop), Err(expected(128)));
+                assert_eq!(encapsulate(&ek, &mut aes128).map(drop), Err(expected(128)));
+                let mut aes192 = oxicrypt_drbg::CtrDrbgAes192::new();
+                assert_eq!(keygen(&mut aes192).map(drop), Err(expected(192)));
+                assert_eq!(encapsulate(&ek, &mut aes192).map(drop), Err(expected(192)));
+
+                let mut hmac = oxicrypt_drbg::HmacDrbgSha256::new();
+                let uninstantiated = Err(Error::Rbg(RbgError::Uninstantiated));
+                assert_eq!(keygen(&mut hmac).map(drop), uninstantiated);
+                assert_eq!(keygen_with_seed(&mut hmac).map(drop), uninstantiated);
+                assert_eq!(encapsulate(&ek, &mut hmac).map(drop), uninstantiated);
+            }
+
+            /// `expand_key` reproduces the pair `keygen_with_seed` returned
+            /// from the seed it returned, and a seed with one byte changed
+            /// does not.
+            #[test]
+            fn keygen_with_seed_round_trips() {
+                crate::test_support::start_module();
+                let mut rbg = CountingRbg::new([0x96; 2 * SEED_LEN], RBG_STRENGTH_BITS);
+                let (seed, ek, dk) = keygen_with_seed(&mut rbg).unwrap();
+                let (d, z) = halves(&seed);
+                assert_eq!(expand_key(&d, &z).unwrap(), (ek, dk));
+                assert_eq!(
+                    (d, z),
+                    ([0x96; SEED_LEN], [0x96; SEED_LEN]),
+                    "expand_key modified the caller's seed"
+                );
+
+                let mut mutated = d;
+                mutated[0] ^= 0x01;
+                let (other_ek, other_dk) = expand_key(&mutated, &z).unwrap();
+                assert_ne!(other_ek, ek);
+                assert_ne!(other_dk, dk);
+            }
+        }
+
+        #[cfg(all(test, feature = "fault-injection"))]
+        mod wipe_on_exit {
+            extern crate std;
+
+            use super::rbg_services::CountingRbg;
+            use super::*;
+            use oxicrypt_module::{Rbg, RbgError};
+            use $crate::seam;
+            use $crate::wipe::WipedBuffer::*;
+
+            /// Every buffer an encapsulation holds.
+            const ENCAPSULATION: &[WipedBuffer] = &[
+                M,
+                NoisePrf,
+                EncryptRho,
+                EncapsG,
+                EncapsK,
+                EncapsR,
+                EncryptTHat,
+                EncryptA,
+                EncryptY,
+                EncryptE1,
+                EncryptE2,
+                EncryptU,
+                EncryptV,
+                EncryptMu,
+            ];
+
+            /// Every buffer a key generation that reaches the pairwise
+            /// consistency test holds.
+            const KEY_GENERATION: &[WipedBuffer] = &[
+                D,
+                Z,
+                KeygenGInput,
+                KeygenG,
+                KeygenRho,
+                KeygenSigma,
+                NoisePrf,
+                EncryptRho,
+                EncapsG,
+                EncapsK,
+                EncapsR,
+                DecapsMPrime,
+                DecapsG,
+                DecapsKPrime,
+                DecapsRPrime,
+                DecapsKBar,
+                DecapsCtPrime,
+                PublicKey,
+                SecretKey,
+                PctCiphertext,
+                PctEncapsK,
+                PctDecapsK,
+                KeygenA,
+                KeygenS,
+                KeygenE,
+                KeygenTHat,
+                EncryptTHat,
+                EncryptA,
+                EncryptY,
+                EncryptE1,
+                EncryptE2,
+                EncryptU,
+                EncryptV,
+                EncryptMu,
+                DecryptU,
+                DecryptV,
+                DecryptSHat,
+                DecryptW,
+            ];
+
+            /// Set in the child process this test runs its body in.
+            const CHILD: &str = "OXICRYPT_ML_KEM_WIPE_CHILD";
+
+            /// An RBG whose draws fail from the `fail_at`-th on, counting
+            /// from 0.
+            struct FailingRbg {
+                fail_at: usize,
+                draws: usize,
+            }
+
+            impl Rbg for FailingRbg {
+                fn fill(&mut self, out: &mut [u8]) -> Result<(), RbgError> {
+                    self.draws += 1;
+                    if self.draws > self.fail_at {
+                        oxicrypt_zeroize::zeroize(out);
+                        return Err(RbgError::Busy);
+                    }
+                    out.fill(0x5a);
+                    Ok(())
+                }
+
+                fn strength_bits(&self) -> u32 {
+                    256
+                }
+            }
+
+            /// Checks that, since the last reset, exactly the buffers in
+            /// `held` were constructed, each was wiped as often as it was
+            /// constructed and at least once, and every wipe left it zero.
+            fn assert_wiped(exit: &str, held: &[WipedBuffer]) {
+                for buffer in $crate::wipe::ALL {
+                    let made = seam::temporaries(buffer);
+                    let wiped = seam::wipes(buffer);
+                    if held.contains(&buffer) {
+                        assert!(wiped >= 1, "{exit}: {buffer:?} has no recorded wipe");
+                        assert_eq!(wiped, made, "{exit}: {buffer:?} wiped {wiped} of {made}");
+                    } else {
+                        assert_eq!(made, 0, "{exit}: {buffer:?} is not in the list");
+                    }
+                }
+                assert_eq!(seam::unwiped(), 0, "{exit}: a wipe left a nonzero byte");
+                seam::reset();
+            }
+
+            /// Every exit of the key-generation and encapsulation services
+            /// wipes every buffer it holds: a strength refusal (which holds
+            /// none), a failed first draw, a failed second draw, success
+            /// through each entry point, and a failed pairwise consistency
+            /// test. The last puts the module in its error state, so the
+            /// body runs in a child process of its own.
+            ///
+            /// Limit: the expansion core's error exit is not exercised,
+            /// because the core fails only on a module state that the
+            /// service's own gate refuses first.
+            #[test]
+            fn seeds_wiped_on_every_exit() {
+                let name = module_path!()
+                    .split_once("::")
+                    .map(|(_, path)| std::format!("{path}::seeds_wiped_on_every_exit"))
+                    .unwrap();
+                if std::env::var_os(CHILD).is_none() {
+                    let out = std::process::Command::new(std::env::current_exe().unwrap())
+                        .args([name.as_str(), "--exact", "--test-threads=1"])
+                        .env(CHILD, "1")
+                        .output()
+                        .unwrap();
+                    let stdout = std::string::String::from_utf8_lossy(&out.stdout);
+                    assert!(
+                        out.status.success() && stdout.contains("test result: ok. 1 passed"),
+                        "{name} did not pass in its own process:\n{stdout}{}",
+                        std::string::String::from_utf8_lossy(&out.stderr)
+                    );
+                    return;
+                }
+
+                crate::test_support::start_module();
+                let (ek, _) =
+                    keygen_internal_guarded(&[0x33; SEED_LEN], &[0x44; SEED_LEN]).unwrap();
+                seam::reset();
+
+                let mut weak = CountingRbg::new([0x11; 2 * SEED_LEN], RBG_STRENGTH_BITS - 64);
+                assert_eq!(keygen(&mut weak).map(drop), Err(Error::RbgTooWeak));
+                assert_eq!(
+                    encapsulate(&ek, &mut weak).map(drop),
+                    Err(Error::RbgTooWeak)
+                );
+                assert_wiped("strength refusal", &[]);
+
+                let mut first = FailingRbg {
+                    fail_at: 0,
+                    draws: 0,
+                };
+                assert_eq!(
+                    keygen_with_seed(&mut first).map(drop),
+                    Err(Error::Rbg(RbgError::Busy))
+                );
+                assert_wiped("first draw failure", &[D]);
+
+                let mut second = FailingRbg {
+                    fail_at: 1,
+                    draws: 0,
+                };
+                assert_eq!(
+                    keygen(&mut second).map(drop),
+                    Err(Error::Rbg(RbgError::Busy))
+                );
+                assert_eq!(second.draws, 2);
+                assert_wiped("second draw failure", &[D, Z]);
+
+                let mut first = FailingRbg {
+                    fail_at: 0,
+                    draws: 0,
+                };
+                assert_eq!(
+                    encapsulate(&ek, &mut first).map(drop),
+                    Err(Error::Rbg(RbgError::Busy))
+                );
+                assert_wiped("encapsulation draw failure", &[M]);
+
+                let mut rbg = CountingRbg::new([0x11; 2 * SEED_LEN], RBG_STRENGTH_BITS);
+                encapsulate(&ek, &mut rbg).unwrap();
+                assert_wiped("encapsulate", ENCAPSULATION);
+
+                let mut rbg = CountingRbg::new([0x11; 2 * SEED_LEN], RBG_STRENGTH_BITS);
+                keygen(&mut rbg).unwrap();
+                assert_wiped("keygen", KEY_GENERATION);
+
+                let mut rbg = CountingRbg::new([0x11; 2 * SEED_LEN], RBG_STRENGTH_BITS);
+                let (seed, _, _) = keygen_with_seed(&mut rbg).unwrap();
+                assert_wiped("keygen_with_seed", KEY_GENERATION);
+                drop(seed);
+
+                let (d, z) = ([0x22; SEED_LEN], [0x23; SEED_LEN]);
+                expand_key(&d, &z).unwrap();
+                assert_eq!((d, z), ([0x22; SEED_LEN], [0x23; SEED_LEN]));
+                let without_seed: std::vec::Vec<WipedBuffer> = KEY_GENERATION
+                    .iter()
+                    .copied()
+                    .filter(|b| !matches!(b, D | Z))
+                    .collect();
+                assert_wiped("expand_key", &without_seed);
+
+                seam::corrupt_next_dk();
+                let mut rbg = CountingRbg::new([0x11; 2 * SEED_LEN], RBG_STRENGTH_BITS);
+                assert_eq!(
+                    keygen(&mut rbg).map(drop),
+                    Err(Error::ConditionalTestFailed { reason: PCT_REASON })
+                );
+                assert!(!oxicrypt_module::is_operational());
+                assert_wiped("pairwise consistency failure", KEY_GENERATION);
+            }
+        }
+
         // The feature-gated `expand_a` must equal an always-sequential
         // reference loop, which never touches the rayon path, cell for cell
         // for a few fixed ρ. Key-generation known-answer tests cover only
@@ -847,8 +1357,6 @@ macro_rules! ml_kem_impl {
         mod parallel_determinism {
             use super::*;
 
-            /// Always-sequential reference: identical to the non-parallel
-            /// `expand_a` body, never invoking the rayon path.
             fn expand_a_sequential_reference(rho: &[u8; SEED_LEN]) -> PolyMatrix {
                 let mut rows: [[Poly; K]; K] =
                     core::array::from_fn(|_| core::array::from_fn(|_| Poly::zero()));

@@ -1,8 +1,8 @@
 //! Volatile zeroization for sensitive security parameters.
 //!
 //! This is one of the in-boundary crates in the oxicrypt workspace that
-//! use `unsafe`. It provides four functions — [`zeroize`],
-//! [`zeroize_u32`], [`zeroize_i32`] and [`zeroize_u64`] — that write zeroes
+//! use `unsafe`. It provides five functions — [`zeroize`],
+//! [`zeroize_u32`], [`zeroize_i16`], [`zeroize_i32`] and [`zeroize_u64`] — that write zeroes
 //! through volatile stores, and one type, the wrapper [`Zeroizing`], whose
 //! `Drop` calls [`zeroize`] on the byte buffer it holds.
 //! The workspace's `AGENTS.md` names the in-boundary crates that use
@@ -24,8 +24,8 @@
 //! determines the memory is never read. `write_volatile` is the
 //! portable, stable mechanism to prevent that.
 //!
-//! Outside its tests the crate has four `unsafe` blocks, one in each
-//! of the four loops, each a `write_volatile` of a zero, and the
+//! Outside its tests the crate has five `unsafe` blocks, one in each
+//! of the five loops, each a `write_volatile` of a zero, and the
 //! soundness argument for each is that it writes to owned, aligned,
 //! valid memory — the same memory the caller already has a mutable
 //! reference to.
@@ -84,9 +84,22 @@ pub fn zeroize_u32(buf: &mut [u32]) {
     }
 }
 
+/// Overwrite an `[i16]` slice with zeroes using volatile stores.
+///
+/// Used by ML-KEM, whose polynomial coefficients are `i16`.
+#[inline]
+pub fn zeroize_i16(buf: &mut [i16]) {
+    for coeff in buf.iter_mut() {
+        // SAFETY: same argument as `zeroize` — valid, aligned, owned.
+        unsafe {
+            core::ptr::write_volatile(coeff, 0);
+        }
+    }
+}
+
 /// Overwrite an `[i32]` slice with zeroes using volatile stores.
 ///
-/// Used by the lattice schemes, whose polynomial coefficients are `i32`.
+/// Used by ML-DSA, whose polynomial coefficients are `i32`.
 #[inline]
 pub fn zeroize_i32(buf: &mut [i32]) {
     for coeff in buf.iter_mut() {
@@ -179,6 +192,13 @@ mod tests {
         let mut buf = [0xDEAD_BEEF_u64; 16];
         zeroize_u64(&mut buf);
         assert!(buf.iter().all(|&l| l == 0));
+    }
+
+    #[test]
+    fn zeroize_i16_clears_coefficients() {
+        let mut buf = [-0x0123_i16; 256];
+        zeroize_i16(&mut buf);
+        assert!(buf.iter().all(|&c| c == 0));
     }
 
     #[test]

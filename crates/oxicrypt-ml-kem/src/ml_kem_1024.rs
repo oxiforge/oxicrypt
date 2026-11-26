@@ -20,8 +20,11 @@ crate::ml_kem_impl::ml_kem_impl! {
     du = 11;
     dv = 5;
     svc_keygen = Service::MlKem1024Keygen;
+    svc_expand_key = Service::MlKem1024ExpandKey;
     svc_encaps = Service::MlKem1024Encaps;
     svc_decaps = Service::MlKem1024Decaps;
+    rbg_strength_bits = 256;
+    pct_reason = "ML-KEM-1024 pairwise consistency";
 }
 
 #[cfg(test)]
@@ -145,8 +148,22 @@ mod tests {
         ensure_initialized();
         let d = [0u8; 32];
         let z = [0u8; 32];
-        let result = keygen(&d, &z);
+        let result = expand_key(&d, &z);
         assert!(result.is_ok());
+    }
+
+    /// ACVP ML-KEM-1024 keyGen, tgId 3, tcId 51, the key-generation
+    /// self-test's vector.
+    #[test]
+    fn expand_key_reproduces_acvp_vector() {
+        use crate::cast_vectors::ml_kem_1024 as v;
+        crate::test_support::start_module();
+        let (ek, dk) = expand_key(&v::KEYGEN_D, &v::KEYGEN_Z).unwrap();
+        assert_eq!(
+            &ek[..],
+            include_bytes!("../tests/data/mlkem1024_nist_keygen_ek.bin")
+        );
+        assert_eq!(dk, v::KEYGEN_DK);
     }
 
     #[test]

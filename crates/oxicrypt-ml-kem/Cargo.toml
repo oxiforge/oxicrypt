@@ -26,6 +26,10 @@ parallel = ["dep:rayon"]
 # of every parameter set, which FIPS 203 §3.3 restricts to CAVP testing.
 # Default OFF, and enabled by no shipped build.
 testing-interfaces = []
+# The test seam `oxicrypt_ml_kem::seam`, which corrupts the next generated
+# decapsulation key before its pairwise consistency test. Default OFF, and
+# enabled by no shipped build.
+fault-injection = []
 
 [dependencies]
 oxicrypt-module = { workspace = true }
@@ -33,6 +37,26 @@ oxicrypt-sha = { workspace = true }
 oxicrypt-xof = { workspace = true }
 oxicrypt-zeroize = { workspace = true }
 rayon = { version = "1", optional = true }
+
+# The DRBG types whose strength and instantiation the key-generation and
+# encapsulation tests check.
+[dev-dependencies]
+oxicrypt-drbg = { path = "../oxicrypt-drbg" }
+
+[[test]]
+name = "pct_fault_ml_kem_512"
+path = "tests/pct_fault_ml_kem_512.rs"
+required-features = ["fault-injection"]
+
+[[test]]
+name = "pct_fault_ml_kem_768"
+path = "tests/pct_fault_ml_kem_768.rs"
+required-features = ["fault-injection"]
+
+[[test]]
+name = "pct_fault_ml_kem_1024"
+path = "tests/pct_fault_ml_kem_1024.rs"
+required-features = ["fault-injection"]
 
 [package.metadata.lama]
 # Registry discovery (LAMA SPEC.md, "Package registry discovery"). Must be a

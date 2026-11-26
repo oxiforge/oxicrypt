@@ -9,7 +9,7 @@
 //!
 //! ML-KEM-512 is **not** part of CNSA 2.0 (which mandates ML-KEM-1024)
 //! and is **not** in the CNSA 1.0 suite either. The
-//! `Service::MlKem512Keygen` / `Encaps` / `Decaps` variants are
+//! `Service::MlKem512Keygen` / `ExpandKey` / `Encaps` / `Decaps` variants are
 //! permitted only under [`oxicrypt_module::AlgorithmProfile::Unrestricted`].
 //! See `crates/oxicrypt-module/src/lib.rs` `is_cnsa1_allowed` and
 //! `is_cnsa2_allowed`.
@@ -29,8 +29,11 @@ crate::ml_kem_impl::ml_kem_impl! {
     du = 10;
     dv = 4;
     svc_keygen = Service::MlKem512Keygen;
+    svc_expand_key = Service::MlKem512ExpandKey;
     svc_encaps = Service::MlKem512Encaps;
     svc_decaps = Service::MlKem512Decaps;
+    rbg_strength_bits = 128;
+    pct_reason = "ML-KEM-512 pairwise consistency";
 }
 
 #[cfg(test)]
@@ -42,6 +45,34 @@ crate::ml_kem_impl::ml_kem_impl! {
 )]
 mod tests {
     use super::*;
+
+    /// NIST ACVP-Server `ML-KEM-keyGen-FIPS203` internalProjection,
+    /// tgId 1, tcId 1: the seeds d and z, and SHA2-256(ek ‖ dk) of the
+    /// expected pair.
+    #[test]
+    fn expand_key_reproduces_acvp_vector() {
+        const D: [u8; 32] = [
+            0xbb, 0xa3, 0xc0, 0xf5, 0xdf, 0x04, 0x4c, 0xdf, 0x4d, 0x9c, 0xaa, 0x53, 0xca, 0x15,
+            0xfd, 0xe2, 0x6f, 0x34, 0xeb, 0x35, 0x41, 0x55, 0x5c, 0xfc, 0x54, 0xca, 0x9c, 0x31,
+            0xb9, 0x64, 0xd0, 0xc8,
+        ];
+        const Z: [u8; 32] = [
+            0x0a, 0x64, 0xfd, 0xd5, 0x1a, 0x8d, 0x91, 0xb3, 0x16, 0x6c, 0x49, 0x58, 0xa9, 0x4e,
+            0xfc, 0x31, 0x66, 0xa4, 0xf5, 0xdf, 0x68, 0x09, 0x80, 0xb8, 0x78, 0xdb, 0x83, 0x71,
+            0xb7, 0x62, 0x4c, 0x96,
+        ];
+        const KEY_HASH: [u8; 32] = [
+            0x1c, 0x21, 0x19, 0xf3, 0xb2, 0x6a, 0x37, 0x38, 0xe6, 0x99, 0x85, 0x7b, 0xf4, 0xf9,
+            0xd8, 0x97, 0x11, 0x26, 0x64, 0x10, 0xcb, 0x5a, 0x4c, 0x89, 0x72, 0x8f, 0xb9, 0xc4,
+            0x1c, 0x38, 0xe3, 0x77,
+        ];
+        crate::test_support::start_module();
+        let (ek, dk) = expand_key(&D, &Z).unwrap();
+        let mut h = oxicrypt_sha::sha256::Sha256::new().unwrap();
+        h.update(&ek);
+        h.update(&dk);
+        assert_eq!(h.finalize().unwrap(), KEY_HASH);
+    }
 
     #[test]
     fn round_trip_basic() {

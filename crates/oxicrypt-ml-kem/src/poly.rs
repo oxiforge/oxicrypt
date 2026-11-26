@@ -27,6 +27,16 @@ pub(crate) struct Poly {
     pub(crate) coeffs: [i16; N],
 }
 
+/// Every polynomial is wiped when it is dropped. The secret vectors of key
+/// generation, encryption and decryption are polynomials or arrays of them.
+impl Drop for Poly {
+    fn drop(&mut self) {
+        oxicrypt_zeroize::zeroize_i16(&mut self.coeffs);
+        #[cfg(test)]
+        crate::wipe_witness::record(self.coeffs.iter().all(|&c| c == 0));
+    }
+}
+
 impl Poly {
     /// Zero polynomial.
     pub(crate) const fn zero() -> Self {

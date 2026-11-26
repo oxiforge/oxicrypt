@@ -20,14 +20,12 @@
 use crate::encode::sample_cbd;
 use crate::params::{N, Q_U16, SEED_LEN};
 use crate::poly::Poly;
+use crate::wipe::{Tagged, WipedBuffer};
 use oxicrypt_module::{Error, SelfTestStarted};
 use oxicrypt_xof::{Shake128, Shake256};
 
 /// Rejection-sample a polynomial in NTT domain from a SHAKE-128
 /// stream (FIPS 203 Algorithm 7: `SampleNTT`).
-///
-/// Reads 3 bytes at a time from the XOF, extracting two 12-bit
-/// candidates. Each candidate < q is accepted.
 pub(crate) fn sample_ntt(xof: &mut Shake128, started: &SelfTestStarted) -> Poly {
     let mut poly = Poly::zero();
     let mut j: usize = 0;
@@ -48,20 +46,20 @@ pub(crate) fn sample_ntt(xof: &mut Shake128, started: &SelfTestStarted) -> Poly 
     poly
 }
 
-/// Sample a noise polynomial from PRF(σ, nonce) using CBD(η).
-///
-/// PRF_η(σ, N) = SHAKE-256(σ ‖ N), squeezed to 64 · η bytes.
+/// SamplePolyCBD_η(PRF_η(σ, N)) with PRF_η(σ, N) = SHAKE-256(σ ‖ N) to
+/// 64 · η bytes (FIPS 203 §4.1 (4.3), Algorithm 8).
 pub(crate) fn sample_noise(sigma: &[u8; SEED_LEN], nonce: u8, eta: usize) -> Result<Poly, Error> {
     let mut prf = Shake256::new_internal()?;
     prf.update(sigma);
     prf.update(&[nonce]);
     prf.finalize();
 
-    let mut buf = [0u8; 192]; // max: 64 * 3 = 192 for η = 3
+    // 64 · η bytes, at most 192 for η = 3.
+    let mut buf = Tagged::<192>::new(WipedBuffer::NoisePrf);
     let prf_len = 64 * eta;
-    prf.squeeze(&mut buf[..prf_len])?;
+    prf.squeeze(&mut buf.bytes[..prf_len])?;
 
     let mut poly = Poly::zero();
-    sample_cbd(eta, &buf[..prf_len], &mut poly.coeffs);
+    sample_cbd(eta, &buf.bytes[..prf_len], &mut poly.coeffs);
     Ok(poly)
 }

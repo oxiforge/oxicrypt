@@ -1,17 +1,16 @@
-/* ML-KEM-1024 C ABI smoke test — keygen / encapsulate / decapsulate
- * round-trip with implicit-rejection oracle on tamper.
+/* ML-KEM-1024 C ABI smoke test — keygen, the refused caller-m
+ * encapsulate, and decapsulate with its implicit-rejection oracle.
  *
- * FIPS 203 §6.1–§6.3, parameter set k=4. Byte counts: d=z=m=32,
- * ek=1568, dk=3168, ct=1568, ss=32.
+ * Parameter set k=4. Byte counts: d=z=m=32, ek=1568, dk=3168, ct=1568,
+ * ss=32.
  *
- * All three ML-KEM parameter sets carry a parallel C round-trip
- * exercise; this is the ML-KEM-1024 one.
- *
- * Decapsulate tamper-detection follows the FIPS 203 §6.3 implicit-
- * rejection contract: tampered ciphertext does NOT surface as an
- * error discriminant, but the resulting shared secret IS distinct
- * from the encapsulated `ss_a` with overwhelming probability — the
- * test asserts non-equality, not error code.
+ * oxi_ml_kem_1024_encapsulate takes a caller-supplied m, which is not a
+ * module service (FIPS 203 §3.3: the module performs the sampling), so it
+ * returns OXI_RESULT_NOT_IMPLEMENTED and writes nothing. Decapsulation is
+ * therefore checked on a fixed ciphertext rather than on a round trip:
+ * implicit rejection (FIPS 203 Algorithm 18) returns a shared secret
+ * without an error discriminant, the same one for the same ciphertext and,
+ * with overwhelming probability, a different one when a byte is flipped.
  */
 
 #include "oxicrypt.h"
@@ -44,28 +43,34 @@ int main(void) {
 
     uint8_t ss_a[32];
     uint8_t ct[1568];
+    memset(ss_a, 0xC3, sizeof(ss_a));
+    memset(ct, 0xC3, sizeof(ct));
     rc = oxi_ml_kem_1024_encapsulate(ek, m, ss_a, ct);
-    if (rc != 0) {
-        fprintf(stderr, "encapsulate failed: rc=%d\n", rc);
+    if (rc != OXI_RESULT_NOT_IMPLEMENTED) {
+        fprintf(stderr, "encapsulate returned rc=%d, expected %d\n", rc,
+                OXI_RESULT_NOT_IMPLEMENTED);
         return 3;
     }
+    for (size_t i = 0; i < sizeof(ct); i++) {
+        if (ct[i] != 0xC3 || (i < sizeof(ss_a) && ss_a[i] != 0xC3)) {
+            fprintf(stderr, "encapsulate wrote to an output\n");
+            return 4;
+        }
+    }
 
-    uint8_t ss_b[32];
+    memset(ct, 0x5A, sizeof(ct));
+    uint8_t ss_b[32], ss_c[32];
     rc = oxi_ml_kem_1024_decapsulate(dk, ct, ss_b);
     if (rc != 0) {
         fprintf(stderr, "decapsulate failed: rc=%d\n", rc);
-        return 4;
-    }
-    if (memcmp(ss_a, ss_b, 32) != 0) {
-        fprintf(stderr, "shared-secret mismatch on clean round-trip\n");
         return 5;
     }
+    rc = oxi_ml_kem_1024_decapsulate(dk, ct, ss_c);
+    if (rc != 0 || memcmp(ss_b, ss_c, 32) != 0) {
+        fprintf(stderr, "decapsulate is not deterministic: rc=%d\n", rc);
+        return 6;
+    }
 
-    /* Tamper ct[0] and decapsulate again. FIPS 203 §6.3 implicit
-     * rejection returns a deterministic-but-pseudorandom ss without
-     * surfacing any error discriminant. The shared secret MUST be
-     * distinct from ss_a (with overwhelming probability — collision
-     * would require a near-zero-probability internal state hit). */
     uint8_t ct_bad[1568];
     memcpy(ct_bad, ct, sizeof(ct_bad));
     ct_bad[0] ^= 0xFF;
@@ -73,13 +78,13 @@ int main(void) {
     rc = oxi_ml_kem_1024_decapsulate(dk, ct_bad, ss_bad);
     if (rc != 0) {
         fprintf(stderr, "decapsulate(tampered) returned rc=%d (expected 0; tamper does NOT surface as error)\n", rc);
-        return 6;
-    }
-    if (memcmp(ss_a, ss_bad, 32) == 0) {
-        fprintf(stderr, "implicit rejection failed: tampered ct produced matching shared secret\n");
         return 7;
     }
+    if (memcmp(ss_b, ss_bad, 32) == 0) {
+        fprintf(stderr, "implicit rejection failed: tampered ct produced matching shared secret\n");
+        return 8;
+    }
 
-    printf("test_ml_kem_1024_smoke: OK (keygen + encaps + decaps + implicit-rejection)\n");
+    printf("test_ml_kem_1024_smoke: OK (keygen + encapsulate refused + decaps + implicit-rejection)\n");
     return 0;
 }

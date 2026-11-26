@@ -20,9 +20,22 @@
 //!
 //! | Service | Description | CNSA-1.0 | CNSA-2.0 | Migration |
 //! |---------|-------------|----------|----------|-----------|
-//! | `MlKem512Keygen` / `Encaps` / `Decaps` | ML-KEM-512 | No | No | No |
-//! | `MlKem768Keygen` / `Encaps` / `Decaps` | ML-KEM-768 | No | No | No |
-//! | `MlKem1024Keygen` / `Encaps` / `Decaps` | ML-KEM-1024 | No | Yes | Yes |
+//! | `MlKem512Keygen` / `ExpandKey` / `Encaps` / `Decaps` | ML-KEM-512 | No | No | No |
+//! | `MlKem768Keygen` / `ExpandKey` / `Encaps` / `Decaps` | ML-KEM-768 | No | No | No |
+//! | `MlKem1024Keygen` / `ExpandKey` / `Encaps` / `Decaps` | ML-KEM-1024 | No | Yes | Yes |
+//!
+//! `Keygen` covers `keygen` and `keygen_with_seed`, which draw d and then z
+//! from an RBG the caller passes (FIPS 203 Algorithm 19); `ExpandKey`
+//! covers `expand_key`, which expands a stored `(d, z)`; `Encaps` covers
+//! `encapsulate`, which draws m from an RBG the caller passes (FIPS 203
+//! Algorithm 20). `keygen`, `keygen_with_seed` and `encapsulate` refuse an
+//! RBG below the parameter set's strength before any draw: 128 bits for
+//! ML-KEM-512, 192 for ML-KEM-768, 256 for ML-KEM-1024 (FIPS 203 §3.3).
+//! The three key-generation functions run a pairwise consistency test on
+//! the pair before returning it (FIPS 140-3 IG 10.3.A); a failure wipes the
+//! pair, returns `Error::ConditionalTestFailed` with the reason
+//! `"ML-KEM-NNN pairwise consistency"`, and puts the module in its error
+//! state.
 //!
 //! ML-KEM-512 and ML-KEM-768 are permitted only under the
 //! [`AlgorithmProfile::Unrestricted`](oxicrypt_module::AlgorithmProfile)
@@ -61,7 +74,8 @@
 //! [`DK_LEN`], [`CT_LEN`], [`SEED_LEN`], [`SHARED_SECRET_LEN`], and with
 //! the `testing-interfaces` feature `keygen_internal`, `encaps_internal`
 //! and `decaps_internal`), so `oxicrypt_ml_kem::keygen` and the rest
-//! resolve to ML-KEM-1024. Callers that need another set name
+//! resolve to ML-KEM-1024. `keygen_with_seed` and `expand_key` are reached
+//! through [`ml_kem_1024`]. Callers that need another set name
 //! [`ml_kem_512`], [`ml_kem_768`] or [`ml_kem_1024`].
 //!
 //! # The `testing-interfaces` feature (default OFF)
@@ -114,30 +128,33 @@
 //!
 //! | SSP | Description | Zeroization |
 //! |-----|-------------|-------------|
-//! | dk  | Decapsulation key (per-variant length) | Caller responsibility |
-//! | m   | Encapsulation randomness (32 bytes) | Caller responsibility |
-//! | d   | Keygen randomness (32 bytes) | Caller responsibility |
-//! | z   | Implicit-rejection seed (32 bytes) | Embedded in dk |
-//! | K (encaps) | Shared secret stack local in `ml_kem_encaps` | Module — volatile zeroize on function exit |
-//! | r (encaps) | Re-encryption randomness stack local in `ml_kem_encaps` | Module — volatile zeroize on function exit |
-//! | m' (decaps) | Re-encryption-input random stack local in `ml_kem_decaps` | Module — volatile zeroize on function exit |
-//! | K' (decaps) | Candidate shared-secret stack local in `ml_kem_decaps` | Module — volatile zeroize on function exit |
-//! | K̄ (decaps) | Implicit-rejection fallback shared-secret stack local | Module — volatile zeroize on function exit |
+//! | dk  | Decapsulation key (per-variant length) | Module copies wiped on every exit; the returned key is the caller's |
+//! | d, z | Key-generation seeds (32 bytes each) | Drawn inside the module and wiped on every exit; returned by `keygen_with_seed` as d ‖ z in a `Zeroizing` that wipes it on drop; the caller's `expand_key` arguments are the caller's to wipe |
+//! | m   | Encapsulation randomness (32 bytes) | Drawn inside the module and wiped on every exit |
+//! | σ, ρ ‖ σ, d ‖ k | Key-generation intermediates | Wiped on every exit |
+//! | K, r, K ‖ r (encaps) | Shared secret and encryption randomness | Wiped on every exit; the returned shared secret is the caller's |
+//! | m′, K′, r′, K′ ‖ r′, K̄, c′ (decaps) | Decapsulation intermediates | Wiped on every exit |
+//! | PRF output | Noise-sampling input | Wiped on every exit |
+//! | s, e, t̂, Â, y, e₁, e₂, u, v, μ, u′, v′, ŝ, w | Polynomial intermediates of K-PKE | Wiped on every exit |
 //!
-//! Intermediate-state CSPs that live in stack-locals inside the FO
-//! transform are wiped via `oxicrypt_zeroize::zeroize` on function
-//! exit. Zeroising temporary SSPs when they are no longer needed is
-//! AS09.32 (ISO/IEC 19790:2012 §7.9.7), which applies at Levels 2
+//! Each byte buffer above is held in a wrapper that zeroizes it with
+//! `oxicrypt_zeroize::zeroize` when dropped, and every polynomial is
+//! zeroized with `oxicrypt_zeroize::zeroize_i16` when dropped, so an early
+//! return wipes them too. A value moved out of a frame can leave a bitwise
+//! copy in the dead frame. Zeroising temporary SSPs when they are no longer
+//! needed is AS09.32 (ISO/IEC 19790:2012 §7.9.7), which applies at Levels 2
 //! and above; this module targets Level 1 and wipes regardless.
-//! Because every parameter set is generated from the same
-//! `ml_kem_impl!` macro body, the zeroize-completeness invariant is
-//! auditable at a single site and holds uniformly across
-//! ML-KEM-512, -768, and -1024.
+//!
+//! # The `fault-injection` feature (default OFF)
+//!
+//! Compiles the `seam` module, whose `corrupt_next_dk` makes the next key
+//! generation's pairwise consistency test fail, for the tests of that
+//! failure path. No shipped build enables it.
 //!
 //! # FIPS module gating
 //!
-//! Public entry points (`keygen`, `encapsulate`, `decapsulate` per
-//! variant) gate on [`oxicrypt_module::require_operational`] and
+//! Public entry points (`keygen`, `keygen_with_seed`, `expand_key`,
+//! `encapsulate`, `decapsulate` per variant) gate on [`oxicrypt_module::require_operational`] and
 //! [`oxicrypt_module::require_allowed`]. The `*_internal` surface
 //! (hidden, `testing-interfaces` only) runs without the operational gate:
 //! it calls [`oxicrypt_module::require_self_test_started`] instead, so it
@@ -182,8 +199,13 @@ mod ntt;
 pub mod params;
 mod poly;
 mod sample;
+/// Test seams for the key-generation services; available with the
+/// `fault-injection` feature or in the crate's own tests.
+#[cfg(any(test, feature = "fault-injection"))]
+pub mod seam;
 #[cfg(feature = "parallel")]
 mod sweep;
+mod wipe;
 
 /// ML-KEM-512 instantiation (FIPS 203 Table 2: k=2, η₁=3, η₂=2, dᵤ=10, dᵥ=4).
 pub mod ml_kem_512;
@@ -201,6 +223,60 @@ pub use ml_kem_1024::{
 pub use ml_kem_1024::{decaps_internal, encaps_internal, keygen_internal};
 
 pub use cast::KATS;
+
+/// What the last `Drop` of a polynomial on this thread left in its
+/// coefficients, read by the drop itself while the polynomial is still
+/// owned. Reading the memory after the drop would need `unsafe` and would
+/// be a read of freed storage; this observes the same fact soundly.
+#[cfg(test)]
+mod wipe_witness {
+    extern crate std;
+
+    std::thread_local! {
+        static LAST: core::cell::Cell<Option<bool>> = const { core::cell::Cell::new(None) };
+        static COUNTS: core::cell::Cell<(u64, u64)> = const { core::cell::Cell::new((0, 0)) };
+    }
+
+    pub(crate) fn record(zeroed: bool) {
+        LAST.with(|c| c.set(Some(zeroed)));
+        COUNTS.with(|c| {
+            let (drops, unzeroed) = c.get();
+            c.set((
+                drops.saturating_add(1),
+                unzeroed.saturating_add(u64::from(!zeroed)),
+            ));
+        });
+    }
+
+    /// The drops recorded on this thread so far, and how many of them left
+    /// a nonzero coefficient.
+    #[cfg(feature = "fault-injection")]
+    pub(crate) fn counts() -> (u64, u64) {
+        COUNTS.with(core::cell::Cell::get)
+    }
+
+    /// `Some(true)` when the last drop left its coefficients all zero.
+    pub(crate) fn take() -> Option<bool> {
+        LAST.with(core::cell::Cell::take)
+    }
+}
+
+#[cfg(test)]
+mod wiped_tests {
+    use super::wipe_witness;
+
+    /// Dropping a polynomial that holds coefficients leaves it all zero.
+    #[test]
+    fn dropping_a_polynomial_zeroes_it() {
+        let _ = wipe_witness::take();
+        let mut p = crate::poly::Poly::zero();
+        p.coeffs = [0x0123; crate::params::N];
+        drop(p);
+        assert_eq!(wipe_witness::take(), Some(true));
+        // Control: nothing dropped, nothing recorded.
+        assert_eq!(wipe_witness::take(), None);
+    }
+}
 
 #[cfg(test)]
 pub(crate) mod test_support {

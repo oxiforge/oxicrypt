@@ -809,6 +809,7 @@ dependencies = [
 name = "oxicrypt-ml-kem"
 version = "0.26.1"
 dependencies = [
+ "oxicrypt-drbg",
  "oxicrypt-module",
  "oxicrypt-sha",
  "oxicrypt-xof",

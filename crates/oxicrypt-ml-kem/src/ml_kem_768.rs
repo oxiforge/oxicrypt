@@ -9,7 +9,7 @@
 //!
 //! ML-KEM-768 is **not** part of CNSA 2.0 (which mandates ML-KEM-1024)
 //! and is **not** in the CNSA 1.0 suite either. The
-//! `Service::MlKem768Keygen` / `Encaps` / `Decaps` variants are
+//! `Service::MlKem768Keygen` / `ExpandKey` / `Encaps` / `Decaps` variants are
 //! permitted only under [`oxicrypt_module::AlgorithmProfile::Unrestricted`].
 
 #![allow(
@@ -27,8 +27,11 @@ crate::ml_kem_impl::ml_kem_impl! {
     du = 10;
     dv = 4;
     svc_keygen = Service::MlKem768Keygen;
+    svc_expand_key = Service::MlKem768ExpandKey;
     svc_encaps = Service::MlKem768Encaps;
     svc_decaps = Service::MlKem768Decaps;
+    rbg_strength_bits = 192;
+    pct_reason = "ML-KEM-768 pairwise consistency";
 }
 
 #[cfg(test)]
@@ -40,6 +43,34 @@ crate::ml_kem_impl::ml_kem_impl! {
 )]
 mod tests {
     use super::*;
+
+    /// NIST ACVP-Server `ML-KEM-keyGen-FIPS203` internalProjection,
+    /// tgId 2, tcId 26: the seeds d and z, and SHA2-256(ek ‖ dk) of the
+    /// expected pair.
+    #[test]
+    fn expand_key_reproduces_acvp_vector() {
+        const D: [u8; 32] = [
+            0xa2, 0xb4, 0xbc, 0xa3, 0x15, 0xa6, 0xea, 0x46, 0x00, 0xb4, 0xa3, 0x16, 0xe0, 0x9a,
+            0x25, 0x78, 0xaa, 0x1e, 0x8b, 0xce, 0x91, 0x9c, 0x8d, 0xf3, 0xa9, 0x6c, 0x71, 0xc8,
+            0x43, 0xf5, 0xb3, 0x8b,
+        ];
+        const Z: [u8; 32] = [
+            0xd6, 0xbf, 0x05, 0x5c, 0xb7, 0xb3, 0x75, 0xe3, 0x27, 0x1e, 0xd1, 0x31, 0xf1, 0xba,
+            0x31, 0xf8, 0x3f, 0xef, 0x53, 0x3a, 0x23, 0x98, 0x78, 0xa7, 0x10, 0x74, 0x57, 0x8b,
+            0x89, 0x12, 0x65, 0xd1,
+        ];
+        const KEY_HASH: [u8; 32] = [
+            0x1b, 0xe9, 0x36, 0xa1, 0xa1, 0x65, 0x81, 0xda, 0xe5, 0x9d, 0x6f, 0xc5, 0xa4, 0x3a,
+            0x2d, 0x75, 0xfb, 0x56, 0xa0, 0x7f, 0xb1, 0xa4, 0x7e, 0xad, 0x34, 0x55, 0x13, 0x40,
+            0xb6, 0xe5, 0xe9, 0x05,
+        ];
+        crate::test_support::start_module();
+        let (ek, dk) = expand_key(&D, &Z).unwrap();
+        let mut h = oxicrypt_sha::sha256::Sha256::new().unwrap();
+        h.update(&ek);
+        h.update(&dk);
+        assert_eq!(h.finalize().unwrap(), KEY_HASH);
+    }
 
     #[test]
     fn round_trip_basic() {

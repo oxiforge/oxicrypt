@@ -247,7 +247,7 @@ modules:
       - oxicrypt-sha
 
   - name: oxicrypt-zeroize
-    description: "Volatile-write zeroization for CSP buffers: zeroize() for byte slices, zeroize_u32() for u32 arrays, zeroize_i32() for i32 arrays, zeroize_u64() for u64 arrays, and the Zeroizing<T> wrapper that wipes its byte buffer on drop."
+    description: "Volatile-write zeroization for CSP buffers: zeroize() for byte slices, zeroize_u32() for u32 arrays, zeroize_i16() for i16 arrays, zeroize_i32() for i32 arrays, zeroize_u64() for u64 arrays, and the Zeroizing<T> wrapper that wipes its byte buffer on drop."
     no_std: true
     depends_on: []
 
@@ -466,6 +466,14 @@ families:
 
   - name: ml-kem-decapsulate
     description: ML-KEM decapsulation, one per FIPS 203 parameter set.
+    applies_to: functions
+
+  - name: ml-kem-check-encapsulation-key
+    description: The FIPS 203 §7.2 encapsulation key check on its own, one per FIPS 203 parameter set.
+    applies_to: functions
+
+  - name: ml-kem-check-decapsulation-key
+    description: The FIPS 203 §7.3 decapsulation key check on its own, one per FIPS 203 parameter set.
     applies_to: functions
 
   - name: ml-dsa-keygen
@@ -8086,36 +8094,34 @@ functions:
   - name: keygen
     module: oxicrypt-ml-kem
     family: ml-kem-keygen
-    signature: "pub fn keygen(d: &[u8; 32], z: &[u8; 32]) -> Result<([u8; 1568], [u8; 3168]), Error>"
-    description: Generate an ML-KEM-1024 key pair; d and z must each be 32 bytes of fresh randomness from an approved DRBG (SP 800-90A).
+    signature: >-
+      pub fn keygen<R: oxicrypt_module::Rbg>(rbg: &mut R)
+      -> Result<([u8; 1568], [u8; 3168]), Error>
+    description: ML-KEM.KeyGen for ML-KEM-1024 (FIPS 203 Algorithm 19); checks that rbg has at least 256-bit strength, draws d and then z from it inside the module as two 32-byte requests, expands the pair and runs an encapsulate-then-decapsulate pairwise consistency test (FIPS 140-3 IG 10.3.A) before returning it; d and z are wiped and never returned; the crate root re-exports ml_kem_1024::keygen under this name.
     parameters:
-      - name: d
-        type: "&[u8; 32]"
-        constraints:
-          size: 32
-        direction: in
-        description: "32-byte randomness for K-PKE key generation."
-      - name: z
-        type: "&[u8; 32]"
-        constraints:
-          size: 32
-        direction: in
-        description: "32-byte randomness for implicit-rejection seed."
+      - name: rbg
+        type: "&mut R where R: oxicrypt_module::Rbg"
+        direction: inout
+        description: An instantiated oxicrypt-drbg DRBG of at least 256-bit strength, whose two 32-byte fills produce d and then z.
     returns:
       type: "Result<([u8; 1568], [u8; 3168]), Error>"
       description: "(encapsulation_key, decapsulation_key)"
       error_variants:
         - name: NotOperational
-          condition: Module not initialized.
+          condition: Module not operational, including after a failed pairwise consistency test.
         - name: AlgorithmRestricted
-          condition: ML-KEM-1024 blocked by active profile.
-        - name: InvalidInput
-          condition: Invalid or insufficient randomness.
+          condition: ML-KEM-1024 key generation blocked by active profile.
+        - name: RbgTooWeak
+          condition: rbg.strength_bits() is below 256; returned before any draw.
+        - name: Rbg
+          condition: A draw failed; carries its RbgError unchanged, for example Uninstantiated.
+        - name: ConditionalTestFailed
+          condition: 'The pairwise consistency test failed, reason "ML-KEM-1024 pairwise consistency"; the pair is wiped and the module has entered its error state.'
     preconditions:
       - description: Module must be Operational.
-      - description: d and z must each be 32 bytes of fresh random data from an approved DRBG.
+      - description: rbg is instantiated and reports at least 256-bit strength.
     postconditions:
-      - description: Returns a valid ML-KEM-1024 key pair for use with encapsulate and decapsulate.
+      - description: Returns a key pair that has passed the pairwise consistency test; every module-owned copy of d, z, the intermediates and the pair is wiped on every exit.
     thread_safety: thread-safe
     security:
       constant_time: true
@@ -8127,11 +8133,111 @@ functions:
       - Cnsa2
       - Migration
 
+  - name: "ml_kem_1024::keygen_with_seed"
+    module: oxicrypt-ml-kem
+    family: ml-kem-keygen
+    signature: >-
+      pub fn keygen_with_seed<R: oxicrypt_module::Rbg>(rbg: &mut R)
+      -> Result<(oxicrypt_zeroize::Zeroizing<[u8; 64]>, [u8; 1568], [u8; 3168]), Error>
+    description: As keygen for ML-KEM-1024, and also returns d ‖ z, d first, so the caller can store it for later expansion with expand_key; the seed computes the decapsulation key and needs the same safeguards.
+    parameters:
+      - name: rbg
+        type: "&mut R where R: oxicrypt_module::Rbg"
+        direction: inout
+        description: An instantiated oxicrypt-drbg DRBG of at least 256-bit strength, whose two 32-byte fills produce d and then z.
+    returns:
+      type: "Result<(oxicrypt_zeroize::Zeroizing<[u8; 64]>, [u8; 1568], [u8; 3168]), Error>"
+      description: "(d ‖ z, encapsulation_key, decapsulation_key); the seed is wiped when the Zeroizing is dropped."
+      error_variants:
+        - name: NotOperational
+          condition: Module not operational, including after a failed pairwise consistency test.
+        - name: AlgorithmRestricted
+          condition: ML-KEM-1024 key generation blocked by active profile.
+        - name: RbgTooWeak
+          condition: rbg.strength_bits() is below 256; returned before any draw.
+        - name: Rbg
+          condition: A draw failed; carries its RbgError unchanged, for example Uninstantiated.
+        - name: ConditionalTestFailed
+          condition: 'The pairwise consistency test failed, reason "ML-KEM-1024 pairwise consistency"; the pair is wiped and the module has entered its error state.'
+    preconditions:
+      - description: Module must be Operational.
+      - description: rbg is instantiated and reports at least 256-bit strength.
+    postconditions:
+      - description: expand_key on the returned d and z reproduces the returned pair.
+    thread_safety: thread-safe
+    security:
+      constant_time: true
+      handles_secrets: true
+      fips_approved: true
+      fips_gate: Operational
+    profiles:
+      - Unrestricted
+      - Cnsa2
+      - Migration
+
+  - name: "ml_kem_1024::expand_key"
+    module: oxicrypt-ml-kem
+    family: ml-kem-keygen
+    signature: "pub fn expand_key(d: &[u8; 32], z: &[u8; 32]) -> Result<([u8; 1568], [u8; 3168]), Error>"
+    description: Expands the ML-KEM-1024 key pair from a stored seed (d, z) (FIPS 203 Algorithm 16) and runs the pairwise consistency test on every call (FIPS 140-3 IG 10.3.A); a seed that did not come from keygen_with_seed is a private key imported from outside the boundary.
+    parameters:
+      - name: d
+        type: "&[u8; 32]"
+        constraints:
+          size: 32
+        direction: in
+        description: The stored seed d; the caller's, not modified, and the caller's to wipe.
+      - name: z
+        type: "&[u8; 32]"
+        constraints:
+          size: 32
+        direction: in
+        description: The stored seed z; the caller's, not modified, and the caller's to wipe.
+    returns:
+      type: "Result<([u8; 1568], [u8; 3168]), Error>"
+      description: "(encapsulation_key, decapsulation_key)"
+      error_variants:
+        - name: NotOperational
+          condition: Module not operational, including after a failed pairwise consistency test.
+        - name: AlgorithmRestricted
+          condition: ML-KEM-1024 key expansion blocked by active profile.
+        - name: ConditionalTestFailed
+          condition: 'The pairwise consistency test failed, reason "ML-KEM-1024 pairwise consistency"; the pair is wiped and the module has entered its error state.'
+    preconditions:
+      - description: Module must be Operational.
+    postconditions:
+      - description: The same (d, z) always gives the same pair; every module-owned copy of the intermediates and the pair is wiped on every exit.
+    thread_safety: thread-safe
+    security:
+      constant_time: true
+      handles_secrets: true
+      fips_approved: true
+      fips_gate: Operational
+    profiles:
+      - Unrestricted
+      - Cnsa2
+      - Migration
+
+  - name: "seam::corrupt_next_dk"
+    module: oxicrypt-ml-kem
+    description: "Arms the next ML-KEM key generation in the process, of any parameter set and through keygen, keygen_with_seed or expand_key, to flip byte 0 of the decapsulation key before its pairwise consistency test, which then fails and puts the module in its error state; available with the fault-injection feature or in the crate's own tests."
+    signature: "pub fn corrupt_next_dk()"
+    returns:
+      type: "()"
+      description: "Nothing."
+    thread_safety: thread-safe
+    security:
+      constant_time: false
+      handles_secrets: false
+      fips_approved: false
+
   - name: encapsulate
     module: oxicrypt-ml-kem
     family: ml-kem-encapsulate
-    signature: "pub fn encapsulate(ek: &[u8; 1568], m: &[u8; 32]) -> Result<([u8; 32], [u8; 1568]), Error>"
-    description: Encapsulate a shared secret against an ML-KEM-1024 encapsulation key; m must be 32 bytes of fresh randomness from an approved DRBG.
+    signature: >-
+      pub fn encapsulate<R: oxicrypt_module::Rbg>(ek: &[u8; 1568], rbg: &mut R)
+      -> Result<([u8; 32], [u8; 1568]), Error>
+    description: ML-KEM.Encaps for ML-KEM-1024 (FIPS 203 Algorithm 20); runs the FIPS 203 §7.2 encapsulation key check on ek, then checks that rbg has at least 256-bit strength, draws the 32-byte m from it inside the module and encapsulates against ek; m is wiped and never returned; the crate root re-exports ml_kem_1024::encapsulate under this name.
     parameters:
       - name: ek
         type: "&[u8; 1568]"
@@ -8139,26 +8245,28 @@ functions:
           size: 1568
         direction: in
         description: "Encapsulation key (from keygen)."
-      - name: m
-        type: "&[u8; 32]"
-        constraints:
-          size: 32
-        direction: in
-        description: "32-byte randomness for encapsulation."
+      - name: rbg
+        type: "&mut R where R: oxicrypt_module::Rbg"
+        direction: inout
+        description: An instantiated oxicrypt-drbg DRBG of at least 256-bit strength, whose one 32-byte fill produces m.
     returns:
       type: "Result<([u8; 32], [u8; 1568]), Error>"
       description: "(shared_secret, ciphertext)"
       error_variants:
         - name: NotOperational
-          condition: Module not initialized.
+          condition: Module not operational.
         - name: AlgorithmRestricted
-          condition: ML-KEM-1024 blocked by active profile.
+          condition: ML-KEM-1024 encapsulation blocked by active profile.
         - name: InvalidInput
-          condition: Invalid encapsulation key or randomness.
+          condition: ek fails the FIPS 203 §7.2 modulus check (a 12-bit value of its first 1536 bytes is at or above q = 3329); returned before the strength check and before any draw.
+        - name: RbgTooWeak
+          condition: rbg.strength_bits() is below 256; returned before any draw.
+        - name: Rbg
+          condition: The draw failed; carries its RbgError unchanged, for example Uninstantiated.
     preconditions:
       - description: Module must be Operational.
-      - description: ek must be a valid 1568-byte encapsulation key from keygen.
-      - description: m must be 32 bytes of fresh random data from an approved DRBG.
+      - description: ek is a 1568-byte encapsulation key; one that fails the FIPS 203 §7.2 check is refused with InvalidInput.
+      - description: rbg is instantiated and reports at least 256-bit strength.
     postconditions:
       - description: Returns a 32-byte shared secret and 1568-byte ciphertext; the shared secret is reproducible only with the private decapsulation key.
     thread_safety: thread-safe
@@ -8176,7 +8284,7 @@ functions:
     module: oxicrypt-ml-kem
     family: ml-kem-decapsulate
     signature: "pub fn decapsulate(dk: &[u8; 3168], ct: &[u8; 1568]) -> Result<[u8; 32], Error>"
-    description: Decapsulate a shared secret from an ML-KEM-1024 ciphertext using implicit rejection; an invalid ciphertext yields a constant-time pseudorandom key.
+    description: ML-KEM.Decaps for ML-KEM-1024 (FIPS 203 Algorithm 21); runs the FIPS 203 §7.3 decapsulation input check (lengths by type; H of the stored ek recomputed and compared with the stored hash), then decapsulates using implicit rejection, so a ciphertext that does not match yields a constant-time pseudorandom key rather than an error; the crate root re-exports ml_kem_1024::decapsulate under this name.
     parameters:
       - name: dk
         type: "&[u8; 3168]"
@@ -8198,12 +8306,80 @@ functions:
           condition: Module not initialized.
         - name: AlgorithmRestricted
           condition: ML-KEM-1024 blocked by active profile.
+        - name: InvalidInput
+          condition: dk fails the FIPS 203 §7.3 hash check (the hash stored at bytes 3104..3136 is not SHA3-256 of the ek stored at bytes 1536..3104); returned before any computation on ct.
     preconditions:
       - description: Module must be Operational.
-      - description: dk must be a valid 3168-byte decapsulation key from keygen.
+      - description: dk is a 3168-byte decapsulation key; one that fails the FIPS 203 §7.3 hash check is refused with InvalidInput.
       - description: ct must be a 1568-byte ciphertext from encapsulate.
     postconditions:
       - description: Returns the 32-byte shared secret; by construction (implicit rejection) constant-time, returning a pseudorandom value even if ct is invalid.
+    thread_safety: thread-safe
+    security:
+      constant_time: true
+      handles_secrets: true
+      fips_approved: true
+      fips_gate: Operational
+    profiles:
+      - Unrestricted
+      - Cnsa2
+      - Migration
+
+  - name: "ml_kem_1024::check_encapsulation_key"
+    module: oxicrypt-ml-kem
+    family: ml-kem-check-encapsulation-key
+    signature: "pub fn check_encapsulation_key(ek: &[u8; 1568]) -> Result<bool, Error>"
+    description: The FIPS 203 §7.2 encapsulation key check that encapsulate runs, on its own, for ML-KEM-1024; for the ACVP encapsulation key check tests and for a caller that checks a key once before storing it.
+    parameters:
+      - name: ek
+        type: "&[u8; 1568]"
+        constraints:
+          size: 1568
+        direction: in
+        description: The encapsulation key to check.
+    returns:
+      type: "Result<bool, Error>"
+      description: "true when every 12-bit value of ek's first 1536 bytes is below q = 3329, false otherwise; a failing key is not an error."
+      error_variants:
+        - name: NotOperational
+          condition: Module not operational.
+        - name: AlgorithmRestricted
+          condition: ML-KEM-1024 encapsulation blocked by active profile.
+    preconditions:
+      - description: Module must be Operational.
+    thread_safety: thread-safe
+    security:
+      constant_time: true
+      handles_secrets: false
+      fips_approved: true
+      fips_gate: Operational
+    profiles:
+      - Unrestricted
+      - Cnsa2
+      - Migration
+
+  - name: "ml_kem_1024::check_decapsulation_key"
+    module: oxicrypt-ml-kem
+    family: ml-kem-check-decapsulation-key
+    signature: "pub fn check_decapsulation_key(dk: &[u8; 3168]) -> Result<bool, Error>"
+    description: The FIPS 203 §7.3 decapsulation key checks that decapsulate runs on dk, on its own, for ML-KEM-1024; for the ACVP decapsulation key check tests and for a caller that checks a key once before storing it.
+    parameters:
+      - name: dk
+        type: "&[u8; 3168]"
+        constraints:
+          size: 3168
+        direction: in
+        description: The decapsulation key to check; its length is the §7.3 type check.
+    returns:
+      type: "Result<bool, Error>"
+      description: "true when the hash stored at bytes 3104..3136 is SHA3-256 of the ek stored at bytes 1536..3104, false otherwise; a failing key is not an error."
+      error_variants:
+        - name: NotOperational
+          condition: Module not operational.
+        - name: AlgorithmRestricted
+          condition: ML-KEM-1024 decapsulation blocked by active profile.
+    preconditions:
+      - description: Module must be Operational.
     thread_safety: thread-safe
     security:
       constant_time: true
@@ -8220,31 +8396,113 @@ functions:
   - name: "ml_kem_512::keygen"
     module: oxicrypt-ml-kem
     family: ml-kem-keygen
-    signature: "pub fn keygen(d: &[u8; 32], z: &[u8; 32]) -> Result<([u8; 800], [u8; 1632]), Error>"
-    description: Generate an ML-KEM-512 key pair (FIPS 203 §6.1, k=2); d and z are 32-byte caller-supplied randomness, NOT interchangeable.
+    signature: >-
+      pub fn keygen<R: oxicrypt_module::Rbg>(rbg: &mut R)
+      -> Result<([u8; 800], [u8; 1632]), Error>
+    description: ML-KEM.KeyGen for ML-KEM-512 (FIPS 203 Algorithm 19, k=2); checks that rbg has at least 128-bit strength, draws d and then z from it inside the module as two 32-byte requests, expands the pair and runs an encapsulate-then-decapsulate pairwise consistency test (FIPS 140-3 IG 10.3.A) before returning it; d and z are wiped and never returned.
+    parameters:
+      - name: rbg
+        type: "&mut R where R: oxicrypt_module::Rbg"
+        direction: inout
+        description: An instantiated oxicrypt-drbg DRBG of at least 128-bit strength, whose two 32-byte fills produce d and then z.
+    returns:
+      type: "Result<([u8; 800], [u8; 1632]), Error>"
+      description: "(encapsulation_key, decapsulation_key)"
+      error_variants:
+        - name: NotOperational
+          condition: Module not operational, including after a failed pairwise consistency test.
+        - name: AlgorithmRestricted
+          condition: ML-KEM-512 key generation blocked by active profile (not in CNSA 1.0 or CNSA 2.0).
+        - name: RbgTooWeak
+          condition: rbg.strength_bits() is below 128; returned before any draw.
+        - name: Rbg
+          condition: A draw failed; carries its RbgError unchanged, for example Uninstantiated.
+        - name: ConditionalTestFailed
+          condition: 'The pairwise consistency test failed, reason "ML-KEM-512 pairwise consistency"; the pair is wiped and the module has entered its error state.'
+    preconditions:
+      - description: Module must be Operational.
+      - description: rbg is instantiated and reports at least 128-bit strength.
+    postconditions:
+      - description: Returns a key pair that has passed the pairwise consistency test; every module-owned copy of d, z, the intermediates and the pair is wiped on every exit.
+    thread_safety: thread-safe
+    security:
+      constant_time: true
+      handles_secrets: true
+      fips_approved: true
+      fips_gate: Operational
+    profiles: [Unrestricted]
+
+  - name: "ml_kem_512::keygen_with_seed"
+    module: oxicrypt-ml-kem
+    family: ml-kem-keygen
+    signature: >-
+      pub fn keygen_with_seed<R: oxicrypt_module::Rbg>(rbg: &mut R)
+      -> Result<(oxicrypt_zeroize::Zeroizing<[u8; 64]>, [u8; 800], [u8; 1632]), Error>
+    description: As ml_kem_512::keygen, and also returns d ‖ z, d first, so the caller can store it for later expansion with ml_kem_512::expand_key; the seed computes the decapsulation key and needs the same safeguards.
+    parameters:
+      - name: rbg
+        type: "&mut R where R: oxicrypt_module::Rbg"
+        direction: inout
+        description: An instantiated oxicrypt-drbg DRBG of at least 128-bit strength, whose two 32-byte fills produce d and then z.
+    returns:
+      type: "Result<(oxicrypt_zeroize::Zeroizing<[u8; 64]>, [u8; 800], [u8; 1632]), Error>"
+      description: "(d ‖ z, encapsulation_key, decapsulation_key); the seed is wiped when the Zeroizing is dropped."
+      error_variants:
+        - name: NotOperational
+          condition: Module not operational, including after a failed pairwise consistency test.
+        - name: AlgorithmRestricted
+          condition: ML-KEM-512 key generation blocked by active profile.
+        - name: RbgTooWeak
+          condition: rbg.strength_bits() is below 128; returned before any draw.
+        - name: Rbg
+          condition: A draw failed; carries its RbgError unchanged, for example Uninstantiated.
+        - name: ConditionalTestFailed
+          condition: 'The pairwise consistency test failed, reason "ML-KEM-512 pairwise consistency"; the pair is wiped and the module has entered its error state.'
+    preconditions:
+      - description: Module must be Operational.
+      - description: rbg is instantiated and reports at least 128-bit strength.
+    postconditions:
+      - description: ml_kem_512::expand_key on the returned d and z reproduces the returned pair.
+    thread_safety: thread-safe
+    security:
+      constant_time: true
+      handles_secrets: true
+      fips_approved: true
+      fips_gate: Operational
+    profiles: [Unrestricted]
+
+  - name: "ml_kem_512::expand_key"
+    module: oxicrypt-ml-kem
+    family: ml-kem-keygen
+    signature: "pub fn expand_key(d: &[u8; 32], z: &[u8; 32]) -> Result<([u8; 800], [u8; 1632]), Error>"
+    description: Expands the ML-KEM-512 key pair from a stored seed (d, z) (FIPS 203 Algorithm 16) and runs the pairwise consistency test on every call (FIPS 140-3 IG 10.3.A); a seed that did not come from keygen_with_seed is a private key imported from outside the boundary.
     parameters:
       - name: d
         type: "&[u8; 32]"
         constraints:
           size: 32
         direction: in
-        description: "32-byte randomness for K-PKE key generation."
+        description: The stored seed d; the caller's, not modified, and the caller's to wipe.
       - name: z
         type: "&[u8; 32]"
         constraints:
           size: 32
         direction: in
-        description: "32-byte randomness for implicit-rejection seed."
+        description: The stored seed z; the caller's, not modified, and the caller's to wipe.
     returns:
       type: "Result<([u8; 800], [u8; 1632]), Error>"
       description: "(encapsulation_key, decapsulation_key)"
       error_variants:
         - name: NotOperational
-          condition: Module not initialized.
+          condition: Module not operational, including after a failed pairwise consistency test.
         - name: AlgorithmRestricted
-          condition: ML-KEM-512 blocked by active profile (not in CNSA 1.0 or CNSA 2.0).
-        - name: InvalidInput
-          condition: Invalid or insufficient randomness.
+          condition: ML-KEM-512 key expansion blocked by active profile.
+        - name: ConditionalTestFailed
+          condition: 'The pairwise consistency test failed, reason "ML-KEM-512 pairwise consistency"; the pair is wiped and the module has entered its error state.'
+    preconditions:
+      - description: Module must be Operational.
+    postconditions:
+      - description: The same (d, z) always gives the same pair; every module-owned copy of the intermediates and the pair is wiped on every exit.
     thread_safety: thread-safe
     security:
       constant_time: true
@@ -8256,8 +8514,10 @@ functions:
   - name: "ml_kem_512::encapsulate"
     module: oxicrypt-ml-kem
     family: ml-kem-encapsulate
-    signature: "pub fn encapsulate(ek: &[u8; 800], m: &[u8; 32]) -> Result<([u8; 32], [u8; 768]), Error>"
-    description: Encapsulate a shared secret against an ML-KEM-512 encapsulation key (FIPS 203 §6.2, k=2); m is 32-byte caller-supplied randomness from an approved DRBG.
+    signature: >-
+      pub fn encapsulate<R: oxicrypt_module::Rbg>(ek: &[u8; 800], rbg: &mut R)
+      -> Result<([u8; 32], [u8; 768]), Error>
+    description: ML-KEM.Encaps for ML-KEM-512 (FIPS 203 Algorithm 20, k=2); runs the FIPS 203 §7.2 encapsulation key check on ek, then checks that rbg has at least 128-bit strength, draws the 32-byte m from it inside the module and encapsulates against ek; m is wiped and never returned.
     parameters:
       - name: ek
         type: "&[u8; 800]"
@@ -8265,20 +8525,24 @@ functions:
           size: 800
         direction: in
         description: "Encapsulation key (from ml_kem_512::keygen)."
-      - name: m
-        type: "&[u8; 32]"
-        constraints:
-          size: 32
-        direction: in
-        description: "32-byte randomness for encapsulation."
+      - name: rbg
+        type: "&mut R where R: oxicrypt_module::Rbg"
+        direction: inout
+        description: An instantiated oxicrypt-drbg DRBG of at least 128-bit strength, whose one 32-byte fill produces m.
     returns:
       type: "Result<([u8; 32], [u8; 768]), Error>"
       description: "(shared_secret, ciphertext)"
       error_variants:
         - name: NotOperational
-          condition: Module not initialized.
+          condition: Module not operational.
         - name: AlgorithmRestricted
-          condition: ML-KEM-512 blocked by active profile.
+          condition: ML-KEM-512 encapsulation blocked by active profile.
+        - name: InvalidInput
+          condition: ek fails the FIPS 203 §7.2 modulus check (a 12-bit value of its first 768 bytes is at or above q = 3329); returned before the strength check and before any draw.
+        - name: RbgTooWeak
+          condition: rbg.strength_bits() is below 128; returned before any draw.
+        - name: Rbg
+          condition: The draw failed; carries its RbgError unchanged, for example Uninstantiated.
     thread_safety: thread-safe
     security:
       constant_time: true
@@ -8291,7 +8555,7 @@ functions:
     module: oxicrypt-ml-kem
     family: ml-kem-decapsulate
     signature: "pub fn decapsulate(dk: &[u8; 1632], ct: &[u8; 768]) -> Result<[u8; 32], Error>"
-    description: "Decapsulate a shared secret from an ML-KEM-512 ciphertext (FIPS 203 §6.3, k=2) using implicit rejection: constant-time pseudorandom output on malformed ciphertext."
+    description: "ML-KEM.Decaps for ML-KEM-512 (FIPS 203 Algorithm 21, k=2); runs the FIPS 203 §7.3 decapsulation input check (lengths by type; H of the stored ek recomputed and compared with the stored hash), then decapsulates using implicit rejection: constant-time pseudorandom output, not an error, for a ciphertext that does not match."
     parameters:
       - name: dk
         type: "&[u8; 1632]"
@@ -8313,6 +8577,64 @@ functions:
           condition: Module not initialized.
         - name: AlgorithmRestricted
           condition: ML-KEM-512 blocked by active profile.
+        - name: InvalidInput
+          condition: dk fails the FIPS 203 §7.3 hash check (the hash stored at bytes 1568..1600 is not SHA3-256 of the ek stored at bytes 768..1568); returned before any computation on ct.
+    thread_safety: thread-safe
+    security:
+      constant_time: true
+      handles_secrets: true
+      fips_approved: true
+      fips_gate: Operational
+    profiles: [Unrestricted]
+
+  - name: "ml_kem_512::check_encapsulation_key"
+    module: oxicrypt-ml-kem
+    family: ml-kem-check-encapsulation-key
+    signature: "pub fn check_encapsulation_key(ek: &[u8; 800]) -> Result<bool, Error>"
+    description: The FIPS 203 §7.2 encapsulation key check that ml_kem_512::encapsulate runs, on its own; for the ACVP encapsulation key check tests and for a caller that checks a key once before storing it.
+    parameters:
+      - name: ek
+        type: "&[u8; 800]"
+        constraints:
+          size: 800
+        direction: in
+        description: The encapsulation key to check.
+    returns:
+      type: "Result<bool, Error>"
+      description: "true when every 12-bit value of ek's first 768 bytes is below q = 3329, false otherwise; a failing key is not an error."
+      error_variants:
+        - name: NotOperational
+          condition: Module not operational.
+        - name: AlgorithmRestricted
+          condition: ML-KEM-512 encapsulation blocked by active profile.
+    thread_safety: thread-safe
+    security:
+      constant_time: true
+      handles_secrets: false
+      fips_approved: true
+      fips_gate: Operational
+    profiles: [Unrestricted]
+
+  - name: "ml_kem_512::check_decapsulation_key"
+    module: oxicrypt-ml-kem
+    family: ml-kem-check-decapsulation-key
+    signature: "pub fn check_decapsulation_key(dk: &[u8; 1632]) -> Result<bool, Error>"
+    description: The FIPS 203 §7.3 decapsulation key checks that ml_kem_512::decapsulate runs on dk, on its own; for the ACVP decapsulation key check tests and for a caller that checks a key once before storing it.
+    parameters:
+      - name: dk
+        type: "&[u8; 1632]"
+        constraints:
+          size: 1632
+        direction: in
+        description: The decapsulation key to check; its length is the §7.3 type check.
+    returns:
+      type: "Result<bool, Error>"
+      description: "true when the hash stored at bytes 1568..1600 is SHA3-256 of the ek stored at bytes 768..1568, false otherwise; a failing key is not an error."
+      error_variants:
+        - name: NotOperational
+          condition: Module not operational.
+        - name: AlgorithmRestricted
+          condition: ML-KEM-512 decapsulation blocked by active profile.
     thread_safety: thread-safe
     security:
       constant_time: true
@@ -8326,31 +8648,113 @@ functions:
   - name: "ml_kem_768::keygen"
     module: oxicrypt-ml-kem
     family: ml-kem-keygen
-    signature: "pub fn keygen(d: &[u8; 32], z: &[u8; 32]) -> Result<([u8; 1184], [u8; 2400]), Error>"
-    description: Generate an ML-KEM-768 key pair (FIPS 203 §6.1, k=3); d and z are 32-byte caller-supplied randomness, NOT interchangeable.
+    signature: >-
+      pub fn keygen<R: oxicrypt_module::Rbg>(rbg: &mut R)
+      -> Result<([u8; 1184], [u8; 2400]), Error>
+    description: ML-KEM.KeyGen for ML-KEM-768 (FIPS 203 Algorithm 19, k=3); checks that rbg has at least 192-bit strength, draws d and then z from it inside the module as two 32-byte requests, expands the pair and runs an encapsulate-then-decapsulate pairwise consistency test (FIPS 140-3 IG 10.3.A) before returning it; d and z are wiped and never returned.
+    parameters:
+      - name: rbg
+        type: "&mut R where R: oxicrypt_module::Rbg"
+        direction: inout
+        description: An instantiated oxicrypt-drbg DRBG of at least 192-bit strength, whose two 32-byte fills produce d and then z.
+    returns:
+      type: "Result<([u8; 1184], [u8; 2400]), Error>"
+      description: "(encapsulation_key, decapsulation_key)"
+      error_variants:
+        - name: NotOperational
+          condition: Module not operational, including after a failed pairwise consistency test.
+        - name: AlgorithmRestricted
+          condition: ML-KEM-768 key generation blocked by active profile (not in CNSA 1.0 or CNSA 2.0).
+        - name: RbgTooWeak
+          condition: rbg.strength_bits() is below 192; returned before any draw.
+        - name: Rbg
+          condition: A draw failed; carries its RbgError unchanged, for example Uninstantiated.
+        - name: ConditionalTestFailed
+          condition: 'The pairwise consistency test failed, reason "ML-KEM-768 pairwise consistency"; the pair is wiped and the module has entered its error state.'
+    preconditions:
+      - description: Module must be Operational.
+      - description: rbg is instantiated and reports at least 192-bit strength.
+    postconditions:
+      - description: Returns a key pair that has passed the pairwise consistency test; every module-owned copy of d, z, the intermediates and the pair is wiped on every exit.
+    thread_safety: thread-safe
+    security:
+      constant_time: true
+      handles_secrets: true
+      fips_approved: true
+      fips_gate: Operational
+    profiles: [Unrestricted]
+
+  - name: "ml_kem_768::keygen_with_seed"
+    module: oxicrypt-ml-kem
+    family: ml-kem-keygen
+    signature: >-
+      pub fn keygen_with_seed<R: oxicrypt_module::Rbg>(rbg: &mut R)
+      -> Result<(oxicrypt_zeroize::Zeroizing<[u8; 64]>, [u8; 1184], [u8; 2400]), Error>
+    description: As ml_kem_768::keygen, and also returns d ‖ z, d first, so the caller can store it for later expansion with ml_kem_768::expand_key; the seed computes the decapsulation key and needs the same safeguards.
+    parameters:
+      - name: rbg
+        type: "&mut R where R: oxicrypt_module::Rbg"
+        direction: inout
+        description: An instantiated oxicrypt-drbg DRBG of at least 192-bit strength, whose two 32-byte fills produce d and then z.
+    returns:
+      type: "Result<(oxicrypt_zeroize::Zeroizing<[u8; 64]>, [u8; 1184], [u8; 2400]), Error>"
+      description: "(d ‖ z, encapsulation_key, decapsulation_key); the seed is wiped when the Zeroizing is dropped."
+      error_variants:
+        - name: NotOperational
+          condition: Module not operational, including after a failed pairwise consistency test.
+        - name: AlgorithmRestricted
+          condition: ML-KEM-768 key generation blocked by active profile.
+        - name: RbgTooWeak
+          condition: rbg.strength_bits() is below 192; returned before any draw.
+        - name: Rbg
+          condition: A draw failed; carries its RbgError unchanged, for example Uninstantiated.
+        - name: ConditionalTestFailed
+          condition: 'The pairwise consistency test failed, reason "ML-KEM-768 pairwise consistency"; the pair is wiped and the module has entered its error state.'
+    preconditions:
+      - description: Module must be Operational.
+      - description: rbg is instantiated and reports at least 192-bit strength.
+    postconditions:
+      - description: ml_kem_768::expand_key on the returned d and z reproduces the returned pair.
+    thread_safety: thread-safe
+    security:
+      constant_time: true
+      handles_secrets: true
+      fips_approved: true
+      fips_gate: Operational
+    profiles: [Unrestricted]
+
+  - name: "ml_kem_768::expand_key"
+    module: oxicrypt-ml-kem
+    family: ml-kem-keygen
+    signature: "pub fn expand_key(d: &[u8; 32], z: &[u8; 32]) -> Result<([u8; 1184], [u8; 2400]), Error>"
+    description: Expands the ML-KEM-768 key pair from a stored seed (d, z) (FIPS 203 Algorithm 16) and runs the pairwise consistency test on every call (FIPS 140-3 IG 10.3.A); a seed that did not come from keygen_with_seed is a private key imported from outside the boundary.
     parameters:
       - name: d
         type: "&[u8; 32]"
         constraints:
           size: 32
         direction: in
-        description: "32-byte randomness for K-PKE key generation."
+        description: The stored seed d; the caller's, not modified, and the caller's to wipe.
       - name: z
         type: "&[u8; 32]"
         constraints:
           size: 32
         direction: in
-        description: "32-byte randomness for implicit-rejection seed."
+        description: The stored seed z; the caller's, not modified, and the caller's to wipe.
     returns:
       type: "Result<([u8; 1184], [u8; 2400]), Error>"
       description: "(encapsulation_key, decapsulation_key)"
       error_variants:
         - name: NotOperational
-          condition: Module not initialized.
+          condition: Module not operational, including after a failed pairwise consistency test.
         - name: AlgorithmRestricted
-          condition: ML-KEM-768 blocked by active profile (not in CNSA 1.0 or CNSA 2.0).
-        - name: InvalidInput
-          condition: Invalid or insufficient randomness.
+          condition: ML-KEM-768 key expansion blocked by active profile.
+        - name: ConditionalTestFailed
+          condition: 'The pairwise consistency test failed, reason "ML-KEM-768 pairwise consistency"; the pair is wiped and the module has entered its error state.'
+    preconditions:
+      - description: Module must be Operational.
+    postconditions:
+      - description: The same (d, z) always gives the same pair; every module-owned copy of the intermediates and the pair is wiped on every exit.
     thread_safety: thread-safe
     security:
       constant_time: true
@@ -8362,8 +8766,10 @@ functions:
   - name: "ml_kem_768::encapsulate"
     module: oxicrypt-ml-kem
     family: ml-kem-encapsulate
-    signature: "pub fn encapsulate(ek: &[u8; 1184], m: &[u8; 32]) -> Result<([u8; 32], [u8; 1088]), Error>"
-    description: Encapsulate a shared secret against an ML-KEM-768 encapsulation key (FIPS 203 §6.2, k=3); m is 32-byte caller-supplied randomness from an approved DRBG.
+    signature: >-
+      pub fn encapsulate<R: oxicrypt_module::Rbg>(ek: &[u8; 1184], rbg: &mut R)
+      -> Result<([u8; 32], [u8; 1088]), Error>
+    description: ML-KEM.Encaps for ML-KEM-768 (FIPS 203 Algorithm 20, k=3); runs the FIPS 203 §7.2 encapsulation key check on ek, then checks that rbg has at least 192-bit strength, draws the 32-byte m from it inside the module and encapsulates against ek; m is wiped and never returned.
     parameters:
       - name: ek
         type: "&[u8; 1184]"
@@ -8371,20 +8777,24 @@ functions:
           size: 1184
         direction: in
         description: "Encapsulation key (from ml_kem_768::keygen)."
-      - name: m
-        type: "&[u8; 32]"
-        constraints:
-          size: 32
-        direction: in
-        description: "32-byte randomness for encapsulation."
+      - name: rbg
+        type: "&mut R where R: oxicrypt_module::Rbg"
+        direction: inout
+        description: An instantiated oxicrypt-drbg DRBG of at least 192-bit strength, whose one 32-byte fill produces m.
     returns:
       type: "Result<([u8; 32], [u8; 1088]), Error>"
       description: "(shared_secret, ciphertext)"
       error_variants:
         - name: NotOperational
-          condition: Module not initialized.
+          condition: Module not operational.
         - name: AlgorithmRestricted
-          condition: ML-KEM-768 blocked by active profile.
+          condition: ML-KEM-768 encapsulation blocked by active profile.
+        - name: InvalidInput
+          condition: ek fails the FIPS 203 §7.2 modulus check (a 12-bit value of its first 1152 bytes is at or above q = 3329); returned before the strength check and before any draw.
+        - name: RbgTooWeak
+          condition: rbg.strength_bits() is below 192; returned before any draw.
+        - name: Rbg
+          condition: The draw failed; carries its RbgError unchanged, for example Uninstantiated.
     thread_safety: thread-safe
     security:
       constant_time: true
@@ -8397,7 +8807,7 @@ functions:
     module: oxicrypt-ml-kem
     family: ml-kem-decapsulate
     signature: "pub fn decapsulate(dk: &[u8; 2400], ct: &[u8; 1088]) -> Result<[u8; 32], Error>"
-    description: "Decapsulate a shared secret from an ML-KEM-768 ciphertext (FIPS 203 §6.3, k=3) using implicit rejection: constant-time pseudorandom output on malformed ciphertext."
+    description: "ML-KEM.Decaps for ML-KEM-768 (FIPS 203 Algorithm 21, k=3); runs the FIPS 203 §7.3 decapsulation input check (lengths by type; H of the stored ek recomputed and compared with the stored hash), then decapsulates using implicit rejection: constant-time pseudorandom output, not an error, for a ciphertext that does not match."
     parameters:
       - name: dk
         type: "&[u8; 2400]"
@@ -8419,6 +8829,64 @@ functions:
           condition: Module not initialized.
         - name: AlgorithmRestricted
           condition: ML-KEM-768 blocked by active profile.
+        - name: InvalidInput
+          condition: dk fails the FIPS 203 §7.3 hash check (the hash stored at bytes 2336..2368 is not SHA3-256 of the ek stored at bytes 1152..2336); returned before any computation on ct.
+    thread_safety: thread-safe
+    security:
+      constant_time: true
+      handles_secrets: true
+      fips_approved: true
+      fips_gate: Operational
+    profiles: [Unrestricted]
+
+  - name: "ml_kem_768::check_encapsulation_key"
+    module: oxicrypt-ml-kem
+    family: ml-kem-check-encapsulation-key
+    signature: "pub fn check_encapsulation_key(ek: &[u8; 1184]) -> Result<bool, Error>"
+    description: The FIPS 203 §7.2 encapsulation key check that ml_kem_768::encapsulate runs, on its own; for the ACVP encapsulation key check tests and for a caller that checks a key once before storing it.
+    parameters:
+      - name: ek
+        type: "&[u8; 1184]"
+        constraints:
+          size: 1184
+        direction: in
+        description: The encapsulation key to check.
+    returns:
+      type: "Result<bool, Error>"
+      description: "true when every 12-bit value of ek's first 1152 bytes is below q = 3329, false otherwise; a failing key is not an error."
+      error_variants:
+        - name: NotOperational
+          condition: Module not operational.
+        - name: AlgorithmRestricted
+          condition: ML-KEM-768 encapsulation blocked by active profile.
+    thread_safety: thread-safe
+    security:
+      constant_time: true
+      handles_secrets: false
+      fips_approved: true
+      fips_gate: Operational
+    profiles: [Unrestricted]
+
+  - name: "ml_kem_768::check_decapsulation_key"
+    module: oxicrypt-ml-kem
+    family: ml-kem-check-decapsulation-key
+    signature: "pub fn check_decapsulation_key(dk: &[u8; 2400]) -> Result<bool, Error>"
+    description: The FIPS 203 §7.3 decapsulation key checks that ml_kem_768::decapsulate runs on dk, on its own; for the ACVP decapsulation key check tests and for a caller that checks a key once before storing it.
+    parameters:
+      - name: dk
+        type: "&[u8; 2400]"
+        constraints:
+          size: 2400
+        direction: in
+        description: The decapsulation key to check; its length is the §7.3 type check.
+    returns:
+      type: "Result<bool, Error>"
+      description: "true when the hash stored at bytes 2336..2368 is SHA3-256 of the ek stored at bytes 1152..2336, false otherwise; a failing key is not an error."
+      error_variants:
+        - name: NotOperational
+          condition: Module not operational.
+        - name: AlgorithmRestricted
+          condition: ML-KEM-768 decapsulation blocked by active profile.
     thread_safety: thread-safe
     security:
       constant_time: true
@@ -8562,6 +9030,26 @@ functions:
       constant_time: false
       handles_secrets: false
       fips_approved: false
+
+  - name: "seam::ML_DSA_44_ACVP_SEED"
+    module: oxicrypt-ml-dsa
+    type: "[u8; 32]"
+    description: "The ML-DSA-44 key-generation seed of the ACVP ML-DSA specification (draft-celi-acvp-ml-dsa-01) §6.1.2 Table 1, row 1; available with the fault-injection feature or in the crate's own tests."
+
+  - name: "seam::ML_DSA_44_ACVP_KEY_HASH"
+    module: oxicrypt-ml-dsa
+    type: "[u8; 32]"
+    description: "SHA2-256(pk ‖ sk) of the key pair seam::ML_DSA_44_ACVP_SEED expands to, from the same row; available with the fault-injection feature or in the crate's own tests."
+
+  - name: "seam::ML_DSA_65_ACVP_SEED"
+    module: oxicrypt-ml-dsa
+    type: "[u8; 32]"
+    description: "The ML-DSA-65 key-generation seed of the ACVP ML-DSA specification (draft-celi-acvp-ml-dsa-01) §6.1.2 Table 1, row 6; available with the fault-injection feature or in the crate's own tests."
+
+  - name: "seam::ML_DSA_65_ACVP_KEY_HASH"
+    module: oxicrypt-ml-dsa
+    type: "[u8; 32]"
+    description: "SHA2-256(pk ‖ sk) of the key pair seam::ML_DSA_65_ACVP_SEED expands to, from the same row; available with the fault-injection feature or in the crate's own tests."
 
   - name: sign
     module: oxicrypt-ml-dsa
@@ -14307,7 +14795,7 @@ functions:
 
   - name: oxi_ml_kem_1024_keygen
     module: oxicrypt-ffi
-    description: Generate an ML-KEM-1024 key pair from two 32-byte seeds (FIPS 203 §6.1); reads 32 bytes from d_ptr and z_ptr, writes the 1568-byte encapsulation key into ek_out and the 3168-byte decapsulation key into dk_out. d and z are caller-sourced and NOT interchangeable.
+    description: Expand an ML-KEM-1024 key pair from a stored seed (d, z) (FIPS 203 Algorithm 16) under the MlKem1024ExpandKey service and run the pairwise consistency test (FIPS 140-3 IG 10.3.A) before anything is written; reads 32 bytes from d_ptr and z_ptr, writes the 1568-byte encapsulation key into ek_out and the 3168-byte decapsulation key into dk_out. d and z are not interchangeable.
     signature: >-
       int oxi_ml_kem_1024_keygen(const uint8_t *d_ptr,
       const uint8_t *z_ptr, uint8_t *ek_out, uint8_t *dk_out)
@@ -14332,8 +14820,8 @@ functions:
       type: int
       description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
       error_variants:
-        - name: InvalidInput
-          condition: An argument was not a valid domain element, such as a scalar out of range or a point not on the curve.
+        - name: ConditionalTestFailed
+          condition: 'The pairwise consistency test failed (reason "ML-KEM-1024 pairwise consistency"); nothing is written and the module has entered its error state.'
         - name: NotOperational
           condition: oxi_init has not completed successfully, or the module has entered the terminal Error state.
         - name: AlgorithmRestricted
@@ -14347,7 +14835,7 @@ functions:
 
   - name: oxi_ml_kem_1024_encapsulate
     module: oxicrypt-ffi
-    description: Encapsulate a shared secret against an ML-KEM-1024 encapsulation key (FIPS 203 §6.2); reads 1568 bytes from ek_ptr and 32 bytes from m_ptr, writes the 32-byte shared secret into ss_out and the 1568-byte ciphertext into ct_out.
+    description: Refuses encapsulation against an ML-KEM-1024 encapsulation key with a caller-supplied m, which is not a module service (FIPS 203 §3.3 requires the module to sample m); checks that ek_ptr, m_ptr, ss_out and ct_out are non-NULL, then returns NotImplemented and writes nothing.
     signature: >-
       int oxi_ml_kem_1024_encapsulate(const uint8_t *ek_ptr,
       const uint8_t *m_ptr, uint8_t *ss_out, uint8_t *ct_out)
@@ -14370,18 +14858,16 @@ functions:
         description: 1568-byte ciphertext buffer
     returns:
       type: int
-      description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
+      description: "OxiResult discriminant: NotImplemented once the pointers pass, otherwise the error below."
       error_variants:
-        - name: NotOperational
-          condition: oxi_init has not completed successfully, or the module has entered the terminal Error state.
-        - name: AlgorithmRestricted
-          condition: The active algorithm profile does not permit this service.
+        - name: NotImplemented
+          condition: Every call whose pointers are non-NULL; nothing is written.
         - name: NullPointer
           condition: A pointer argument that the call requires was NULL.
     security:
       constant_time: false
-      handles_secrets: true
-      fips_approved: true
+      handles_secrets: false
+      fips_approved: false
 
   - name: oxi_ml_kem_1024_decapsulate
     module: oxicrypt-ffi
@@ -14419,7 +14905,7 @@ functions:
 
   - name: oxi_ml_kem_512_keygen
     module: oxicrypt-ffi
-    description: Generate an ML-KEM-512 key pair from two 32-byte seeds (FIPS 203 §6.1, k=2); reads 32 bytes from d_ptr and z_ptr, writes the 800-byte encapsulation key into ek_out and the 1632-byte decapsulation key into dk_out. d and z are NOT interchangeable; gated to AlgorithmProfile::Unrestricted.
+    description: Expand an ML-KEM-512 key pair from a stored seed (d, z) (FIPS 203 Algorithm 16, k=2) under the MlKem512ExpandKey service and run the pairwise consistency test (FIPS 140-3 IG 10.3.A) before anything is written; reads 32 bytes from d_ptr and z_ptr, writes the 800-byte encapsulation key into ek_out and the 1632-byte decapsulation key into dk_out. d and z are not interchangeable; gated to AlgorithmProfile::Unrestricted.
     signature: >-
       int oxi_ml_kem_512_keygen(const uint8_t *d_ptr,
       const uint8_t *z_ptr, uint8_t *ek_out, uint8_t *dk_out)
@@ -14444,8 +14930,8 @@ functions:
       type: int
       description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
       error_variants:
-        - name: InvalidInput
-          condition: An argument was not a valid domain element, such as a scalar out of range or a point not on the curve.
+        - name: ConditionalTestFailed
+          condition: 'The pairwise consistency test failed (reason "ML-KEM-512 pairwise consistency"); nothing is written and the module has entered its error state.'
         - name: NotOperational
           condition: oxi_init has not completed successfully, or the module has entered the terminal Error state.
         - name: AlgorithmRestricted
@@ -14459,7 +14945,7 @@ functions:
 
   - name: oxi_ml_kem_512_encapsulate
     module: oxicrypt-ffi
-    description: Encapsulate a shared secret against an ML-KEM-512 encapsulation key (FIPS 203 §6.2, k=2); reads 800 bytes from ek_ptr and 32 bytes from m_ptr, writes the 32-byte shared secret into ss_out and the 768-byte ciphertext into ct_out.
+    description: Refuses encapsulation against an ML-KEM-512 encapsulation key with a caller-supplied m, which is not a module service (FIPS 203 §3.3 requires the module to sample m); checks that ek_ptr, m_ptr, ss_out and ct_out are non-NULL, then returns NotImplemented and writes nothing.
     signature: >-
       int oxi_ml_kem_512_encapsulate(const uint8_t *ek_ptr,
       const uint8_t *m_ptr, uint8_t *ss_out, uint8_t *ct_out)
@@ -14482,18 +14968,16 @@ functions:
         description: 768-byte ciphertext buffer
     returns:
       type: int
-      description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
+      description: "OxiResult discriminant: NotImplemented once the pointers pass, otherwise the error below."
       error_variants:
-        - name: NotOperational
-          condition: oxi_init has not completed successfully, or the module has entered the terminal Error state.
-        - name: AlgorithmRestricted
-          condition: The active algorithm profile does not permit this service.
+        - name: NotImplemented
+          condition: Every call whose pointers are non-NULL; nothing is written.
         - name: NullPointer
           condition: A pointer argument that the call requires was NULL.
     security:
       constant_time: false
-      handles_secrets: true
-      fips_approved: true
+      handles_secrets: false
+      fips_approved: false
 
   - name: oxi_ml_kem_512_decapsulate
     module: oxicrypt-ffi
@@ -14531,7 +15015,7 @@ functions:
 
   - name: oxi_ml_kem_768_keygen
     module: oxicrypt-ffi
-    description: Generate an ML-KEM-768 key pair from two 32-byte seeds (FIPS 203 §6.1, k=3); reads 32 bytes from d_ptr and z_ptr, writes the 1184-byte encapsulation key into ek_out and the 2400-byte decapsulation key into dk_out. d and z are NOT interchangeable; gated to AlgorithmProfile::Unrestricted.
+    description: Expand an ML-KEM-768 key pair from a stored seed (d, z) (FIPS 203 Algorithm 16, k=3) under the MlKem768ExpandKey service and run the pairwise consistency test (FIPS 140-3 IG 10.3.A) before anything is written; reads 32 bytes from d_ptr and z_ptr, writes the 1184-byte encapsulation key into ek_out and the 2400-byte decapsulation key into dk_out. d and z are not interchangeable; gated to AlgorithmProfile::Unrestricted.
     signature: >-
       int oxi_ml_kem_768_keygen(const uint8_t *d_ptr,
       const uint8_t *z_ptr, uint8_t *ek_out, uint8_t *dk_out)
@@ -14556,8 +15040,8 @@ functions:
       type: int
       description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
       error_variants:
-        - name: InvalidInput
-          condition: An argument was not a valid domain element, such as a scalar out of range or a point not on the curve.
+        - name: ConditionalTestFailed
+          condition: 'The pairwise consistency test failed (reason "ML-KEM-768 pairwise consistency"); nothing is written and the module has entered its error state.'
         - name: NotOperational
           condition: oxi_init has not completed successfully, or the module has entered the terminal Error state.
         - name: AlgorithmRestricted
@@ -14571,7 +15055,7 @@ functions:
 
   - name: oxi_ml_kem_768_encapsulate
     module: oxicrypt-ffi
-    description: Encapsulate a shared secret against an ML-KEM-768 encapsulation key (FIPS 203 §6.2, k=3); reads 1184 bytes from ek_ptr and 32 bytes from m_ptr, writes the 32-byte shared secret into ss_out and the 1088-byte ciphertext into ct_out.
+    description: Refuses encapsulation against an ML-KEM-768 encapsulation key with a caller-supplied m, which is not a module service (FIPS 203 §3.3 requires the module to sample m); checks that ek_ptr, m_ptr, ss_out and ct_out are non-NULL, then returns NotImplemented and writes nothing.
     signature: >-
       int oxi_ml_kem_768_encapsulate(const uint8_t *ek_ptr,
       const uint8_t *m_ptr, uint8_t *ss_out, uint8_t *ct_out)
@@ -14594,18 +15078,16 @@ functions:
         description: 1088-byte ciphertext buffer
     returns:
       type: int
-      description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
+      description: "OxiResult discriminant: NotImplemented once the pointers pass, otherwise the error below."
       error_variants:
-        - name: NotOperational
-          condition: oxi_init has not completed successfully, or the module has entered the terminal Error state.
-        - name: AlgorithmRestricted
-          condition: The active algorithm profile does not permit this service.
+        - name: NotImplemented
+          condition: Every call whose pointers are non-NULL; nothing is written.
         - name: NullPointer
           condition: A pointer argument that the call requires was NULL.
     security:
       constant_time: false
-      handles_secrets: true
-      fips_approved: true
+      handles_secrets: false
+      fips_approved: false
 
   - name: oxi_ml_kem_768_decapsulate
     module: oxicrypt-ffi
@@ -19348,6 +19830,26 @@ functions:
       description: No value; the effect is entirely on buf.
     postconditions:
     - description: Every word of buf is 0.
+    thread_safety: thread-safe
+    security:
+      constant_time: true
+      handles_secrets: true
+      fips_approved: false
+
+  - name: zeroize_i16
+    module: oxicrypt-zeroize
+    description: Overwrite every element of an i16 slice with zero using volatile stores.
+    signature: 'pub fn zeroize_i16(buf: &mut [i16])'
+    parameters:
+    - name: buf
+      type: '&mut [i16]'
+      direction: inout
+      description: Coefficient array to clear, such as an ML-KEM polynomial.
+    returns:
+      type: ()
+      description: No value; the effect is entirely on buf.
+    postconditions:
+    - description: Every element of buf is 0.
     thread_safety: thread-safe
     security:
       constant_time: true

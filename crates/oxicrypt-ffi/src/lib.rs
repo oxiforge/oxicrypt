@@ -3004,6 +3004,7 @@ pub unsafe extern "C" fn oxi_ml_dsa_87_keygen(
         Ok(pair) => pair,
         Err(e) => return R::from(e) as c_int,
     };
+    let sk = oxicrypt_zeroize::Zeroizing::new(sk);
     // SAFETY: `pk_out` is valid for writes of 2592 bytes by contract,
     // and the local `pk` does not overlap it.
     if let Err(e) = unsafe { write_out(pk_out, &pk[..2592]) } {
@@ -3011,7 +3012,7 @@ pub unsafe extern "C" fn oxi_ml_dsa_87_keygen(
     }
     // SAFETY: `sk_out` is valid for writes of 4896 bytes by contract,
     // and the local `sk` does not overlap it.
-    if let Err(e) = unsafe { write_out(sk_out, &sk[..4896]) } {
+    if let Err(e) = unsafe { write_out(sk_out, sk.as_slice()) } {
         // SAFETY: `pk_out` is valid for writes of 2592 bytes by contract;
         // the output already written there does not survive the failure.
         unsafe { zero_out(pk_out, 2592) };
@@ -3188,6 +3189,7 @@ pub unsafe extern "C" fn oxi_ml_dsa_44_keygen(
         Ok(pair) => pair,
         Err(e) => return R::from(e) as c_int,
     };
+    let sk = oxicrypt_zeroize::Zeroizing::new(sk);
     // SAFETY: `pk_out` is valid for writes of 1312 bytes by contract,
     // and the local `pk` does not overlap it.
     if let Err(e) = unsafe { write_out(pk_out, &pk[..1312]) } {
@@ -3195,7 +3197,7 @@ pub unsafe extern "C" fn oxi_ml_dsa_44_keygen(
     }
     // SAFETY: `sk_out` is valid for writes of 2560 bytes by contract,
     // and the local `sk` does not overlap it.
-    if let Err(e) = unsafe { write_out(sk_out, &sk[..2560]) } {
+    if let Err(e) = unsafe { write_out(sk_out, sk.as_slice()) } {
         // SAFETY: `pk_out` is valid for writes of 1312 bytes by contract;
         // the output already written there does not survive the failure.
         unsafe { zero_out(pk_out, 1312) };
@@ -3372,6 +3374,7 @@ pub unsafe extern "C" fn oxi_ml_dsa_65_keygen(
         Ok(pair) => pair,
         Err(e) => return R::from(e) as c_int,
     };
+    let sk = oxicrypt_zeroize::Zeroizing::new(sk);
     // SAFETY: `pk_out` is valid for writes of 1952 bytes by contract,
     // and the local `pk` does not overlap it.
     if let Err(e) = unsafe { write_out(pk_out, &pk[..1952]) } {
@@ -3379,7 +3382,7 @@ pub unsafe extern "C" fn oxi_ml_dsa_65_keygen(
     }
     // SAFETY: `sk_out` is valid for writes of 4032 bytes by contract,
     // and the local `sk` does not overlap it.
-    if let Err(e) = unsafe { write_out(sk_out, &sk[..4032]) } {
+    if let Err(e) = unsafe { write_out(sk_out, sk.as_slice()) } {
         // SAFETY: `pk_out` is valid for writes of 1952 bytes by contract;
         // the output already written there does not survive the failure.
         unsafe { zero_out(pk_out, 1952) };
@@ -3503,26 +3506,17 @@ pub unsafe extern "C" fn oxi_ml_dsa_65_verify(
 
 // ── ML-KEM-1024 (FIPS 203) — stateless surface ───────────────────
 //
-// Three pure entry points: keygen, encapsulate, decapsulate.
-// ML-KEM-1024 is the CNSA 2.0 post-quantum KEM (key encapsulation
-// mechanism), mandated for key establishment by the 2027 deadline.
-// All three operations are exposed at a stateless byte-array surface
-// with NO DRBG plumbing at the FFI boundary:
+// Three entry points: keygen, encapsulate, decapsulate. ML-KEM-1024 is
+// the CNSA 2.0 post-quantum KEM (key encapsulation mechanism).
 //
-//   - keygen(d, z) → (ek, dk)  per FIPS 203 §6.1 (ML-KEM.KeyGen).
-//     `d` is the K-PKE keygen randomness (32 bytes); `z` is the
-//     implicit-rejection seed embedded in `dk` (32 bytes). BOTH are
-//     caller-supplied — the caller is responsible for sourcing each
-//     from an SP 800-90A DRBG. They are NOT interchangeable: `d`
-//     drives the K-PKE matrix expansion and secret sampling; `z` is
-//     written into `dk` for use in the FO transform's deterministic
-//     implicit-rejection branch. Mixing them would produce a
-//     well-formed but adversarially-distinguishable key pair.
-//   - encapsulate(ek, m) → (ss, ct)  per FIPS 203 §6.2. `m` is the
-//     32-byte encapsulation randomness; caller-supplied (SP 800-90A
-//     DRBG responsibility). Returns the 32-byte shared secret and
-//     1568-byte ciphertext.
-//   - decapsulate(dk, ct) → ss  per FIPS 203 §6.3. **Fully
+//   - keygen(d, z) → (ek, dk) expands a stored seed (FIPS 203
+//     Algorithm 16) under the `ExpandKey` service and runs the pairwise
+//     consistency test. `d` is the K-PKE seed; `z` is the
+//     implicit-rejection seed embedded in `dk`. They are not
+//     interchangeable.
+//   - encapsulate(ek, m) refuses: encapsulation with a caller-supplied
+//     `m` is not a module service (FIPS 203 §3.3).
+//   - decapsulate(dk, ct) → ss  per FIPS 203 Algorithm 18. **Fully
 //     deterministic**: no caller-supplied randomness. The FO
 //     transform's implicit-rejection branch absorbs tampered
 //     ciphertext into a deterministic-but-pseudorandom shared secret
@@ -3544,20 +3538,21 @@ pub unsafe extern "C" fn oxi_ml_dsa_65_verify(
 // enum-dispatched parameters on these, so adding a variant never
 // changes an existing signature.
 
-/// Generate an ML-KEM-1024 key pair from two 32-byte caller-supplied
-/// seeds (FIPS 203 §6.1 ML-KEM.KeyGen).
+/// Expand an ML-KEM-1024 key pair from a stored seed `(d, z)` (FIPS 203
+/// Algorithm 16) under the `MlKem1024ExpandKey` service, and run the
+/// pairwise consistency test on it (FIPS 140-3 IG 10.3.A) before anything
+/// is written. A seed that did not come from this module is a private key
+/// imported from outside the boundary.
 ///
-/// Reads exactly 32 bytes from `d_ptr` (K-PKE keygen randomness) and
-/// exactly 32 bytes from `z_ptr` (implicit-rejection seed). Writes
-/// the 1568-byte encapsulation key into `ek_out` and the 3168-byte
-/// decapsulation key into `dk_out`. Both seeds are caller-supplied;
-/// the caller MUST source each independently from an approved DRBG
-/// (SP 800-90A). `d` and `z` are NOT interchangeable — see the
-/// section comment above for the semantic distinction.
+/// Reads exactly 32 bytes from `d_ptr` (the K-PKE seed) and exactly 32
+/// bytes from `z_ptr` (the implicit-rejection seed); the two are not
+/// interchangeable. Writes the 1568-byte encapsulation key into `ek_out`
+/// and the 3168-byte decapsulation key into `dk_out`.
 ///
-/// Returns `OxiResult::Ok = 0` on success, `InvalidInput = 5` if a
-/// rare K-PKE NTT decode failure occurs during keygen, or a module
-/// error variant (`NotOperational`, `AlgorithmRestricted`).
+/// Returns `OxiResult::Ok = 0` on success, `ConditionalTestFailed = 3`
+/// when the pairwise consistency test fails (the module has entered its
+/// error state and nothing is written), or a module error variant
+/// (`NotOperational`, `AlgorithmRestricted`).
 ///
 /// # Safety
 ///
@@ -3588,10 +3583,11 @@ pub unsafe extern "C" fn oxi_ml_kem_1024_keygen(
     let Ok(z_arr) = <&[u8; 32]>::try_from(z) else {
         return R::Internal as c_int;
     };
-    let (ek, dk) = match oxicrypt_ml_kem::keygen(d_arr, z_arr) {
+    let (ek, dk) = match oxicrypt_ml_kem::ml_kem_1024::expand_key(d_arr, z_arr) {
         Ok(pair) => pair,
         Err(e) => return R::from(e) as c_int,
     };
+    let dk = oxicrypt_zeroize::Zeroizing::new(dk);
     // SAFETY: `ek_out` is valid for writes of 1568 bytes by contract,
     // and the local `ek` does not overlap it.
     if let Err(e) = unsafe { write_out(ek_out, &ek[..1568]) } {
@@ -3599,7 +3595,7 @@ pub unsafe extern "C" fn oxi_ml_kem_1024_keygen(
     }
     // SAFETY: `dk_out` is valid for writes of 3168 bytes by contract,
     // and the local `dk` does not overlap it.
-    if let Err(e) = unsafe { write_out(dk_out, &dk[..3168]) } {
+    if let Err(e) = unsafe { write_out(dk_out, dk.as_slice()) } {
         // SAFETY: `ek_out` is valid for writes of 1568 bytes by contract;
         // the output already written there does not survive the failure.
         unsafe { zero_out(ek_out, 1568) };
@@ -3608,22 +3604,17 @@ pub unsafe extern "C" fn oxi_ml_kem_1024_keygen(
     R::Ok as c_int
 }
 
-/// Encapsulate a shared secret against an ML-KEM-1024 encapsulation
-/// key (FIPS 203 §6.2 ML-KEM.Encaps).
+/// Encapsulation against an ML-KEM-1024 encapsulation key with a
+/// caller-supplied `m`, which is not a module service: FIPS 203 §3.3
+/// requires the module to perform the sampling of `m`, which it does in its
+/// own encapsulation service.
 ///
-/// Reads exactly 1568 bytes from `ek_ptr` and exactly 32 bytes from
-/// `m_ptr` (encapsulation randomness, caller-supplied from an
-/// SP 800-90A DRBG). Writes the 32-byte shared secret into `ss_out`
-/// and the 1568-byte ciphertext into `ct_out`.
-///
-/// Returns `OxiResult::Ok = 0` on success, or a module error variant
-/// (`NotOperational`, `AlgorithmRestricted`).
+/// Checks that `ek_ptr`, `m_ptr`, `ss_out` and `ct_out` are non-NULL, then
+/// returns `OxiResult::NotImplemented = 7` and writes nothing.
 ///
 /// # Safety
 ///
-/// All pointer/length pairs must be valid. `ss_out` and `ct_out`
-/// must each be non-NULL writable pointers to ≥32 and ≥1568 bytes
-/// respectively.
+/// All pointer/length pairs must be valid.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn oxi_ml_kem_1024_encapsulate(
     ek_ptr: *const u8,
@@ -3631,41 +3622,16 @@ pub unsafe extern "C" fn oxi_ml_kem_1024_encapsulate(
     ss_out: *mut u8,
     ct_out: *mut u8,
 ) -> c_int {
-    let ek = match unsafe { slice_from_raw(ek_ptr, 1568) } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    let m = match unsafe { slice_from_raw(m_ptr, 32) } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
+    if let Err(e) = unsafe { slice_from_raw(ek_ptr, 1568) } {
+        return e;
+    }
+    if let Err(e) = unsafe { slice_from_raw(m_ptr, 32) } {
+        return e;
+    }
     if ss_out.is_null() || ct_out.is_null() {
         return R::NullPointer as c_int;
     }
-    let Ok(ek_arr) = <&[u8; 1568]>::try_from(ek) else {
-        return R::Internal as c_int;
-    };
-    let Ok(m_arr) = <&[u8; 32]>::try_from(m) else {
-        return R::Internal as c_int;
-    };
-    let (ss, ct) = match oxicrypt_ml_kem::encapsulate(ek_arr, m_arr) {
-        Ok(pair) => pair,
-        Err(e) => return R::from(e) as c_int,
-    };
-    // SAFETY: `ss_out` is valid for writes of 32 bytes by contract,
-    // and the local `ss` does not overlap it.
-    if let Err(e) = unsafe { write_out(ss_out, &ss[..32]) } {
-        return e as c_int;
-    }
-    // SAFETY: `ct_out` is valid for writes of 1568 bytes by contract,
-    // and the local `ct` does not overlap it.
-    if let Err(e) = unsafe { write_out(ct_out, &ct[..1568]) } {
-        // SAFETY: `ss_out` is valid for writes of 32 bytes by contract;
-        // the output already written there does not survive the failure.
-        unsafe { zero_out(ss_out, 32) };
-        return e as c_int;
-    }
-    R::Ok as c_int
+    R::NotImplemented as c_int
 }
 
 /// Decapsulate a shared secret from an ML-KEM-1024 ciphertext
@@ -3741,21 +3707,21 @@ pub unsafe extern "C" fn oxi_ml_kem_1024_decapsulate(
 // return `OxiResult::AlgorithmRestricted = 6` via the
 // `require_allowed` gate in `oxicrypt_module`.
 
-/// Generate an ML-KEM-512 key pair from two 32-byte caller-supplied
-/// seeds (FIPS 203 §6.1 ML-KEM.KeyGen, k=2 parameter set).
+/// Expand an ML-KEM-512 key pair from a stored seed `(d, z)` (FIPS 203
+/// Algorithm 16, k=2) under the `MlKem512ExpandKey` service, and run the
+/// pairwise consistency test on it (FIPS 140-3 IG 10.3.A) before anything
+/// is written. A seed that did not come from this module is a private key
+/// imported from outside the boundary.
 ///
-/// Reads exactly 32 bytes from `d_ptr` (K-PKE keygen randomness) and
-/// exactly 32 bytes from `z_ptr` (implicit-rejection seed). Writes
-/// the 800-byte encapsulation key into `ek_out` and the 1632-byte
-/// decapsulation key into `dk_out`. Both seeds are caller-supplied;
-/// the caller MUST source each independently from an approved DRBG
-/// (SP 800-90A). `d` and `z` are NOT interchangeable — see the
-/// ML-KEM-1024 section comment above for the semantic distinction
-/// (identical across all three parameter sets).
+/// Reads exactly 32 bytes from `d_ptr` (the K-PKE seed) and exactly 32
+/// bytes from `z_ptr` (the implicit-rejection seed); the two are not
+/// interchangeable. Writes the 800-byte encapsulation key into `ek_out`
+/// and the 1632-byte decapsulation key into `dk_out`.
 ///
-/// Returns `OxiResult::Ok = 0` on success, `InvalidInput = 5` if a
-/// rare K-PKE NTT decode failure occurs during keygen, or a module
-/// error variant (`NotOperational`, `AlgorithmRestricted`).
+/// Returns `OxiResult::Ok = 0` on success, `ConditionalTestFailed = 3`
+/// when the pairwise consistency test fails (the module has entered its
+/// error state and nothing is written), or a module error variant
+/// (`NotOperational`, `AlgorithmRestricted`).
 ///
 /// # Safety
 ///
@@ -3786,10 +3752,11 @@ pub unsafe extern "C" fn oxi_ml_kem_512_keygen(
     let Ok(z_arr) = <&[u8; 32]>::try_from(z) else {
         return R::Internal as c_int;
     };
-    let (ek, dk) = match oxicrypt_ml_kem::ml_kem_512::keygen(d_arr, z_arr) {
+    let (ek, dk) = match oxicrypt_ml_kem::ml_kem_512::expand_key(d_arr, z_arr) {
         Ok(pair) => pair,
         Err(e) => return R::from(e) as c_int,
     };
+    let dk = oxicrypt_zeroize::Zeroizing::new(dk);
     // SAFETY: `ek_out` is valid for writes of 800 bytes by contract,
     // and the local `ek` does not overlap it.
     if let Err(e) = unsafe { write_out(ek_out, &ek[..800]) } {
@@ -3797,7 +3764,7 @@ pub unsafe extern "C" fn oxi_ml_kem_512_keygen(
     }
     // SAFETY: `dk_out` is valid for writes of 1632 bytes by contract,
     // and the local `dk` does not overlap it.
-    if let Err(e) = unsafe { write_out(dk_out, &dk[..1632]) } {
+    if let Err(e) = unsafe { write_out(dk_out, dk.as_slice()) } {
         // SAFETY: `ek_out` is valid for writes of 800 bytes by contract;
         // the output already written there does not survive the failure.
         unsafe { zero_out(ek_out, 800) };
@@ -3806,22 +3773,17 @@ pub unsafe extern "C" fn oxi_ml_kem_512_keygen(
     R::Ok as c_int
 }
 
-/// Encapsulate a shared secret against an ML-KEM-512 encapsulation
-/// key (FIPS 203 §6.2 ML-KEM.Encaps, k=2 parameter set).
+/// Encapsulation against an ML-KEM-512 encapsulation key with a
+/// caller-supplied `m`, which is not a module service: FIPS 203 §3.3
+/// requires the module to perform the sampling of `m`, which it does in its
+/// own encapsulation service.
 ///
-/// Reads exactly 800 bytes from `ek_ptr` and exactly 32 bytes from
-/// `m_ptr` (encapsulation randomness, caller-supplied from an
-/// SP 800-90A DRBG). Writes the 32-byte shared secret into `ss_out`
-/// and the 768-byte ciphertext into `ct_out`.
-///
-/// Returns `OxiResult::Ok = 0` on success, or a module error variant
-/// (`NotOperational`, `AlgorithmRestricted`).
+/// Checks that `ek_ptr`, `m_ptr`, `ss_out` and `ct_out` are non-NULL, then
+/// returns `OxiResult::NotImplemented = 7` and writes nothing.
 ///
 /// # Safety
 ///
-/// All pointer/length pairs must be valid. `ss_out` and `ct_out`
-/// must each be non-NULL writable pointers to ≥32 and ≥768 bytes
-/// respectively.
+/// All pointer/length pairs must be valid.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn oxi_ml_kem_512_encapsulate(
     ek_ptr: *const u8,
@@ -3829,41 +3791,16 @@ pub unsafe extern "C" fn oxi_ml_kem_512_encapsulate(
     ss_out: *mut u8,
     ct_out: *mut u8,
 ) -> c_int {
-    let ek = match unsafe { slice_from_raw(ek_ptr, 800) } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    let m = match unsafe { slice_from_raw(m_ptr, 32) } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
+    if let Err(e) = unsafe { slice_from_raw(ek_ptr, 800) } {
+        return e;
+    }
+    if let Err(e) = unsafe { slice_from_raw(m_ptr, 32) } {
+        return e;
+    }
     if ss_out.is_null() || ct_out.is_null() {
         return R::NullPointer as c_int;
     }
-    let Ok(ek_arr) = <&[u8; 800]>::try_from(ek) else {
-        return R::Internal as c_int;
-    };
-    let Ok(m_arr) = <&[u8; 32]>::try_from(m) else {
-        return R::Internal as c_int;
-    };
-    let (ss, ct) = match oxicrypt_ml_kem::ml_kem_512::encapsulate(ek_arr, m_arr) {
-        Ok(pair) => pair,
-        Err(e) => return R::from(e) as c_int,
-    };
-    // SAFETY: `ss_out` is valid for writes of 32 bytes by contract,
-    // and the local `ss` does not overlap it.
-    if let Err(e) = unsafe { write_out(ss_out, &ss[..32]) } {
-        return e as c_int;
-    }
-    // SAFETY: `ct_out` is valid for writes of 768 bytes by contract,
-    // and the local `ct` does not overlap it.
-    if let Err(e) = unsafe { write_out(ct_out, &ct[..768]) } {
-        // SAFETY: `ss_out` is valid for writes of 32 bytes by contract;
-        // the output already written there does not survive the failure.
-        unsafe { zero_out(ss_out, 32) };
-        return e as c_int;
-    }
-    R::Ok as c_int
+    R::NotImplemented as c_int
 }
 
 /// Decapsulate a shared secret from an ML-KEM-512 ciphertext
@@ -3939,21 +3876,21 @@ pub unsafe extern "C" fn oxi_ml_kem_512_decapsulate(
 // return `OxiResult::AlgorithmRestricted = 6` via the
 // `require_allowed` gate in `oxicrypt_module`.
 
-/// Generate an ML-KEM-768 key pair from two 32-byte caller-supplied
-/// seeds (FIPS 203 §6.1 ML-KEM.KeyGen, k=3 parameter set).
+/// Expand an ML-KEM-768 key pair from a stored seed `(d, z)` (FIPS 203
+/// Algorithm 16, k=3) under the `MlKem768ExpandKey` service, and run the
+/// pairwise consistency test on it (FIPS 140-3 IG 10.3.A) before anything
+/// is written. A seed that did not come from this module is a private key
+/// imported from outside the boundary.
 ///
-/// Reads exactly 32 bytes from `d_ptr` (K-PKE keygen randomness) and
-/// exactly 32 bytes from `z_ptr` (implicit-rejection seed). Writes
-/// the 1184-byte encapsulation key into `ek_out` and the 2400-byte
-/// decapsulation key into `dk_out`. Both seeds are caller-supplied;
-/// the caller MUST source each independently from an approved DRBG
-/// (SP 800-90A). `d` and `z` are NOT interchangeable — see the
-/// ML-KEM-1024 section comment above for the semantic distinction
-/// (identical across all three parameter sets).
+/// Reads exactly 32 bytes from `d_ptr` (the K-PKE seed) and exactly 32
+/// bytes from `z_ptr` (the implicit-rejection seed); the two are not
+/// interchangeable. Writes the 1184-byte encapsulation key into `ek_out`
+/// and the 2400-byte decapsulation key into `dk_out`.
 ///
-/// Returns `OxiResult::Ok = 0` on success, `InvalidInput = 5` if a
-/// rare K-PKE NTT decode failure occurs during keygen, or a module
-/// error variant (`NotOperational`, `AlgorithmRestricted`).
+/// Returns `OxiResult::Ok = 0` on success, `ConditionalTestFailed = 3`
+/// when the pairwise consistency test fails (the module has entered its
+/// error state and nothing is written), or a module error variant
+/// (`NotOperational`, `AlgorithmRestricted`).
 ///
 /// # Safety
 ///
@@ -3984,10 +3921,11 @@ pub unsafe extern "C" fn oxi_ml_kem_768_keygen(
     let Ok(z_arr) = <&[u8; 32]>::try_from(z) else {
         return R::Internal as c_int;
     };
-    let (ek, dk) = match oxicrypt_ml_kem::ml_kem_768::keygen(d_arr, z_arr) {
+    let (ek, dk) = match oxicrypt_ml_kem::ml_kem_768::expand_key(d_arr, z_arr) {
         Ok(pair) => pair,
         Err(e) => return R::from(e) as c_int,
     };
+    let dk = oxicrypt_zeroize::Zeroizing::new(dk);
     // SAFETY: `ek_out` is valid for writes of 1184 bytes by contract,
     // and the local `ek` does not overlap it.
     if let Err(e) = unsafe { write_out(ek_out, &ek[..1184]) } {
@@ -3995,7 +3933,7 @@ pub unsafe extern "C" fn oxi_ml_kem_768_keygen(
     }
     // SAFETY: `dk_out` is valid for writes of 2400 bytes by contract,
     // and the local `dk` does not overlap it.
-    if let Err(e) = unsafe { write_out(dk_out, &dk[..2400]) } {
+    if let Err(e) = unsafe { write_out(dk_out, dk.as_slice()) } {
         // SAFETY: `ek_out` is valid for writes of 1184 bytes by contract;
         // the output already written there does not survive the failure.
         unsafe { zero_out(ek_out, 1184) };
@@ -4004,22 +3942,17 @@ pub unsafe extern "C" fn oxi_ml_kem_768_keygen(
     R::Ok as c_int
 }
 
-/// Encapsulate a shared secret against an ML-KEM-768 encapsulation
-/// key (FIPS 203 §6.2 ML-KEM.Encaps, k=3 parameter set).
+/// Encapsulation against an ML-KEM-768 encapsulation key with a
+/// caller-supplied `m`, which is not a module service: FIPS 203 §3.3
+/// requires the module to perform the sampling of `m`, which it does in its
+/// own encapsulation service.
 ///
-/// Reads exactly 1184 bytes from `ek_ptr` and exactly 32 bytes from
-/// `m_ptr` (encapsulation randomness, caller-supplied from an
-/// SP 800-90A DRBG). Writes the 32-byte shared secret into `ss_out`
-/// and the 1088-byte ciphertext into `ct_out`.
-///
-/// Returns `OxiResult::Ok = 0` on success, or a module error variant
-/// (`NotOperational`, `AlgorithmRestricted`).
+/// Checks that `ek_ptr`, `m_ptr`, `ss_out` and `ct_out` are non-NULL, then
+/// returns `OxiResult::NotImplemented = 7` and writes nothing.
 ///
 /// # Safety
 ///
-/// All pointer/length pairs must be valid. `ss_out` and `ct_out`
-/// must each be non-NULL writable pointers to ≥32 and ≥1088 bytes
-/// respectively.
+/// All pointer/length pairs must be valid.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn oxi_ml_kem_768_encapsulate(
     ek_ptr: *const u8,
@@ -4027,41 +3960,16 @@ pub unsafe extern "C" fn oxi_ml_kem_768_encapsulate(
     ss_out: *mut u8,
     ct_out: *mut u8,
 ) -> c_int {
-    let ek = match unsafe { slice_from_raw(ek_ptr, 1184) } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    let m = match unsafe { slice_from_raw(m_ptr, 32) } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
+    if let Err(e) = unsafe { slice_from_raw(ek_ptr, 1184) } {
+        return e;
+    }
+    if let Err(e) = unsafe { slice_from_raw(m_ptr, 32) } {
+        return e;
+    }
     if ss_out.is_null() || ct_out.is_null() {
         return R::NullPointer as c_int;
     }
-    let Ok(ek_arr) = <&[u8; 1184]>::try_from(ek) else {
-        return R::Internal as c_int;
-    };
-    let Ok(m_arr) = <&[u8; 32]>::try_from(m) else {
-        return R::Internal as c_int;
-    };
-    let (ss, ct) = match oxicrypt_ml_kem::ml_kem_768::encapsulate(ek_arr, m_arr) {
-        Ok(pair) => pair,
-        Err(e) => return R::from(e) as c_int,
-    };
-    // SAFETY: `ss_out` is valid for writes of 32 bytes by contract,
-    // and the local `ss` does not overlap it.
-    if let Err(e) = unsafe { write_out(ss_out, &ss[..32]) } {
-        return e as c_int;
-    }
-    // SAFETY: `ct_out` is valid for writes of 1088 bytes by contract,
-    // and the local `ct` does not overlap it.
-    if let Err(e) = unsafe { write_out(ct_out, &ct[..1088]) } {
-        // SAFETY: `ss_out` is valid for writes of 32 bytes by contract;
-        // the output already written there does not survive the failure.
-        unsafe { zero_out(ss_out, 32) };
-        return e as c_int;
-    }
-    R::Ok as c_int
+    R::NotImplemented as c_int
 }
 
 /// Decapsulate a shared secret from an ML-KEM-768 ciphertext

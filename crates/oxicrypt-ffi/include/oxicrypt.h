@@ -1876,20 +1876,21 @@ int oxi_ml_dsa_65_verify(const uint8_t *pk_ptr,
                          const uint8_t *sig_ptr);
 
 /*
- Generate an ML-KEM-1024 key pair from two 32-byte caller-supplied
- seeds (FIPS 203 §6.1 ML-KEM.KeyGen).
+ Expand an ML-KEM-1024 key pair from a stored seed `(d, z)` (FIPS 203
+ Algorithm 16) under the `MlKem1024ExpandKey` service, and run the
+ pairwise consistency test on it (FIPS 140-3 IG 10.3.A) before anything
+ is written. A seed that did not come from this module is a private key
+ imported from outside the boundary.
 
- Reads exactly 32 bytes from `d_ptr` (K-PKE keygen randomness) and
- exactly 32 bytes from `z_ptr` (implicit-rejection seed). Writes
- the 1568-byte encapsulation key into `ek_out` and the 3168-byte
- decapsulation key into `dk_out`. Both seeds are caller-supplied;
- the caller MUST source each independently from an approved DRBG
- (SP 800-90A). `d` and `z` are NOT interchangeable — see the
- section comment above for the semantic distinction.
+ Reads exactly 32 bytes from `d_ptr` (the K-PKE seed) and exactly 32
+ bytes from `z_ptr` (the implicit-rejection seed); the two are not
+ interchangeable. Writes the 1568-byte encapsulation key into `ek_out`
+ and the 3168-byte decapsulation key into `dk_out`.
 
- Returns `OxiResult::Ok = 0` on success, `InvalidInput = 5` if a
- rare K-PKE NTT decode failure occurs during keygen, or a module
- error variant (`NotOperational`, `AlgorithmRestricted`).
+ Returns `OxiResult::Ok = 0` on success, `ConditionalTestFailed = 3`
+ when the pairwise consistency test fails (the module has entered its
+ error state and nothing is written), or a module error variant
+ (`NotOperational`, `AlgorithmRestricted`).
 
  # Safety
 
@@ -1903,22 +1904,17 @@ int oxi_ml_kem_1024_keygen(const uint8_t *d_ptr,
                            uint8_t *dk_out);
 
 /*
- Encapsulate a shared secret against an ML-KEM-1024 encapsulation
- key (FIPS 203 §6.2 ML-KEM.Encaps).
+ Encapsulation against an ML-KEM-1024 encapsulation key with a
+ caller-supplied `m`, which is not a module service: FIPS 203 §3.3
+ requires the module to perform the sampling of `m`, which it does in its
+ own encapsulation service.
 
- Reads exactly 1568 bytes from `ek_ptr` and exactly 32 bytes from
- `m_ptr` (encapsulation randomness, caller-supplied from an
- SP 800-90A DRBG). Writes the 32-byte shared secret into `ss_out`
- and the 1568-byte ciphertext into `ct_out`.
-
- Returns `OxiResult::Ok = 0` on success, or a module error variant
- (`NotOperational`, `AlgorithmRestricted`).
+ Checks that `ek_ptr`, `m_ptr`, `ss_out` and `ct_out` are non-NULL, then
+ returns `OxiResult::NotImplemented = 7` and writes nothing.
 
  # Safety
 
- All pointer/length pairs must be valid. `ss_out` and `ct_out`
- must each be non-NULL writable pointers to ≥32 and ≥1568 bytes
- respectively.
+ All pointer/length pairs must be valid.
  */
 int oxi_ml_kem_1024_encapsulate(const uint8_t *ek_ptr,
                                 const uint8_t *m_ptr,
@@ -1949,21 +1945,21 @@ int oxi_ml_kem_1024_encapsulate(const uint8_t *ek_ptr,
 int oxi_ml_kem_1024_decapsulate(const uint8_t *dk_ptr, const uint8_t *ct_ptr, uint8_t *ss_out);
 
 /*
- Generate an ML-KEM-512 key pair from two 32-byte caller-supplied
- seeds (FIPS 203 §6.1 ML-KEM.KeyGen, k=2 parameter set).
+ Expand an ML-KEM-512 key pair from a stored seed `(d, z)` (FIPS 203
+ Algorithm 16, k=2) under the `MlKem512ExpandKey` service, and run the
+ pairwise consistency test on it (FIPS 140-3 IG 10.3.A) before anything
+ is written. A seed that did not come from this module is a private key
+ imported from outside the boundary.
 
- Reads exactly 32 bytes from `d_ptr` (K-PKE keygen randomness) and
- exactly 32 bytes from `z_ptr` (implicit-rejection seed). Writes
- the 800-byte encapsulation key into `ek_out` and the 1632-byte
- decapsulation key into `dk_out`. Both seeds are caller-supplied;
- the caller MUST source each independently from an approved DRBG
- (SP 800-90A). `d` and `z` are NOT interchangeable — see the
- ML-KEM-1024 section comment above for the semantic distinction
- (identical across all three parameter sets).
+ Reads exactly 32 bytes from `d_ptr` (the K-PKE seed) and exactly 32
+ bytes from `z_ptr` (the implicit-rejection seed); the two are not
+ interchangeable. Writes the 800-byte encapsulation key into `ek_out`
+ and the 1632-byte decapsulation key into `dk_out`.
 
- Returns `OxiResult::Ok = 0` on success, `InvalidInput = 5` if a
- rare K-PKE NTT decode failure occurs during keygen, or a module
- error variant (`NotOperational`, `AlgorithmRestricted`).
+ Returns `OxiResult::Ok = 0` on success, `ConditionalTestFailed = 3`
+ when the pairwise consistency test fails (the module has entered its
+ error state and nothing is written), or a module error variant
+ (`NotOperational`, `AlgorithmRestricted`).
 
  # Safety
 
@@ -1977,22 +1973,17 @@ int oxi_ml_kem_512_keygen(const uint8_t *d_ptr,
                           uint8_t *dk_out);
 
 /*
- Encapsulate a shared secret against an ML-KEM-512 encapsulation
- key (FIPS 203 §6.2 ML-KEM.Encaps, k=2 parameter set).
+ Encapsulation against an ML-KEM-512 encapsulation key with a
+ caller-supplied `m`, which is not a module service: FIPS 203 §3.3
+ requires the module to perform the sampling of `m`, which it does in its
+ own encapsulation service.
 
- Reads exactly 800 bytes from `ek_ptr` and exactly 32 bytes from
- `m_ptr` (encapsulation randomness, caller-supplied from an
- SP 800-90A DRBG). Writes the 32-byte shared secret into `ss_out`
- and the 768-byte ciphertext into `ct_out`.
-
- Returns `OxiResult::Ok = 0` on success, or a module error variant
- (`NotOperational`, `AlgorithmRestricted`).
+ Checks that `ek_ptr`, `m_ptr`, `ss_out` and `ct_out` are non-NULL, then
+ returns `OxiResult::NotImplemented = 7` and writes nothing.
 
  # Safety
 
- All pointer/length pairs must be valid. `ss_out` and `ct_out`
- must each be non-NULL writable pointers to ≥32 and ≥768 bytes
- respectively.
+ All pointer/length pairs must be valid.
  */
 int oxi_ml_kem_512_encapsulate(const uint8_t *ek_ptr,
                                const uint8_t *m_ptr,
@@ -2023,21 +2014,21 @@ int oxi_ml_kem_512_encapsulate(const uint8_t *ek_ptr,
 int oxi_ml_kem_512_decapsulate(const uint8_t *dk_ptr, const uint8_t *ct_ptr, uint8_t *ss_out);
 
 /*
- Generate an ML-KEM-768 key pair from two 32-byte caller-supplied
- seeds (FIPS 203 §6.1 ML-KEM.KeyGen, k=3 parameter set).
+ Expand an ML-KEM-768 key pair from a stored seed `(d, z)` (FIPS 203
+ Algorithm 16, k=3) under the `MlKem768ExpandKey` service, and run the
+ pairwise consistency test on it (FIPS 140-3 IG 10.3.A) before anything
+ is written. A seed that did not come from this module is a private key
+ imported from outside the boundary.
 
- Reads exactly 32 bytes from `d_ptr` (K-PKE keygen randomness) and
- exactly 32 bytes from `z_ptr` (implicit-rejection seed). Writes
- the 1184-byte encapsulation key into `ek_out` and the 2400-byte
- decapsulation key into `dk_out`. Both seeds are caller-supplied;
- the caller MUST source each independently from an approved DRBG
- (SP 800-90A). `d` and `z` are NOT interchangeable — see the
- ML-KEM-1024 section comment above for the semantic distinction
- (identical across all three parameter sets).
+ Reads exactly 32 bytes from `d_ptr` (the K-PKE seed) and exactly 32
+ bytes from `z_ptr` (the implicit-rejection seed); the two are not
+ interchangeable. Writes the 1184-byte encapsulation key into `ek_out`
+ and the 2400-byte decapsulation key into `dk_out`.
 
- Returns `OxiResult::Ok = 0` on success, `InvalidInput = 5` if a
- rare K-PKE NTT decode failure occurs during keygen, or a module
- error variant (`NotOperational`, `AlgorithmRestricted`).
+ Returns `OxiResult::Ok = 0` on success, `ConditionalTestFailed = 3`
+ when the pairwise consistency test fails (the module has entered its
+ error state and nothing is written), or a module error variant
+ (`NotOperational`, `AlgorithmRestricted`).
 
  # Safety
 
@@ -2051,22 +2042,17 @@ int oxi_ml_kem_768_keygen(const uint8_t *d_ptr,
                           uint8_t *dk_out);
 
 /*
- Encapsulate a shared secret against an ML-KEM-768 encapsulation
- key (FIPS 203 §6.2 ML-KEM.Encaps, k=3 parameter set).
+ Encapsulation against an ML-KEM-768 encapsulation key with a
+ caller-supplied `m`, which is not a module service: FIPS 203 §3.3
+ requires the module to perform the sampling of `m`, which it does in its
+ own encapsulation service.
 
- Reads exactly 1184 bytes from `ek_ptr` and exactly 32 bytes from
- `m_ptr` (encapsulation randomness, caller-supplied from an
- SP 800-90A DRBG). Writes the 32-byte shared secret into `ss_out`
- and the 1088-byte ciphertext into `ct_out`.
-
- Returns `OxiResult::Ok = 0` on success, or a module error variant
- (`NotOperational`, `AlgorithmRestricted`).
+ Checks that `ek_ptr`, `m_ptr`, `ss_out` and `ct_out` are non-NULL, then
+ returns `OxiResult::NotImplemented = 7` and writes nothing.
 
  # Safety
 
- All pointer/length pairs must be valid. `ss_out` and `ct_out`
- must each be non-NULL writable pointers to ≥32 and ≥1088 bytes
- respectively.
+ All pointer/length pairs must be valid.
  */
 int oxi_ml_kem_768_encapsulate(const uint8_t *ek_ptr,
                                const uint8_t *m_ptr,

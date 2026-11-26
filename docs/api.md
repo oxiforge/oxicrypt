@@ -398,25 +398,35 @@ one-shot functions.
 
 Lattice-based key encapsulation (FIPS 203). Three parameter sets, each in
 its own module: `ml_kem_512`, `ml_kem_768`, `ml_kem_1024`. The crate root
-re-exports the `ml_kem_1024` surface for backward compatibility.
+re-exports `keygen`, `encapsulate`, `decapsulate` and the constants of
+`ml_kem_1024`.
 
 ### Free functions (per variant module)
 
 | Function | Signature |
 |----------|-----------|
-| `keygen` | `(d: &[u8; SEED_LEN], z: &[u8; SEED_LEN]) -> Result<([u8; EK_LEN], [u8; DK_LEN]), Error>` |
-| `encapsulate` | `(ek: &[u8; EK_LEN], m: &[u8; SEED_LEN]) -> Result<([u8; SHARED_SECRET_LEN], [u8; CT_LEN]), Error>` |
+| `keygen` | `<R: Rbg>(rbg: &mut R) -> Result<([u8; EK_LEN], [u8; DK_LEN]), Error>` |
+| `keygen_with_seed` | `<R: Rbg>(rbg: &mut R) -> Result<(Zeroizing<[u8; 64]>, [u8; EK_LEN], [u8; DK_LEN]), Error>` |
+| `expand_key` | `(d: &[u8; SEED_LEN], z: &[u8; SEED_LEN]) -> Result<([u8; EK_LEN], [u8; DK_LEN]), Error>` |
+| `encapsulate` | `<R: Rbg>(ek: &[u8; EK_LEN], rbg: &mut R) -> Result<([u8; SHARED_SECRET_LEN], [u8; CT_LEN]), Error>` |
 | `decapsulate` | `(dk: &[u8; DK_LEN], ct: &[u8; CT_LEN]) -> Result<[u8; SHARED_SECRET_LEN], Error>` |
 
-`keygen` returns `(ek, dk)` — the encapsulation (public) key first, then
-the decapsulation (private) key. `encapsulate` returns
-`(shared_secret, ciphertext)`. `m`, `d`, and `z` are each 32 bytes of
-fresh DRBG output.
+`Rbg` is `oxicrypt_module::Rbg`, which every DRBG of `oxicrypt_drbg`
+implements; `Zeroizing` is `oxicrypt_zeroize::Zeroizing`. `keygen` draws
+`d` and then `z` from `rbg` inside the module, and `encapsulate` draws
+`m`; both refuse an RBG below the parameter set's strength (128 bits for
+ML-KEM-512, 192 for ML-KEM-768, 256 for ML-KEM-1024) with `RbgTooWeak`
+before any draw. `keygen_with_seed` also returns `d ‖ z`, and
+`expand_key` rebuilds the pair from it. The three key-generation
+functions run a pairwise consistency test on the pair and return
+`ConditionalTestFailed`, with the module in its error state, if it fails.
+Key pairs are `(ek, dk)`, the encapsulation (public) key first;
+`encapsulate` returns `(shared_secret, ciphertext)`.
 
 ### Constants (per variant module)
 
 ```rust
-pub const SEED_LEN: usize = 32;            // d, z, m randomness length
+pub const SEED_LEN: usize = 32;            // d, z, m length
 pub const SHARED_SECRET_LEN: usize = 32;
 // Variant-dependent (ML-KEM-512 / 768 / 1024):
 pub const EK_LEN: usize;   // 800  / 1184 / 1568

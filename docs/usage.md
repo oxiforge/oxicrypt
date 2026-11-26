@@ -327,22 +327,36 @@ HKDF before using it as keying material.
 ## ML-KEM (post-quantum key encapsulation, FIPS 203)
 
 ```rust
-use oxicrypt_ml_kem::ml_kem_1024::{keygen, encapsulate, decapsulate};
+use oxicrypt_drbg::HmacDrbgSha256;
+use oxicrypt_ml_kem::ml_kem_1024::{decapsulate, encapsulate, expand_key, keygen, keygen_with_seed};
 
-// Recipient generates a key pair from 32-byte d and z randomness.
-let (ek, dk) = keygen(&d, &z)?;        // (encapsulation key, decapsulation key)
+// The module draws the 32-byte seeds d and z from a DRBG of at least
+// 256-bit strength and runs the pairwise consistency test; returns
+// (encapsulation key, decapsulation key).
+let mut drbg = HmacDrbgSha256::instantiate_from_module(b"")?;
+let (ek, dk) = keygen(&mut drbg)?;
 
-// Sender encapsulates against the public ek with 32 bytes of randomness m.
-let (ss_sender, ct) = encapsulate(&ek, &m)?;  // (shared secret, ciphertext)
+// To store the key as its seed, take d ‖ z too (it needs the same
+// protection as the decapsulation key), and expand it again later.
+let (seed, ek2, dk2) = keygen_with_seed(&mut drbg)?;
+let (d, z) = seed.split_at(32);
+assert_eq!(expand_key(d.try_into()?, z.try_into()?)?, (ek2, dk2));
+
+// Sender encapsulates against the public ek; the module draws m from the DRBG.
+let (ss_sender, ct) = encapsulate(&ek, &mut drbg)?;  // (shared secret, ciphertext)
 
 // Recipient decapsulates the ciphertext to recover the same shared secret.
 let ss_recipient = decapsulate(&dk, &ct)?;
 assert_eq!(ss_sender, ss_recipient);   // both are [u8; 32]
 ```
 
-`d`, `z`, and `m` are each 32 bytes of fresh DRBG output. ML-KEM-512 and
-ML-KEM-768 are available via the `ml_kem_512` / `ml_kem_768` modules with
-the same API.
+`keygen`, `keygen_with_seed` and `encapsulate` return `RbgTooWeak`, before
+any draw, for a DRBG below the parameter set's strength: 128 bits for
+ML-KEM-512, 192 for ML-KEM-768, 256 for ML-KEM-1024. A failed pairwise
+consistency test returns `ConditionalTestFailed` and puts the module in its
+error state. A seed passed to `expand_key` is the caller's to wipe.
+ML-KEM-512 and ML-KEM-768 are available via the `ml_kem_512` /
+`ml_kem_768` modules with the same API.
 
 ## ML-DSA (post-quantum signatures, FIPS 204)
 
