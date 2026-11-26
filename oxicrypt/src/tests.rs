@@ -18,7 +18,9 @@ use std::path::PathBuf;
 use crate::error::{Error, Site};
 use crate::module::{Fingerprint, IntegrityStatus, Profile, manifest_library_version};
 use crate::secret::{
-    HkdfPrk, MlDsa87KeySeed, MlDsa87SecretKey, MlKem1024DecapsulationKey, Okm, SharedSecret, wipe,
+    HkdfPrk, MlDsa44SecretKey, MlDsa44Seed, MlDsa65SecretKey, MlDsa65Seed, MlDsa87SecretKey,
+    MlDsa87Seed, MlKem512DecapsulationKey, MlKem512Seed, MlKem768DecapsulationKey, MlKem768Seed,
+    MlKem1024DecapsulationKey, MlKem1024Seed, Okm, SharedSecret, wipe,
 };
 
 #[path = "../build/select.rs"]
@@ -320,7 +322,7 @@ fn sys_functions() -> BTreeMap<String, Signature> {
 fn sys_declares_exactly_the_header() {
     let header = header_functions();
     let sys = sys_functions();
-    assert_eq!(header.len(), 319, "the header's export count changed");
+    assert_eq!(header.len(), 325, "the header's export count changed");
     assert!(header.contains_key("lama_manifest"));
     assert_eq!(
         header["oxi_aes_gcm_key_new"],
@@ -533,9 +535,28 @@ fn stack_secrets_zero_themselves_on_drop() {
     assert!(before.iter().all(|b| *b == 0x3C), "positive control");
     assert!(after.iter().all(|b| *b == 0));
 
-    let (before, after) =
-        observe_drop!(MlDsa87KeySeed, MlDsa87KeySeed::from_bytes(&[0x7E; 32]), 32);
+    let (before, after) = observe_drop!(MlDsa44Seed, MlDsa44Seed::from_bytes(&[0x7E; 32]), 32);
     assert!(before.iter().all(|b| *b == 0x7E), "positive control");
+    assert!(after.iter().all(|b| *b == 0));
+
+    let (before, after) = observe_drop!(MlDsa65Seed, MlDsa65Seed::from_bytes(&[0x7E; 32]), 32);
+    assert!(before.iter().all(|b| *b == 0x7E), "positive control");
+    assert!(after.iter().all(|b| *b == 0));
+
+    let (before, after) = observe_drop!(MlDsa87Seed, MlDsa87Seed::from_bytes(&[0x7E; 32]), 32);
+    assert!(before.iter().all(|b| *b == 0x7E), "positive control");
+    assert!(after.iter().all(|b| *b == 0));
+
+    let (before, after) = observe_drop!(MlKem512Seed, MlKem512Seed::from_bytes(&[0x4B; 64]), 64);
+    assert!(before.iter().all(|b| *b == 0x4B), "positive control");
+    assert!(after.iter().all(|b| *b == 0));
+
+    let (before, after) = observe_drop!(MlKem768Seed, MlKem768Seed::from_bytes(&[0x4B; 64]), 64);
+    assert!(before.iter().all(|b| *b == 0x4B), "positive control");
+    assert!(after.iter().all(|b| *b == 0));
+
+    let (before, after) = observe_drop!(MlKem1024Seed, MlKem1024Seed::from_bytes(&[0x4B; 64]), 64);
+    assert!(before.iter().all(|b| *b == 0x4B), "positive control");
     assert!(after.iter().all(|b| *b == 0));
 }
 
@@ -551,7 +572,6 @@ mod watch {
     static WATCHED: AtomicUsize = AtomicUsize::new(0);
     /// `Some(all_zero)` once the watched block was freed.
     pub(super) static RESULT: Mutex<Option<bool>> = Mutex::new(None);
-    /// Serialises the tests that watch a block.
     pub(super) static ONE_AT_A_TIME: Mutex<()> = Mutex::new(());
 
     // SAFETY: forwards every call to `System` unchanged; `dealloc` only reads
@@ -606,9 +626,29 @@ fn heap_secrets_are_zero_when_their_block_is_freed() {
         "the allocator does not see frees"
     );
 
+    let sk = MlDsa44SecretKey::from_bytes(&[0xC3; 2560]);
+    watch::watch(sk.bytes.as_ptr());
+    drop(sk);
+    assert_eq!(watch::result(), Some(true));
+
+    let sk = MlDsa65SecretKey::from_bytes(&[0xC3; 4032]);
+    watch::watch(sk.bytes.as_ptr());
+    drop(sk);
+    assert_eq!(watch::result(), Some(true));
+
     let sk = MlDsa87SecretKey::from_bytes(&[0xC3; 4896]);
     watch::watch(sk.bytes.as_ptr());
     drop(sk);
+    assert_eq!(watch::result(), Some(true));
+
+    let dk = MlKem512DecapsulationKey::from_bytes(&[0x96; 1632]);
+    watch::watch(dk.bytes.as_ptr());
+    drop(dk);
+    assert_eq!(watch::result(), Some(true));
+
+    let dk = MlKem768DecapsulationKey::from_bytes(&[0x96; 2400]);
+    watch::watch(dk.bytes.as_ptr());
+    drop(dk);
     assert_eq!(watch::result(), Some(true));
 
     let dk = MlKem1024DecapsulationKey::from_bytes(&[0x96; 3168]);
@@ -625,17 +665,20 @@ fn heap_secrets_are_zero_when_their_block_is_freed() {
 
 #[test]
 fn secret_debug_prints_only_the_type_name() {
-    use crate::secret::{
-        MlDsa87KeySeed, MlKem1024EncapsSeed, MlKem1024KeySeedD, MlKem1024KeySeedZ,
-    };
     let shown = [
         format!("{:?}", HkdfPrk::from_bytes(&[1; 48])),
         format!("{:?}", SharedSecret::from_bytes(&[1; 32])),
-        format!("{:?}", MlDsa87KeySeed::from_bytes(&[1; 32])),
-        format!("{:?}", MlKem1024KeySeedD::from_bytes(&[1; 32])),
-        format!("{:?}", MlKem1024KeySeedZ::from_bytes(&[1; 32])),
-        format!("{:?}", MlKem1024EncapsSeed::from_bytes(&[1; 32])),
+        format!("{:?}", MlDsa44Seed::from_bytes(&[1; 32])),
+        format!("{:?}", MlDsa65Seed::from_bytes(&[1; 32])),
+        format!("{:?}", MlDsa87Seed::from_bytes(&[1; 32])),
+        format!("{:?}", MlKem512Seed::from_bytes(&[1; 64])),
+        format!("{:?}", MlKem768Seed::from_bytes(&[1; 64])),
+        format!("{:?}", MlKem1024Seed::from_bytes(&[1; 64])),
+        format!("{:?}", MlDsa44SecretKey::from_bytes(&[1; 2560])),
+        format!("{:?}", MlDsa65SecretKey::from_bytes(&[1; 4032])),
         format!("{:?}", MlDsa87SecretKey::from_bytes(&[1; 4896])),
+        format!("{:?}", MlKem512DecapsulationKey::from_bytes(&[1; 1632])),
+        format!("{:?}", MlKem768DecapsulationKey::from_bytes(&[1; 2400])),
         format!("{:?}", MlKem1024DecapsulationKey::from_bytes(&[1; 3168])),
         format!("{:?}", {
             let mut okm = Okm::zeroed(4);
@@ -648,11 +691,17 @@ fn secret_debug_prints_only_the_type_name() {
         [
             "HkdfPrk",
             "SharedSecret",
-            "MlDsa87KeySeed",
-            "MlKem1024KeySeedD",
-            "MlKem1024KeySeedZ",
-            "MlKem1024EncapsSeed",
+            "MlDsa44Seed",
+            "MlDsa65Seed",
+            "MlDsa87Seed",
+            "MlKem512Seed",
+            "MlKem768Seed",
+            "MlKem1024Seed",
+            "MlDsa44SecretKey",
+            "MlDsa65SecretKey",
             "MlDsa87SecretKey",
+            "MlKem512DecapsulationKey",
+            "MlKem768DecapsulationKey",
             "MlKem1024DecapsulationKey",
             "Okm",
         ]
@@ -679,8 +728,9 @@ macro_rules! assert_not_impl {
 
 mod forbidden_traits {
     use crate::secret::{
-        HkdfPrk, MlDsa87KeySeed, MlDsa87SecretKey, MlKem1024DecapsulationKey, MlKem1024EncapsSeed,
-        MlKem1024KeySeedD, MlKem1024KeySeedZ, Okm, SharedSecret,
+        HkdfPrk, MlDsa44SecretKey, MlDsa44Seed, MlDsa65SecretKey, MlDsa65Seed, MlDsa87SecretKey,
+        MlDsa87Seed, MlKem512DecapsulationKey, MlKem512Seed, MlKem768DecapsulationKey,
+        MlKem768Seed, MlKem1024DecapsulationKey, MlKem1024Seed, Okm, SharedSecret,
     };
     use crate::{AesCbcKey, AesCcmKey, AesCmacKey, AesCtrKey, AesGcmKey, AesKwKey, Drbg};
     use core::hash::Hash;
@@ -695,11 +745,17 @@ mod forbidden_traits {
     assert_not_impl!(HkdfPrk: Clone, Copy, PartialEq, Hash, core::fmt::Display);
     assert_not_impl!(Okm: Clone, Copy, PartialEq, Hash, core::fmt::Display);
     assert_not_impl!(SharedSecret: Clone, Copy, PartialEq, Hash, core::fmt::Display);
-    assert_not_impl!(MlDsa87KeySeed: Clone, Copy, PartialEq, Hash, core::fmt::Display);
-    assert_not_impl!(MlKem1024KeySeedD: Clone, Copy, PartialEq, Hash, core::fmt::Display);
-    assert_not_impl!(MlKem1024KeySeedZ: Clone, Copy, PartialEq, Hash, core::fmt::Display);
-    assert_not_impl!(MlKem1024EncapsSeed: Clone, Copy, PartialEq, Hash, core::fmt::Display);
+    assert_not_impl!(MlDsa44Seed: Clone, Copy, PartialEq, Hash, core::fmt::Display);
+    assert_not_impl!(MlDsa65Seed: Clone, Copy, PartialEq, Hash, core::fmt::Display);
+    assert_not_impl!(MlDsa87Seed: Clone, Copy, PartialEq, Hash, core::fmt::Display);
+    assert_not_impl!(MlKem512Seed: Clone, Copy, PartialEq, Hash, core::fmt::Display);
+    assert_not_impl!(MlKem768Seed: Clone, Copy, PartialEq, Hash, core::fmt::Display);
+    assert_not_impl!(MlKem1024Seed: Clone, Copy, PartialEq, Hash, core::fmt::Display);
+    assert_not_impl!(MlDsa44SecretKey: Clone, Copy, PartialEq, Hash, core::fmt::Display);
+    assert_not_impl!(MlDsa65SecretKey: Clone, Copy, PartialEq, Hash, core::fmt::Display);
     assert_not_impl!(MlDsa87SecretKey: Clone, Copy, PartialEq, Hash, core::fmt::Display);
+    assert_not_impl!(MlKem512DecapsulationKey: Clone, Copy, PartialEq, Hash, core::fmt::Display);
+    assert_not_impl!(MlKem768DecapsulationKey: Clone, Copy, PartialEq, Hash, core::fmt::Display);
     assert_not_impl!(MlKem1024DecapsulationKey: Clone, Copy, PartialEq, Hash, core::fmt::Display);
 }
 

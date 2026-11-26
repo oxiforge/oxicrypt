@@ -38,7 +38,7 @@ fn child_does_nothing() {}
 fn the_table_holds_every_declaration() {
     let addresses = sys_inventory::INVENTORY.addresses();
     assert_eq!(addresses.len(), declared().len());
-    assert_eq!(addresses.len(), 319);
+    assert_eq!(addresses.len(), 325);
     assert!(addresses.iter().all(|a| *a != 0));
 }
 
@@ -64,7 +64,7 @@ fn this_binary_imports_every_export() {
         missing.is_empty(),
         "not imported by the final link: {missing:?}"
     );
-    assert_eq!(imported.len(), 319);
+    assert_eq!(imported.len(), 325);
 }
 
 fn spawn_with_library(dir: &Path) -> std::process::Output {

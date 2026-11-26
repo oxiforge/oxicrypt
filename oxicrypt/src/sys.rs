@@ -333,7 +333,13 @@ unsafe extern "C" {
         msg_len: usize,
         sig_ptr: *const u8,
     ) -> c_int;
-    pub(crate) fn oxi_ml_dsa_87_keygen(
+    pub(crate) fn oxi_ml_dsa_87_keygen_rbg(
+        rbg: *mut OxiDrbg,
+        pk_out: *mut u8,
+        sk_out: *mut u8,
+        seed_out: *mut u8,
+    ) -> c_int;
+    pub(crate) fn oxi_ml_dsa_87_expand_key(
         seed_ptr: *const u8,
         pk_out: *mut u8,
         sk_out: *mut u8,
@@ -354,7 +360,13 @@ unsafe extern "C" {
         ctx_len: usize,
         sig_ptr: *const u8,
     ) -> c_int;
-    pub(crate) fn oxi_ml_dsa_44_keygen(
+    pub(crate) fn oxi_ml_dsa_44_keygen_rbg(
+        rbg: *mut OxiDrbg,
+        pk_out: *mut u8,
+        sk_out: *mut u8,
+        seed_out: *mut u8,
+    ) -> c_int;
+    pub(crate) fn oxi_ml_dsa_44_expand_key(
         seed_ptr: *const u8,
         pk_out: *mut u8,
         sk_out: *mut u8,
@@ -375,7 +387,13 @@ unsafe extern "C" {
         ctx_len: usize,
         sig_ptr: *const u8,
     ) -> c_int;
-    pub(crate) fn oxi_ml_dsa_65_keygen(
+    pub(crate) fn oxi_ml_dsa_65_keygen_rbg(
+        rbg: *mut OxiDrbg,
+        pk_out: *mut u8,
+        sk_out: *mut u8,
+        seed_out: *mut u8,
+    ) -> c_int;
+    pub(crate) fn oxi_ml_dsa_65_expand_key(
         seed_ptr: *const u8,
         pk_out: *mut u8,
         sk_out: *mut u8,
@@ -396,15 +414,21 @@ unsafe extern "C" {
         ctx_len: usize,
         sig_ptr: *const u8,
     ) -> c_int;
-    pub(crate) fn oxi_ml_kem_1024_keygen(
+    pub(crate) fn oxi_ml_kem_1024_keygen_rbg(
+        rbg: *mut OxiDrbg,
+        ek_out: *mut u8,
+        dk_out: *mut u8,
+        seed_out: *mut u8,
+    ) -> c_int;
+    pub(crate) fn oxi_ml_kem_1024_expand_key(
         d_ptr: *const u8,
         z_ptr: *const u8,
         ek_out: *mut u8,
         dk_out: *mut u8,
     ) -> c_int;
-    pub(crate) fn oxi_ml_kem_1024_encapsulate(
+    pub(crate) fn oxi_ml_kem_1024_encapsulate_rbg(
         ek_ptr: *const u8,
-        m_ptr: *const u8,
+        rbg: *mut OxiDrbg,
         ss_out: *mut u8,
         ct_out: *mut u8,
     ) -> c_int;
@@ -413,15 +437,21 @@ unsafe extern "C" {
         ct_ptr: *const u8,
         ss_out: *mut u8,
     ) -> c_int;
-    pub(crate) fn oxi_ml_kem_512_keygen(
+    pub(crate) fn oxi_ml_kem_512_keygen_rbg(
+        rbg: *mut OxiDrbg,
+        ek_out: *mut u8,
+        dk_out: *mut u8,
+        seed_out: *mut u8,
+    ) -> c_int;
+    pub(crate) fn oxi_ml_kem_512_expand_key(
         d_ptr: *const u8,
         z_ptr: *const u8,
         ek_out: *mut u8,
         dk_out: *mut u8,
     ) -> c_int;
-    pub(crate) fn oxi_ml_kem_512_encapsulate(
+    pub(crate) fn oxi_ml_kem_512_encapsulate_rbg(
         ek_ptr: *const u8,
-        m_ptr: *const u8,
+        rbg: *mut OxiDrbg,
         ss_out: *mut u8,
         ct_out: *mut u8,
     ) -> c_int;
@@ -430,15 +460,21 @@ unsafe extern "C" {
         ct_ptr: *const u8,
         ss_out: *mut u8,
     ) -> c_int;
-    pub(crate) fn oxi_ml_kem_768_keygen(
+    pub(crate) fn oxi_ml_kem_768_keygen_rbg(
+        rbg: *mut OxiDrbg,
+        ek_out: *mut u8,
+        dk_out: *mut u8,
+        seed_out: *mut u8,
+    ) -> c_int;
+    pub(crate) fn oxi_ml_kem_768_expand_key(
         d_ptr: *const u8,
         z_ptr: *const u8,
         ek_out: *mut u8,
         dk_out: *mut u8,
     ) -> c_int;
-    pub(crate) fn oxi_ml_kem_768_encapsulate(
+    pub(crate) fn oxi_ml_kem_768_encapsulate_rbg(
         ek_ptr: *const u8,
-        m_ptr: *const u8,
+        rbg: *mut OxiDrbg,
         ss_out: *mut u8,
         ct_out: *mut u8,
     ) -> c_int;

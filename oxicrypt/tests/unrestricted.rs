@@ -10,8 +10,9 @@ mod common;
 
 use common::init;
 use oxicrypt::{
-    DrbgKind, Error, HMAC_DRBG_MAX_PROVIDED_LEN, HMAC_DRBG_MAX_REQUEST_LEN, MlDsa87KeySeed,
-    MlKem1024EncapsSeed, MlKem1024KeySeedD, MlKem1024KeySeedZ, Module, Profile,
+    Drbg, DrbgKind, Error, HMAC_DRBG_MAX_PROVIDED_LEN, HMAC_DRBG_MAX_REQUEST_LEN, MlDsa44Seed,
+    MlDsa65Seed, MlKem512DecapsulationKey, MlKem512Seed, MlKem768DecapsulationKey, MlKem768Seed,
+    MlKem1024DecapsulationKey, Module, Profile,
 };
 
 fn module() -> Module {
@@ -101,34 +102,294 @@ fn drbg_request_bound_is_checked_before_the_call() {
     assert_eq!(drbg.generate(&[], &mut max), Err(Error::Uninstantiated));
 }
 
-#[test]
-fn seeds_from_the_drbg_generate_keys() {
-    let m = module();
-    let mut drbg = m.drbg(DrbgKind::HmacSha256).unwrap();
-    drbg.instantiate(&[]).unwrap();
-    let mut draw = || {
-        let mut bytes = [0u8; 32];
-        drbg.generate(&[], &mut bytes).unwrap();
-        bytes
+fn instantiated(m: Module, kind: DrbgKind) -> Drbg {
+    let mut rbg = m.drbg(kind).unwrap();
+    rbg.instantiate(b"oxicrypt test").unwrap();
+    rbg
+}
+
+macro_rules! ml_dsa_round_trip {
+    ($name:ident, $keygen:ident, $with_seed:ident, $expand:ident, $sign:ident, $verify:ident) => {
+        #[test]
+        fn $name() {
+            let m = module();
+            let mut rbg = instantiated(m, DrbgKind::HmacSha256);
+            let (pk, sk) = m.$keygen(&mut rbg).unwrap();
+            let sig = m.$sign(&sk, b"message", b"ctx").unwrap();
+            assert_eq!(m.$verify(&pk, b"message", b"ctx", &sig), Ok(()));
+            assert_eq!(
+                m.$verify(&pk, b"messagf", b"ctx", &sig),
+                Err(Error::SignatureInvalid)
+            );
+
+            let (pk, sk, seed) = m.$with_seed(&mut rbg).unwrap();
+            let expanded = m.$expand(&seed).unwrap();
+            assert_eq!(expanded.0, pk);
+            assert_eq!(expanded.1.as_bytes(), sk.as_bytes());
+        }
     };
+}
 
-    let (pk, sk) = m
-        .ml_dsa_87_keygen(MlDsa87KeySeed::from_bytes(&draw()))
-        .unwrap();
-    let sig = m.ml_dsa_87_sign(&sk, b"m", b"").unwrap();
-    assert_eq!(m.ml_dsa_87_verify(&pk, b"m", b"", &sig), Ok(()));
+macro_rules! ml_kem_round_trip {
+    (
+        $name:ident,
+        $Dk:ident,
+        $keygen:ident,
+        $with_seed:ident,
+        $expand:ident,
+        $encaps:ident,
+        $decaps:ident
+    ) => {
+        #[test]
+        fn $name() {
+            let m = module();
+            let mut rbg = instantiated(m, DrbgKind::HmacSha256);
+            let (ek, dk) = m.$keygen(&mut rbg).unwrap();
+            let (sent, ct) = m.$encaps(&ek, &mut rbg).unwrap();
+            let received = m.$decaps(&dk, &ct).unwrap();
+            assert_eq!(received.as_bytes(), sent.as_bytes());
 
-    let (ek, dk) = m
-        .ml_kem_1024_keygen(
-            MlKem1024KeySeedD::from_bytes(&draw()),
-            MlKem1024KeySeedZ::from_bytes(&draw()),
-        )
+            let (_, other) = m.$keygen(&mut rbg).unwrap();
+            let rejected = m.$decaps(&other, &ct).unwrap();
+            assert_ne!(rejected.as_bytes(), sent.as_bytes());
+
+            // FIPS 203 §7.2: a 12-bit coefficient of ek at or above
+            // q = 3329; 0xFF bytes encode 4095.
+            let mut bad_ek = ek;
+            bad_ek[..3].fill(0xFF);
+            assert_eq!(
+                m.$encaps(&bad_ek, &mut rbg).map(drop),
+                Err(Error::InvalidInput)
+            );
+
+            // FIPS 203 §7.3: dk = dk_PKE ‖ ek ‖ H(ek) ‖ z, so H(ek) starts
+            // 64 bytes from the end.
+            let mut bytes = *dk.as_bytes();
+            let at = bytes.len() - 64;
+            bytes[at] ^= 0x01;
+            assert_eq!(
+                m.$decaps(&$Dk::from_bytes(&bytes), &ct).map(drop),
+                Err(Error::InvalidInput)
+            );
+
+            let (ek, dk, seed) = m.$with_seed(&mut rbg).unwrap();
+            let expanded = m.$expand(&seed).unwrap();
+            assert_eq!(expanded.0, ek);
+            assert_eq!(expanded.1.as_bytes(), dk.as_bytes());
+        }
+    };
+}
+
+ml_dsa_round_trip!(
+    ml_dsa_44_round_trips,
+    ml_dsa_44_keygen,
+    ml_dsa_44_keygen_with_seed,
+    ml_dsa_44_expand_key,
+    ml_dsa_44_sign,
+    ml_dsa_44_verify
+);
+ml_dsa_round_trip!(
+    ml_dsa_65_round_trips,
+    ml_dsa_65_keygen,
+    ml_dsa_65_keygen_with_seed,
+    ml_dsa_65_expand_key,
+    ml_dsa_65_sign,
+    ml_dsa_65_verify
+);
+ml_dsa_round_trip!(
+    ml_dsa_87_round_trips,
+    ml_dsa_87_keygen,
+    ml_dsa_87_keygen_with_seed,
+    ml_dsa_87_expand_key,
+    ml_dsa_87_sign,
+    ml_dsa_87_verify
+);
+ml_kem_round_trip!(
+    ml_kem_512_round_trips,
+    MlKem512DecapsulationKey,
+    ml_kem_512_keygen,
+    ml_kem_512_keygen_with_seed,
+    ml_kem_512_expand_key,
+    ml_kem_512_encapsulate,
+    ml_kem_512_decapsulate
+);
+ml_kem_round_trip!(
+    ml_kem_768_round_trips,
+    MlKem768DecapsulationKey,
+    ml_kem_768_keygen,
+    ml_kem_768_keygen_with_seed,
+    ml_kem_768_expand_key,
+    ml_kem_768_encapsulate,
+    ml_kem_768_decapsulate
+);
+ml_kem_round_trip!(
+    ml_kem_1024_round_trips,
+    MlKem1024DecapsulationKey,
+    ml_kem_1024_keygen,
+    ml_kem_1024_keygen_with_seed,
+    ml_kem_1024_expand_key,
+    ml_kem_1024_encapsulate,
+    ml_kem_1024_decapsulate
+);
+
+#[test]
+fn a_drbg_weaker_than_the_set_is_refused() {
+    let m = module();
+    let mut aes128 = instantiated(m, DrbgKind::CtrAes128);
+    let mut aes192 = instantiated(m, DrbgKind::CtrAes192);
+
+    assert_eq!(
+        m.ml_kem_1024_keygen(&mut aes128).unwrap_err(),
+        Error::RbgTooWeak
+    );
+    assert_eq!(
+        m.ml_kem_1024_keygen(&mut aes192).unwrap_err(),
+        Error::RbgTooWeak
+    );
+    assert_eq!(
+        m.ml_kem_1024_keygen_with_seed(&mut aes192).unwrap_err(),
+        Error::RbgTooWeak
+    );
+    assert_eq!(
+        m.ml_dsa_87_keygen(&mut aes192).unwrap_err(),
+        Error::RbgTooWeak
+    );
+    assert_eq!(
+        m.ml_kem_768_keygen(&mut aes128).unwrap_err(),
+        Error::RbgTooWeak
+    );
+    assert_eq!(
+        m.ml_dsa_44_keygen(&mut aes128).unwrap_err(),
+        Error::RbgTooWeak
+    );
+    assert_eq!(
+        m.ml_dsa_65_keygen(&mut aes128).unwrap_err(),
+        Error::RbgTooWeak
+    );
+    assert_eq!(
+        m.ml_dsa_44_keygen_with_seed(&mut aes128).unwrap_err(),
+        Error::RbgTooWeak
+    );
+
+    let (ek, _) = m
+        .ml_kem_1024_keygen(&mut instantiated(m, DrbgKind::CtrAes256))
         .unwrap();
-    let (sent, ct) = m
-        .ml_kem_1024_encapsulate(&ek, MlKem1024EncapsSeed::from_bytes(&draw()))
-        .unwrap();
-    let received = m.ml_kem_1024_decapsulate(&dk, &ct).unwrap();
-    assert_eq!(sent.as_bytes(), received.as_bytes());
+    assert_eq!(
+        m.ml_kem_1024_encapsulate(&ek, &mut aes128).unwrap_err(),
+        Error::RbgTooWeak
+    );
+    let (ek768, _) = m.ml_kem_768_keygen(&mut aes192).unwrap();
+    assert_eq!(
+        m.ml_kem_768_encapsulate(&ek768, &mut aes128).unwrap_err(),
+        Error::RbgTooWeak
+    );
+
+    // Positive controls: each refused handle serves a set it is strong
+    // enough for.
+    let (ek, _) = m.ml_kem_512_keygen(&mut aes128).unwrap();
+    m.ml_kem_512_encapsulate(&ek, &mut aes128).unwrap();
+    m.ml_kem_768_encapsulate(&ek768, &mut aes192).unwrap();
+    m.ml_dsa_44_keygen(&mut aes192).unwrap();
+    m.ml_dsa_65_keygen(&mut aes192).unwrap();
+}
+
+// ACVP ML-DSA specification (draft-celi-acvp-ml-dsa-01) §6.1.2 Table 1,
+// rows 1 and 6: seed ξ and SHA2-256(pk ‖ sk), as `oxicrypt-ml-dsa` holds them
+// in `seam::ML_DSA_44_ACVP_SEED`, `ML_DSA_44_ACVP_KEY_HASH`,
+// `ML_DSA_65_ACVP_SEED` and `ML_DSA_65_ACVP_KEY_HASH`.
+const ML_DSA_44_SEED: &str = "5c624fcc1862452452d0c665840d8237f43108e5499edcdc108fbc49d596e4b7";
+const ML_DSA_44_KEY_HASH: &str = "ac825c59d8a4c453a2c4efea8395741ca404f3000e28d56b25d03bb402e5cb2f";
+const ML_DSA_65_SEED: &str = "464756a985e5df03739d95dd309c1ed9c5b04254cc294e7e7eb9b9365ee15117";
+const ML_DSA_65_KEY_HASH: &str = "ae95ea0daa80199e7b4a74eb5a1b1dc6c3805bd01d2fa78d7c4fba8c255aa13d";
+
+#[test]
+fn sha256_known_answers() {
+    // FIPS 180-4 examples (NIST CSRC "SHA256.pdf", "SHA256_2.pdf") and the
+    // empty message, as `sha256sum` prints them.
+    for (msg, digest) in [
+        (
+            &b""[..],
+            "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        ),
+        (
+            b"abc",
+            "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad",
+        ),
+        (
+            b"abcdbcdecdefdefgefghfghighijhijkijkljklmklmnlmnomnopnopq",
+            "248d6a61d20638b8e5c026930c3e6039a33ce45964ff2167f6ecedd419db06c1",
+        ),
+    ] {
+        assert_eq!(common::sha256(msg).as_slice(), common::unhex(digest));
+    }
+}
+
+#[test]
+fn ml_dsa_44_expand_key_known_answer() {
+    let m = module();
+    let seed = MlDsa44Seed::from_bytes(&common::array(&common::unhex(ML_DSA_44_SEED)));
+    let (pk, sk) = m.ml_dsa_44_expand_key(&seed).unwrap();
+    let digest = common::sha256(&[pk.as_slice(), sk.as_bytes()].concat());
+    assert_eq!(digest.as_slice(), common::unhex(ML_DSA_44_KEY_HASH));
+}
+
+#[test]
+fn ml_dsa_65_expand_key_known_answer() {
+    let m = module();
+    let seed = MlDsa65Seed::from_bytes(&common::array(&common::unhex(ML_DSA_65_SEED)));
+    let (pk, sk) = m.ml_dsa_65_expand_key(&seed).unwrap();
+    let digest = common::sha256(&[pk.as_slice(), sk.as_bytes()].concat());
+    assert_eq!(digest.as_slice(), common::unhex(ML_DSA_65_KEY_HASH));
+}
+
+// NIST ACVP-Server ML-KEM-keyGen-FIPS203 `internalProjection.json` at commit
+// 112690e8484dba7077709a05b1f3af58ddefdd5d, tgId 1 tcId 1 (ML-KEM-512) and
+// tgId 2 tcId 26 (ML-KEM-768), as `oxicrypt-ml-kem` holds them in
+// `tests/data/` for its `seam::ML_KEM_*_KEYGEN_*` constants.
+const KEM_DATA: &str = concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../crates/oxicrypt-ml-kem/tests/data"
+);
+
+fn kem_vector(name: &str) -> Vec<u8> {
+    let path = format!("{KEM_DATA}/{name}");
+    std::fs::read(&path).unwrap_or_else(|e| panic!("read {path}: {e}"))
+}
+
+fn kem_seed<const N: usize>(prefix: &str) -> [u8; N] {
+    common::array(
+        &[
+            kem_vector(&format!("{prefix}_d.bin")),
+            kem_vector(&format!("{prefix}_z.bin")),
+        ]
+        .concat(),
+    )
+}
+
+#[test]
+fn ml_kem_512_expand_key_known_answer() {
+    let m = module();
+    let prefix = "mlkem512_nist_keygen_tg1_tc1";
+    let seed = MlKem512Seed::from_bytes(&kem_seed(prefix));
+    let (ek, dk) = m.ml_kem_512_expand_key(&seed).unwrap();
+    assert_eq!(ek.as_slice(), kem_vector(&format!("{prefix}_ek.bin")));
+    assert_eq!(
+        dk.as_bytes().as_slice(),
+        kem_vector(&format!("{prefix}_dk.bin"))
+    );
+}
+
+#[test]
+fn ml_kem_768_expand_key_known_answer() {
+    let m = module();
+    let prefix = "mlkem768_nist_keygen_tg2_tc26";
+    let seed = MlKem768Seed::from_bytes(&kem_seed(prefix));
+    let (ek, dk) = m.ml_kem_768_expand_key(&seed).unwrap();
+    assert_eq!(ek.as_slice(), kem_vector(&format!("{prefix}_ek.bin")));
+    assert_eq!(
+        dk.as_bytes().as_slice(),
+        kem_vector(&format!("{prefix}_dk.bin"))
+    );
 }
 
 #[test]

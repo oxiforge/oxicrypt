@@ -7,8 +7,6 @@
 use super::sys::*;
 use core::ffi::{c_char, c_int};
 
-/// One function pointer per declaration of `sys.rs`, each with the
-/// declaration's exact type.
 pub(crate) struct Inventory {
     pub(crate) lama_manifest: unsafe extern "C" fn() -> *const c_char,
     pub(crate) oxi_abi_version: unsafe extern "C" fn() -> c_int,
@@ -134,37 +132,49 @@ pub(crate) struct Inventory {
         unsafe extern "C" fn(*const u8, u64, *const u8, usize, *const u8) -> c_int,
     pub(crate) oxi_rsa_pss_verify_4096_sha256:
         unsafe extern "C" fn(*const u8, u64, *const u8, usize, *const u8) -> c_int,
-    pub(crate) oxi_ml_dsa_87_keygen: unsafe extern "C" fn(*const u8, *mut u8, *mut u8) -> c_int,
+    pub(crate) oxi_ml_dsa_87_keygen_rbg:
+        unsafe extern "C" fn(*mut OxiDrbg, *mut u8, *mut u8, *mut u8) -> c_int,
+    pub(crate) oxi_ml_dsa_87_expand_key: unsafe extern "C" fn(*const u8, *mut u8, *mut u8) -> c_int,
     pub(crate) oxi_ml_dsa_87_sign:
         unsafe extern "C" fn(*const u8, *const u8, usize, *const u8, usize, *mut u8) -> c_int,
     pub(crate) oxi_ml_dsa_87_verify:
         unsafe extern "C" fn(*const u8, *const u8, usize, *const u8, usize, *const u8) -> c_int,
-    pub(crate) oxi_ml_dsa_44_keygen: unsafe extern "C" fn(*const u8, *mut u8, *mut u8) -> c_int,
+    pub(crate) oxi_ml_dsa_44_keygen_rbg:
+        unsafe extern "C" fn(*mut OxiDrbg, *mut u8, *mut u8, *mut u8) -> c_int,
+    pub(crate) oxi_ml_dsa_44_expand_key: unsafe extern "C" fn(*const u8, *mut u8, *mut u8) -> c_int,
     pub(crate) oxi_ml_dsa_44_sign:
         unsafe extern "C" fn(*const u8, *const u8, usize, *const u8, usize, *mut u8) -> c_int,
     pub(crate) oxi_ml_dsa_44_verify:
         unsafe extern "C" fn(*const u8, *const u8, usize, *const u8, usize, *const u8) -> c_int,
-    pub(crate) oxi_ml_dsa_65_keygen: unsafe extern "C" fn(*const u8, *mut u8, *mut u8) -> c_int,
+    pub(crate) oxi_ml_dsa_65_keygen_rbg:
+        unsafe extern "C" fn(*mut OxiDrbg, *mut u8, *mut u8, *mut u8) -> c_int,
+    pub(crate) oxi_ml_dsa_65_expand_key: unsafe extern "C" fn(*const u8, *mut u8, *mut u8) -> c_int,
     pub(crate) oxi_ml_dsa_65_sign:
         unsafe extern "C" fn(*const u8, *const u8, usize, *const u8, usize, *mut u8) -> c_int,
     pub(crate) oxi_ml_dsa_65_verify:
         unsafe extern "C" fn(*const u8, *const u8, usize, *const u8, usize, *const u8) -> c_int,
-    pub(crate) oxi_ml_kem_1024_keygen:
+    pub(crate) oxi_ml_kem_1024_keygen_rbg:
+        unsafe extern "C" fn(*mut OxiDrbg, *mut u8, *mut u8, *mut u8) -> c_int,
+    pub(crate) oxi_ml_kem_1024_expand_key:
         unsafe extern "C" fn(*const u8, *const u8, *mut u8, *mut u8) -> c_int,
-    pub(crate) oxi_ml_kem_1024_encapsulate:
-        unsafe extern "C" fn(*const u8, *const u8, *mut u8, *mut u8) -> c_int,
+    pub(crate) oxi_ml_kem_1024_encapsulate_rbg:
+        unsafe extern "C" fn(*const u8, *mut OxiDrbg, *mut u8, *mut u8) -> c_int,
     pub(crate) oxi_ml_kem_1024_decapsulate:
         unsafe extern "C" fn(*const u8, *const u8, *mut u8) -> c_int,
-    pub(crate) oxi_ml_kem_512_keygen:
+    pub(crate) oxi_ml_kem_512_keygen_rbg:
+        unsafe extern "C" fn(*mut OxiDrbg, *mut u8, *mut u8, *mut u8) -> c_int,
+    pub(crate) oxi_ml_kem_512_expand_key:
         unsafe extern "C" fn(*const u8, *const u8, *mut u8, *mut u8) -> c_int,
-    pub(crate) oxi_ml_kem_512_encapsulate:
-        unsafe extern "C" fn(*const u8, *const u8, *mut u8, *mut u8) -> c_int,
+    pub(crate) oxi_ml_kem_512_encapsulate_rbg:
+        unsafe extern "C" fn(*const u8, *mut OxiDrbg, *mut u8, *mut u8) -> c_int,
     pub(crate) oxi_ml_kem_512_decapsulate:
         unsafe extern "C" fn(*const u8, *const u8, *mut u8) -> c_int,
-    pub(crate) oxi_ml_kem_768_keygen:
+    pub(crate) oxi_ml_kem_768_keygen_rbg:
+        unsafe extern "C" fn(*mut OxiDrbg, *mut u8, *mut u8, *mut u8) -> c_int,
+    pub(crate) oxi_ml_kem_768_expand_key:
         unsafe extern "C" fn(*const u8, *const u8, *mut u8, *mut u8) -> c_int,
-    pub(crate) oxi_ml_kem_768_encapsulate:
-        unsafe extern "C" fn(*const u8, *const u8, *mut u8, *mut u8) -> c_int,
+    pub(crate) oxi_ml_kem_768_encapsulate_rbg:
+        unsafe extern "C" fn(*const u8, *mut OxiDrbg, *mut u8, *mut u8) -> c_int,
     pub(crate) oxi_ml_kem_768_decapsulate:
         unsafe extern "C" fn(*const u8, *const u8, *mut u8) -> c_int,
     pub(crate) oxi_slh_dsa_sha2_256s_keygen:
@@ -805,23 +815,29 @@ pub(crate) static INVENTORY: Inventory = Inventory {
     oxi_rsa_pss_verify_3072_sha256,
     oxi_rsa_pkcs1_v15_verify_4096_sha256,
     oxi_rsa_pss_verify_4096_sha256,
-    oxi_ml_dsa_87_keygen,
+    oxi_ml_dsa_87_keygen_rbg,
+    oxi_ml_dsa_87_expand_key,
     oxi_ml_dsa_87_sign,
     oxi_ml_dsa_87_verify,
-    oxi_ml_dsa_44_keygen,
+    oxi_ml_dsa_44_keygen_rbg,
+    oxi_ml_dsa_44_expand_key,
     oxi_ml_dsa_44_sign,
     oxi_ml_dsa_44_verify,
-    oxi_ml_dsa_65_keygen,
+    oxi_ml_dsa_65_keygen_rbg,
+    oxi_ml_dsa_65_expand_key,
     oxi_ml_dsa_65_sign,
     oxi_ml_dsa_65_verify,
-    oxi_ml_kem_1024_keygen,
-    oxi_ml_kem_1024_encapsulate,
+    oxi_ml_kem_1024_keygen_rbg,
+    oxi_ml_kem_1024_expand_key,
+    oxi_ml_kem_1024_encapsulate_rbg,
     oxi_ml_kem_1024_decapsulate,
-    oxi_ml_kem_512_keygen,
-    oxi_ml_kem_512_encapsulate,
+    oxi_ml_kem_512_keygen_rbg,
+    oxi_ml_kem_512_expand_key,
+    oxi_ml_kem_512_encapsulate_rbg,
     oxi_ml_kem_512_decapsulate,
-    oxi_ml_kem_768_keygen,
-    oxi_ml_kem_768_encapsulate,
+    oxi_ml_kem_768_keygen_rbg,
+    oxi_ml_kem_768_expand_key,
+    oxi_ml_kem_768_encapsulate_rbg,
     oxi_ml_kem_768_decapsulate,
     oxi_slh_dsa_sha2_256s_keygen,
     oxi_slh_dsa_sha2_256s_sign,
@@ -1072,7 +1088,7 @@ pub(crate) static INVENTORY: Inventory = Inventory {
 
 impl Inventory {
     /// The address of every function in the table, in declaration order.
-    pub(crate) fn addresses(&self) -> [usize; 319] {
+    pub(crate) fn addresses(&self) -> [usize; 325] {
         [
             self.lama_manifest as usize,
             self.oxi_abi_version as usize,
@@ -1130,23 +1146,29 @@ impl Inventory {
             self.oxi_rsa_pss_verify_3072_sha256 as usize,
             self.oxi_rsa_pkcs1_v15_verify_4096_sha256 as usize,
             self.oxi_rsa_pss_verify_4096_sha256 as usize,
-            self.oxi_ml_dsa_87_keygen as usize,
+            self.oxi_ml_dsa_87_keygen_rbg as usize,
+            self.oxi_ml_dsa_87_expand_key as usize,
             self.oxi_ml_dsa_87_sign as usize,
             self.oxi_ml_dsa_87_verify as usize,
-            self.oxi_ml_dsa_44_keygen as usize,
+            self.oxi_ml_dsa_44_keygen_rbg as usize,
+            self.oxi_ml_dsa_44_expand_key as usize,
             self.oxi_ml_dsa_44_sign as usize,
             self.oxi_ml_dsa_44_verify as usize,
-            self.oxi_ml_dsa_65_keygen as usize,
+            self.oxi_ml_dsa_65_keygen_rbg as usize,
+            self.oxi_ml_dsa_65_expand_key as usize,
             self.oxi_ml_dsa_65_sign as usize,
             self.oxi_ml_dsa_65_verify as usize,
-            self.oxi_ml_kem_1024_keygen as usize,
-            self.oxi_ml_kem_1024_encapsulate as usize,
+            self.oxi_ml_kem_1024_keygen_rbg as usize,
+            self.oxi_ml_kem_1024_expand_key as usize,
+            self.oxi_ml_kem_1024_encapsulate_rbg as usize,
             self.oxi_ml_kem_1024_decapsulate as usize,
-            self.oxi_ml_kem_512_keygen as usize,
-            self.oxi_ml_kem_512_encapsulate as usize,
+            self.oxi_ml_kem_512_keygen_rbg as usize,
+            self.oxi_ml_kem_512_expand_key as usize,
+            self.oxi_ml_kem_512_encapsulate_rbg as usize,
             self.oxi_ml_kem_512_decapsulate as usize,
-            self.oxi_ml_kem_768_keygen as usize,
-            self.oxi_ml_kem_768_encapsulate as usize,
+            self.oxi_ml_kem_768_keygen_rbg as usize,
+            self.oxi_ml_kem_768_expand_key as usize,
+            self.oxi_ml_kem_768_encapsulate_rbg as usize,
             self.oxi_ml_kem_768_decapsulate as usize,
             self.oxi_slh_dsa_sha2_256s_keygen as usize,
             self.oxi_slh_dsa_sha2_256s_sign as usize,

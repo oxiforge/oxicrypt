@@ -29,8 +29,6 @@ fn probe() -> PathBuf {
     path
 }
 
-/// Runs the probe with the loader's search path set to `lib_dir`; returns
-/// its stdout lines and whether it exited 0.
 fn run(lib_dir: &Path, args: &[&str]) -> (Vec<String>, bool) {
     let out = Command::new(probe())
         .args(args)
@@ -49,8 +47,6 @@ fn run(lib_dir: &Path, args: &[&str]) -> (Vec<String>, bool) {
     )
 }
 
-/// A scratch directory holding a copy of the signed library with `patch`
-/// applied.
 fn patched(name: &str, patch: impl FnOnce(&mut [u8])) -> PathBuf {
     let dir = std::env::temp_dir().join(format!("oxicrypt-bindings-{}-{name}", std::process::id()));
     fs::create_dir_all(&dir).unwrap();
@@ -338,26 +334,37 @@ fn code_offset(lib: &Path, symbol: &str) -> usize {
         .expect("a LOAD segment holding the symbol")
 }
 
-/// The library's own `oxi_abi_version`, patched in a copy to return 4. The
-/// version and ABI checks run before the integrity test, so the patch is
-/// refused by the ABI check, not by the broken signature. The patch is of
-/// x86_64 code, so it runs only on x86_64. No test here exercises the macOS
-/// lookup path.
+const OTHER_ABI: i32 = oxicrypt::OXI_ABI_VERSION + 1;
+
+fn abi_source(abi: i32) -> String {
+    format!("int oxi_abi_version(void) {{ return {abi}; }}\n")
+}
+
+/// The library's own `oxi_abi_version`, patched in a copy to return
+/// [`OTHER_ABI`]. The version and ABI checks run before the integrity test,
+/// so the patch is refused by the ABI check, not by the broken signature.
+/// The patch is of x86_64 code, so it runs only on x86_64.
 #[cfg(target_arch = "x86_64")]
 #[test]
 fn a_library_of_another_abi_is_refused_before_init() {
     let lib = common::lib_dir().join("liboxicrypt_ffi.so");
     let at = code_offset(&lib, "oxi_abi_version");
-    let dir = patched("abi4", |b| {
-        // `mov eax, 3; ret`, the whole function at ABI 3.
-        assert_eq!(b[at..at + 6], [0xb8, 0x03, 0x00, 0x00, 0x00, 0xc3]);
-        b[at + 1] = 0x04;
+    let own = u8::try_from(oxicrypt::OXI_ABI_VERSION).unwrap();
+    let other = u8::try_from(OTHER_ABI).unwrap();
+    let dir = patched("abi-other", |b| {
+        // `mov eax, imm32; ret`, the whole function.
+        assert_eq!(b[at..at + 6], [0xb8, own, 0x00, 0x00, 0x00, 0xc3]);
+        b[at + 1] = other;
     });
     let (lines, ok) = run(&dir, &["init", "1"]);
     fs::remove_dir_all(&dir).unwrap();
     assert_eq!(
         lines,
-        ["init Cnsa2: err code=LibraryAbi { library: 4, crate_: 3 } integrity=None detail=none"]
+        [format!(
+            "init Cnsa2: err code=LibraryAbi {{ library: {OTHER_ABI}, crate_: {} }} \
+             integrity=None detail=none",
+            oxicrypt::OXI_ABI_VERSION
+        )]
     );
     assert!(!ok);
 }
@@ -366,7 +373,7 @@ fn a_library_of_another_abi_is_refused_before_init() {
 /// does not stand in for the library's own.
 #[test]
 fn a_foreign_oxi_abi_version_does_not_override_the_librarys() {
-    let so = shim("abi4", "int oxi_abi_version(void) { return 4; }\n");
+    let so = shim("abi-other", &abi_source(OTHER_ABI));
     let (lines, ok) = run_with_shim(&so, &["init", "1"]);
     assert_eq!(lines, ["init Cnsa2: ok"]);
     assert!(ok);
@@ -374,12 +381,13 @@ fn a_foreign_oxi_abi_version_does_not_override_the_librarys() {
 
 /// The library's own number is read even when a foreign definition comes
 /// first in the lookup scope: a library of another release version with
-/// ABI 3 passes the ABI check, and is then refused by its integrity test
-/// because the edit broke its signature, not by the version rule.
+/// the crate's ABI number passes the ABI check, and is then refused by its
+/// integrity test because the edit broke its signature, not by the version
+/// rule.
 #[test]
 fn the_librarys_own_oxi_abi_version_is_read_past_a_foreign_one() {
     let dir = patched("own-past-foreign", edit_version);
-    let so = shim("abi4-past", "int oxi_abi_version(void) { return 4; }\n");
+    let so = shim("abi-other-past", &abi_source(OTHER_ABI));
     let out = Command::new(probe())
         .args(["init", "1"])
         .env("LD_LIBRARY_PATH", &dir)
@@ -402,7 +410,7 @@ fn a_foreign_oxi_abi_version_does_not_stand_in_for_a_missing_one() {
         edit_version(b);
         drop_abi_version(b);
     });
-    let so = shim("abi3", "int oxi_abi_version(void) { return 3; }\n");
+    let so = shim("abi-own", &abi_source(oxicrypt::OXI_ABI_VERSION));
     let out = Command::new(probe())
         .args(["init", "1"])
         .env("LD_LIBRARY_PATH", &dir)

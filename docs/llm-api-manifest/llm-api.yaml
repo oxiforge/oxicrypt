@@ -2378,43 +2378,79 @@ types:
   - name: SharedSecret
     module: oxicrypt
     kind: struct
-    description: "32-byte ML-KEM-1024 shared secret, zeroed on drop, whose Debug prints only the type name and which implements no Clone, Copy, PartialEq or Hash."
+    description: "32-byte ML-KEM shared secret, the same length for every parameter set, zeroed on drop, whose Debug prints only the type name and which implements no Clone, Copy, PartialEq or Hash."
     security:
       contains_secret: true
       zeroize_on_drop: true
       constant_time: false
 
-  - name: MlDsa87KeySeed
+  - name: MlDsa44Seed
     module: oxicrypt
     kind: struct
-    description: "32-byte ML-DSA-87 key-generation seed, consumed by key generation, zeroed on drop, whose Debug prints only the type name and which implements no Clone, Copy, PartialEq or Hash."
+    description: "32-byte ML-DSA-44 key-generation seed ξ, returned by keygen_with_seed and read by expand_key, zeroed on drop, whose Debug prints only the type name and which implements no Clone, Copy, PartialEq or Hash."
     security:
       contains_secret: true
       zeroize_on_drop: true
       constant_time: false
 
-  - name: MlKem1024KeySeedD
+  - name: MlDsa65Seed
     module: oxicrypt
     kind: struct
-    description: "32-byte ML-KEM-1024 key-generation seed d, consumed by key generation, zeroed on drop, whose Debug prints only the type name and which implements no Clone, Copy, PartialEq or Hash."
+    description: "32-byte ML-DSA-65 key-generation seed ξ, returned by keygen_with_seed and read by expand_key, zeroed on drop, whose Debug prints only the type name and which implements no Clone, Copy, PartialEq or Hash."
     security:
       contains_secret: true
       zeroize_on_drop: true
       constant_time: false
 
-  - name: MlKem1024KeySeedZ
+  - name: MlDsa87Seed
     module: oxicrypt
     kind: struct
-    description: "32-byte ML-KEM-1024 implicit-rejection seed z, consumed by key generation, zeroed on drop, whose Debug prints only the type name and which implements no Clone, Copy, PartialEq or Hash."
+    description: "32-byte ML-DSA-87 key-generation seed ξ, returned by keygen_with_seed and read by expand_key, zeroed on drop, whose Debug prints only the type name and which implements no Clone, Copy, PartialEq or Hash."
     security:
       contains_secret: true
       zeroize_on_drop: true
       constant_time: false
 
-  - name: MlKem1024EncapsSeed
+  - name: MlKem512Seed
     module: oxicrypt
     kind: struct
-    description: "32-byte ML-KEM-1024 encapsulation randomness m, consumed by one encapsulation, zeroed on drop, whose Debug prints only the type name and which implements no Clone, Copy, PartialEq or Hash."
+    description: "64-byte ML-KEM-512 key-generation seed d ‖ z, returned by keygen_with_seed and read by expand_key, zeroed on drop, whose Debug prints only the type name and which implements no Clone, Copy, PartialEq or Hash."
+    security:
+      contains_secret: true
+      zeroize_on_drop: true
+      constant_time: false
+
+  - name: MlKem768Seed
+    module: oxicrypt
+    kind: struct
+    description: "64-byte ML-KEM-768 key-generation seed d ‖ z, returned by keygen_with_seed and read by expand_key, zeroed on drop, whose Debug prints only the type name and which implements no Clone, Copy, PartialEq or Hash."
+    security:
+      contains_secret: true
+      zeroize_on_drop: true
+      constant_time: false
+
+  - name: MlKem1024Seed
+    module: oxicrypt
+    kind: struct
+    description: "64-byte ML-KEM-1024 key-generation seed d ‖ z, returned by keygen_with_seed and read by expand_key, zeroed on drop, whose Debug prints only the type name and which implements no Clone, Copy, PartialEq or Hash."
+    security:
+      contains_secret: true
+      zeroize_on_drop: true
+      constant_time: false
+
+  - name: MlDsa44SecretKey
+    module: oxicrypt
+    kind: struct
+    description: "2,560-byte ML-DSA-44 secret key, on the heap, zeroed on drop, whose Debug prints only the type name and which implements no Clone, Copy, PartialEq or Hash."
+    security:
+      contains_secret: true
+      zeroize_on_drop: true
+      constant_time: false
+
+  - name: MlDsa65SecretKey
+    module: oxicrypt
+    kind: struct
+    description: "4,032-byte ML-DSA-65 secret key, on the heap, zeroed on drop, whose Debug prints only the type name and which implements no Clone, Copy, PartialEq or Hash."
     security:
       contains_secret: true
       zeroize_on_drop: true
@@ -2429,6 +2465,24 @@ types:
       zeroize_on_drop: true
       constant_time: false
 
+  - name: MlKem512DecapsulationKey
+    module: oxicrypt
+    kind: struct
+    description: "1,632-byte ML-KEM-512 decapsulation key, on the heap, zeroed on drop, whose Debug prints only the type name and which implements no Clone, Copy, PartialEq or Hash."
+    security:
+      contains_secret: true
+      zeroize_on_drop: true
+      constant_time: false
+
+  - name: MlKem768DecapsulationKey
+    module: oxicrypt
+    kind: struct
+    description: "2,400-byte ML-KEM-768 decapsulation key, on the heap, zeroed on drop, whose Debug prints only the type name and which implements no Clone, Copy, PartialEq or Hash."
+    security:
+      contains_secret: true
+      zeroize_on_drop: true
+      constant_time: false
+
   - name: MlKem1024DecapsulationKey
     module: oxicrypt
     kind: struct
@@ -2436,6 +2490,42 @@ types:
     security:
       contains_secret: true
       zeroize_on_drop: true
+      constant_time: false
+
+  - name: MlDsa44PublicKey
+    module: oxicrypt
+    kind: alias
+    description: "[u8; 1312], an ML-DSA-44 public key."
+    security:
+      contains_secret: false
+      zeroize_on_drop: false
+      constant_time: false
+
+  - name: MlDsa44Signature
+    module: oxicrypt
+    kind: alias
+    description: "[u8; 2420], an ML-DSA-44 signature."
+    security:
+      contains_secret: false
+      zeroize_on_drop: false
+      constant_time: false
+
+  - name: MlDsa65PublicKey
+    module: oxicrypt
+    kind: alias
+    description: "[u8; 1952], an ML-DSA-65 public key."
+    security:
+      contains_secret: false
+      zeroize_on_drop: false
+      constant_time: false
+
+  - name: MlDsa65Signature
+    module: oxicrypt
+    kind: alias
+    description: "[u8; 3309], an ML-DSA-65 signature."
+    security:
+      contains_secret: false
+      zeroize_on_drop: false
       constant_time: false
 
   - name: MlDsa87PublicKey
@@ -2451,6 +2541,42 @@ types:
     module: oxicrypt
     kind: alias
     description: "[u8; 4627], an ML-DSA-87 signature."
+    security:
+      contains_secret: false
+      zeroize_on_drop: false
+      constant_time: false
+
+  - name: MlKem512EncapsulationKey
+    module: oxicrypt
+    kind: alias
+    description: "[u8; 800], an ML-KEM-512 encapsulation key."
+    security:
+      contains_secret: false
+      zeroize_on_drop: false
+      constant_time: false
+
+  - name: MlKem512Ciphertext
+    module: oxicrypt
+    kind: alias
+    description: "[u8; 768], an ML-KEM-512 ciphertext."
+    security:
+      contains_secret: false
+      zeroize_on_drop: false
+      constant_time: false
+
+  - name: MlKem768EncapsulationKey
+    module: oxicrypt
+    kind: alias
+    description: "[u8; 1184], an ML-KEM-768 encapsulation key."
+    security:
+      contains_secret: false
+      zeroize_on_drop: false
+      constant_time: false
+
+  - name: MlKem768Ciphertext
+    module: oxicrypt
+    kind: alias
+    description: "[u8; 1088], an ML-KEM-768 ciphertext."
     security:
       contains_secret: false
       zeroize_on_drop: false
@@ -22861,13 +22987,286 @@ functions:
       handles_secrets: false
       fips_approved: false
 
+  - name: "Module::ml_dsa_44_keygen"
+    module: oxicrypt
+    description: "ML-DSA-44 key generation (FIPS 204 Algorithm 1) with the seed ξ drawn by the module from rbg; the module runs the pairwise consistency test on the pair and wipes ξ; calls oxi_ml_dsa_44_keygen_rbg."
+    signature: "pub fn Module::ml_dsa_44_keygen(self, rbg: &mut Drbg) -> Result<(MlDsa44PublicKey, MlDsa44SecretKey), Error>"
+    returns:
+      type: "Result<(MlDsa44PublicKey, MlDsa44SecretKey), Error>"
+      description: "The key pair."
+      error_variants:
+        - name: RbgTooWeak
+          condition: "The DRBG's security strength is below 192 bits; nothing is drawn."
+        - name: Uninstantiated
+          condition: "The DRBG was not instantiated."
+        - name: InvalidInput
+          condition: "The DRBG was instantiated in another process, as after fork; Drbg::instantiate in this process makes it usable."
+        - name: Busy
+          condition: "A reseed waited too long on the module's seed path, which another thread holds; retry after a pause."
+        - name: EntropyUnavailable
+          condition: "The entropy source failed during a reseed; the module is then in its error state."
+        - name: ConditionalTestFailed
+          condition: "The pairwise consistency test failed; the module is then in its error state."
+        - name: AlgorithmRestricted
+          condition: "The active profile does not allow the parameter set or the DRBG."
+    thread_safety: thread-safe
+    security:
+      constant_time: false
+      handles_secrets: true
+      fips_approved: false
+
+  - name: "Module::ml_dsa_44_keygen_with_seed"
+    module: oxicrypt
+    description: "ML-DSA-44 key generation as ml_dsa_44_keygen, also returning ξ, from which ml_dsa_44_expand_key reproduces the pair."
+    signature: "pub fn Module::ml_dsa_44_keygen_with_seed(self, rbg: &mut Drbg) -> Result<(MlDsa44PublicKey, MlDsa44SecretKey, MlDsa44Seed), Error>"
+    returns:
+      type: "Result<(MlDsa44PublicKey, MlDsa44SecretKey, MlDsa44Seed), Error>"
+      description: "The key pair and its seed."
+      error_variants:
+        - name: RbgTooWeak
+          condition: "The DRBG's security strength is below 192 bits; nothing is drawn."
+        - name: Uninstantiated
+          condition: "The DRBG was not instantiated."
+        - name: InvalidInput
+          condition: "The DRBG was instantiated in another process, as after fork; Drbg::instantiate in this process makes it usable."
+        - name: Busy
+          condition: "A reseed waited too long on the module's seed path, which another thread holds; retry after a pause."
+        - name: EntropyUnavailable
+          condition: "The entropy source failed during a reseed; the module is then in its error state."
+        - name: ConditionalTestFailed
+          condition: "The pairwise consistency test failed; the module is then in its error state."
+        - name: AlgorithmRestricted
+          condition: "The active profile does not allow the parameter set or the DRBG."
+    thread_safety: thread-safe
+    security:
+      constant_time: false
+      handles_secrets: true
+      fips_approved: false
+
+  - name: "Module::ml_dsa_44_expand_key"
+    module: oxicrypt
+    description: "ML-DSA-44 key expansion from a stored seed ξ (FIPS 204 Algorithm 6) with the pairwise consistency test run on the pair; a seed built with from_bytes is a private key imported into the module; calls oxi_ml_dsa_44_expand_key."
+    signature: "pub fn Module::ml_dsa_44_expand_key(self, seed: &MlDsa44Seed) -> Result<(MlDsa44PublicKey, MlDsa44SecretKey), Error>"
+    returns:
+      type: "Result<(MlDsa44PublicKey, MlDsa44SecretKey), Error>"
+      description: "The key pair."
+      error_variants:
+        - name: ConditionalTestFailed
+          condition: "The pairwise consistency test failed; the module is then in its error state."
+        - name: AlgorithmRestricted
+          condition: "The active profile does not allow the parameter set."
+    thread_safety: thread-safe
+    security:
+      constant_time: false
+      handles_secrets: true
+      fips_approved: false
+
+  - name: "Module::ml_dsa_44_sign"
+    module: oxicrypt
+    description: "Deterministic ML-DSA-44 signature (FIPS 204 §5.2)."
+    signature: "pub fn Module::ml_dsa_44_sign(self, sk: &MlDsa44SecretKey, msg: &[u8], ctx: &[u8]) -> Result<MlDsa44Signature, Error>"
+    returns:
+      type: "Result<MlDsa44Signature, Error>"
+      description: "The signature."
+      error_variants:
+        - name: InvalidInput
+          condition: "ctx is longer than 255 bytes."
+    thread_safety: thread-safe
+    security:
+      constant_time: false
+      handles_secrets: true
+      fips_approved: false
+
+  - name: "Module::ml_dsa_44_verify"
+    module: oxicrypt
+    description: "ML-DSA-44 verification (FIPS 204 §5.3)."
+    signature: "pub fn Module::ml_dsa_44_verify(self, pk: &MlDsa44PublicKey, msg: &[u8], ctx: &[u8], sig: &MlDsa44Signature) -> Result<(), Error>"
+    returns:
+      type: "Result<(), Error>"
+      description: "Ok when the signature verified."
+      error_variants:
+        - name: SignatureInvalid
+          condition: "The signature did not verify, or the signature or key did not decode."
+    thread_safety: thread-safe
+    security:
+      constant_time: false
+      handles_secrets: false
+      fips_approved: false
+
+  - name: "Module::ml_dsa_65_keygen"
+    module: oxicrypt
+    description: "ML-DSA-65 key generation (FIPS 204 Algorithm 1) with the seed ξ drawn by the module from rbg; the module runs the pairwise consistency test on the pair and wipes ξ; calls oxi_ml_dsa_65_keygen_rbg."
+    signature: "pub fn Module::ml_dsa_65_keygen(self, rbg: &mut Drbg) -> Result<(MlDsa65PublicKey, MlDsa65SecretKey), Error>"
+    returns:
+      type: "Result<(MlDsa65PublicKey, MlDsa65SecretKey), Error>"
+      description: "The key pair."
+      error_variants:
+        - name: RbgTooWeak
+          condition: "The DRBG's security strength is below 192 bits; nothing is drawn."
+        - name: Uninstantiated
+          condition: "The DRBG was not instantiated."
+        - name: InvalidInput
+          condition: "The DRBG was instantiated in another process, as after fork; Drbg::instantiate in this process makes it usable."
+        - name: Busy
+          condition: "A reseed waited too long on the module's seed path, which another thread holds; retry after a pause."
+        - name: EntropyUnavailable
+          condition: "The entropy source failed during a reseed; the module is then in its error state."
+        - name: ConditionalTestFailed
+          condition: "The pairwise consistency test failed; the module is then in its error state."
+        - name: AlgorithmRestricted
+          condition: "The active profile does not allow the parameter set or the DRBG."
+    thread_safety: thread-safe
+    security:
+      constant_time: false
+      handles_secrets: true
+      fips_approved: false
+
+  - name: "Module::ml_dsa_65_keygen_with_seed"
+    module: oxicrypt
+    description: "ML-DSA-65 key generation as ml_dsa_65_keygen, also returning ξ, from which ml_dsa_65_expand_key reproduces the pair."
+    signature: "pub fn Module::ml_dsa_65_keygen_with_seed(self, rbg: &mut Drbg) -> Result<(MlDsa65PublicKey, MlDsa65SecretKey, MlDsa65Seed), Error>"
+    returns:
+      type: "Result<(MlDsa65PublicKey, MlDsa65SecretKey, MlDsa65Seed), Error>"
+      description: "The key pair and its seed."
+      error_variants:
+        - name: RbgTooWeak
+          condition: "The DRBG's security strength is below 192 bits; nothing is drawn."
+        - name: Uninstantiated
+          condition: "The DRBG was not instantiated."
+        - name: InvalidInput
+          condition: "The DRBG was instantiated in another process, as after fork; Drbg::instantiate in this process makes it usable."
+        - name: Busy
+          condition: "A reseed waited too long on the module's seed path, which another thread holds; retry after a pause."
+        - name: EntropyUnavailable
+          condition: "The entropy source failed during a reseed; the module is then in its error state."
+        - name: ConditionalTestFailed
+          condition: "The pairwise consistency test failed; the module is then in its error state."
+        - name: AlgorithmRestricted
+          condition: "The active profile does not allow the parameter set or the DRBG."
+    thread_safety: thread-safe
+    security:
+      constant_time: false
+      handles_secrets: true
+      fips_approved: false
+
+  - name: "Module::ml_dsa_65_expand_key"
+    module: oxicrypt
+    description: "ML-DSA-65 key expansion from a stored seed ξ (FIPS 204 Algorithm 6) with the pairwise consistency test run on the pair; a seed built with from_bytes is a private key imported into the module; calls oxi_ml_dsa_65_expand_key."
+    signature: "pub fn Module::ml_dsa_65_expand_key(self, seed: &MlDsa65Seed) -> Result<(MlDsa65PublicKey, MlDsa65SecretKey), Error>"
+    returns:
+      type: "Result<(MlDsa65PublicKey, MlDsa65SecretKey), Error>"
+      description: "The key pair."
+      error_variants:
+        - name: ConditionalTestFailed
+          condition: "The pairwise consistency test failed; the module is then in its error state."
+        - name: AlgorithmRestricted
+          condition: "The active profile does not allow the parameter set."
+    thread_safety: thread-safe
+    security:
+      constant_time: false
+      handles_secrets: true
+      fips_approved: false
+
+  - name: "Module::ml_dsa_65_sign"
+    module: oxicrypt
+    description: "Deterministic ML-DSA-65 signature (FIPS 204 §5.2)."
+    signature: "pub fn Module::ml_dsa_65_sign(self, sk: &MlDsa65SecretKey, msg: &[u8], ctx: &[u8]) -> Result<MlDsa65Signature, Error>"
+    returns:
+      type: "Result<MlDsa65Signature, Error>"
+      description: "The signature."
+      error_variants:
+        - name: InvalidInput
+          condition: "ctx is longer than 255 bytes."
+    thread_safety: thread-safe
+    security:
+      constant_time: false
+      handles_secrets: true
+      fips_approved: false
+
+  - name: "Module::ml_dsa_65_verify"
+    module: oxicrypt
+    description: "ML-DSA-65 verification (FIPS 204 §5.3)."
+    signature: "pub fn Module::ml_dsa_65_verify(self, pk: &MlDsa65PublicKey, msg: &[u8], ctx: &[u8], sig: &MlDsa65Signature) -> Result<(), Error>"
+    returns:
+      type: "Result<(), Error>"
+      description: "Ok when the signature verified."
+      error_variants:
+        - name: SignatureInvalid
+          condition: "The signature did not verify, or the signature or key did not decode."
+    thread_safety: thread-safe
+    security:
+      constant_time: false
+      handles_secrets: false
+      fips_approved: false
+
   - name: "Module::ml_dsa_87_keygen"
     module: oxicrypt
-    description: "ML-DSA-87 key generation (FIPS 204 §6.1); the seed is consumed and zeroed."
-    signature: "pub fn Module::ml_dsa_87_keygen(self, seed: MlDsa87KeySeed) -> Result<(MlDsa87PublicKey, MlDsa87SecretKey), Error>"
+    description: "ML-DSA-87 key generation (FIPS 204 Algorithm 1) with the seed ξ drawn by the module from rbg; the module runs the pairwise consistency test on the pair and wipes ξ; calls oxi_ml_dsa_87_keygen_rbg."
+    signature: "pub fn Module::ml_dsa_87_keygen(self, rbg: &mut Drbg) -> Result<(MlDsa87PublicKey, MlDsa87SecretKey), Error>"
     returns:
       type: "Result<(MlDsa87PublicKey, MlDsa87SecretKey), Error>"
       description: "The key pair."
+      error_variants:
+        - name: RbgTooWeak
+          condition: "The DRBG's security strength is below 256 bits; nothing is drawn."
+        - name: Uninstantiated
+          condition: "The DRBG was not instantiated."
+        - name: InvalidInput
+          condition: "The DRBG was instantiated in another process, as after fork; Drbg::instantiate in this process makes it usable."
+        - name: Busy
+          condition: "A reseed waited too long on the module's seed path, which another thread holds; retry after a pause."
+        - name: EntropyUnavailable
+          condition: "The entropy source failed during a reseed; the module is then in its error state."
+        - name: ConditionalTestFailed
+          condition: "The pairwise consistency test failed; the module is then in its error state."
+        - name: AlgorithmRestricted
+          condition: "The active profile does not allow the parameter set or the DRBG."
+    thread_safety: thread-safe
+    security:
+      constant_time: false
+      handles_secrets: true
+      fips_approved: false
+
+  - name: "Module::ml_dsa_87_keygen_with_seed"
+    module: oxicrypt
+    description: "ML-DSA-87 key generation as ml_dsa_87_keygen, also returning ξ, from which ml_dsa_87_expand_key reproduces the pair."
+    signature: "pub fn Module::ml_dsa_87_keygen_with_seed(self, rbg: &mut Drbg) -> Result<(MlDsa87PublicKey, MlDsa87SecretKey, MlDsa87Seed), Error>"
+    returns:
+      type: "Result<(MlDsa87PublicKey, MlDsa87SecretKey, MlDsa87Seed), Error>"
+      description: "The key pair and its seed."
+      error_variants:
+        - name: RbgTooWeak
+          condition: "The DRBG's security strength is below 256 bits; nothing is drawn."
+        - name: Uninstantiated
+          condition: "The DRBG was not instantiated."
+        - name: InvalidInput
+          condition: "The DRBG was instantiated in another process, as after fork; Drbg::instantiate in this process makes it usable."
+        - name: Busy
+          condition: "A reseed waited too long on the module's seed path, which another thread holds; retry after a pause."
+        - name: EntropyUnavailable
+          condition: "The entropy source failed during a reseed; the module is then in its error state."
+        - name: ConditionalTestFailed
+          condition: "The pairwise consistency test failed; the module is then in its error state."
+        - name: AlgorithmRestricted
+          condition: "The active profile does not allow the parameter set or the DRBG."
+    thread_safety: thread-safe
+    security:
+      constant_time: false
+      handles_secrets: true
+      fips_approved: false
+
+  - name: "Module::ml_dsa_87_expand_key"
+    module: oxicrypt
+    description: "ML-DSA-87 key expansion from a stored seed ξ (FIPS 204 Algorithm 6) with the pairwise consistency test run on the pair; a seed built with from_bytes is a private key imported into the module; calls oxi_ml_dsa_87_expand_key."
+    signature: "pub fn Module::ml_dsa_87_expand_key(self, seed: &MlDsa87Seed) -> Result<(MlDsa87PublicKey, MlDsa87SecretKey), Error>"
+    returns:
+      type: "Result<(MlDsa87PublicKey, MlDsa87SecretKey), Error>"
+      description: "The key pair."
+      error_variants:
+        - name: ConditionalTestFailed
+          condition: "The pairwise consistency test failed; the module is then in its error state."
+        - name: AlgorithmRestricted
+          condition: "The active profile does not allow the parameter set."
     thread_safety: thread-safe
     security:
       constant_time: false
@@ -22906,13 +23305,304 @@ functions:
       handles_secrets: false
       fips_approved: false
 
+  - name: "Module::ml_kem_512_keygen"
+    module: oxicrypt
+    description: "ML-KEM-512 key generation (FIPS 203 Algorithm 19) with the seeds d and z drawn by the module from rbg; the module runs the pairwise consistency test on the pair and wipes the seeds; calls oxi_ml_kem_512_keygen_rbg."
+    signature: "pub fn Module::ml_kem_512_keygen(self, rbg: &mut Drbg) -> Result<(MlKem512EncapsulationKey, MlKem512DecapsulationKey), Error>"
+    returns:
+      type: "Result<(MlKem512EncapsulationKey, MlKem512DecapsulationKey), Error>"
+      description: "The key pair."
+      error_variants:
+        - name: Uninstantiated
+          condition: "The DRBG was not instantiated."
+        - name: InvalidInput
+          condition: "The DRBG was instantiated in another process, as after fork; Drbg::instantiate in this process makes it usable."
+        - name: Busy
+          condition: "A reseed waited too long on the module's seed path, which another thread holds; retry after a pause."
+        - name: EntropyUnavailable
+          condition: "The entropy source failed during a reseed; the module is then in its error state."
+        - name: ConditionalTestFailed
+          condition: "The pairwise consistency test failed; the module is then in its error state."
+        - name: AlgorithmRestricted
+          condition: "The active profile does not allow the parameter set or the DRBG."
+    thread_safety: thread-safe
+    security:
+      constant_time: false
+      handles_secrets: true
+      fips_approved: false
+
+  - name: "Module::ml_kem_512_keygen_with_seed"
+    module: oxicrypt
+    description: "ML-KEM-512 key generation as ml_kem_512_keygen, also returning the seed d ‖ z, from which ml_kem_512_expand_key reproduces the pair."
+    signature: "pub fn Module::ml_kem_512_keygen_with_seed(self, rbg: &mut Drbg) -> Result<(MlKem512EncapsulationKey, MlKem512DecapsulationKey, MlKem512Seed), Error>"
+    returns:
+      type: "Result<(MlKem512EncapsulationKey, MlKem512DecapsulationKey, MlKem512Seed), Error>"
+      description: "The key pair and its seed."
+      error_variants:
+        - name: Uninstantiated
+          condition: "The DRBG was not instantiated."
+        - name: InvalidInput
+          condition: "The DRBG was instantiated in another process, as after fork; Drbg::instantiate in this process makes it usable."
+        - name: Busy
+          condition: "A reseed waited too long on the module's seed path, which another thread holds; retry after a pause."
+        - name: EntropyUnavailable
+          condition: "The entropy source failed during a reseed; the module is then in its error state."
+        - name: ConditionalTestFailed
+          condition: "The pairwise consistency test failed; the module is then in its error state."
+        - name: AlgorithmRestricted
+          condition: "The active profile does not allow the parameter set or the DRBG."
+    thread_safety: thread-safe
+    security:
+      constant_time: false
+      handles_secrets: true
+      fips_approved: false
+
+  - name: "Module::ml_kem_512_expand_key"
+    module: oxicrypt
+    description: "ML-KEM-512 key expansion from a stored seed d ‖ z (FIPS 203 Algorithm 16) with the pairwise consistency test run on the pair; a seed built with from_bytes is a private key imported into the module; calls oxi_ml_kem_512_expand_key."
+    signature: "pub fn Module::ml_kem_512_expand_key(self, seed: &MlKem512Seed) -> Result<(MlKem512EncapsulationKey, MlKem512DecapsulationKey), Error>"
+    returns:
+      type: "Result<(MlKem512EncapsulationKey, MlKem512DecapsulationKey), Error>"
+      description: "The key pair."
+      error_variants:
+        - name: ConditionalTestFailed
+          condition: "The pairwise consistency test failed; the module is then in its error state."
+        - name: AlgorithmRestricted
+          condition: "The active profile does not allow the parameter set."
+    thread_safety: thread-safe
+    security:
+      constant_time: false
+      handles_secrets: true
+      fips_approved: false
+
+  - name: "Module::ml_kem_512_encapsulate"
+    module: oxicrypt
+    description: "ML-KEM-512 encapsulation (FIPS 203 Algorithm 20): the module checks ek (FIPS 203 §7.2) and draws m from rbg; calls oxi_ml_kem_512_encapsulate_rbg."
+    signature: "pub fn Module::ml_kem_512_encapsulate(self, ek: &MlKem512EncapsulationKey, rbg: &mut Drbg) -> Result<(SharedSecret, MlKem512Ciphertext), Error>"
+    returns:
+      type: "Result<(SharedSecret, MlKem512Ciphertext), Error>"
+      description: "The shared secret and ciphertext."
+      error_variants:
+        - name: InvalidInput
+          condition: "ek fails the FIPS 203 §7.2 modulus check; nothing is drawn."
+        - name: Uninstantiated
+          condition: "The DRBG was not instantiated."
+        - name: InvalidInput
+          condition: "The DRBG was instantiated in another process, as after fork; Drbg::instantiate in this process makes it usable."
+        - name: Busy
+          condition: "A reseed waited too long on the module's seed path, which another thread holds; retry after a pause."
+        - name: EntropyUnavailable
+          condition: "The entropy source failed during a reseed; the module is then in its error state."
+        - name: AlgorithmRestricted
+          condition: "The active profile does not allow the parameter set or the DRBG."
+    thread_safety: thread-safe
+    security:
+      constant_time: false
+      handles_secrets: true
+      fips_approved: false
+
+  - name: "Module::ml_kem_512_decapsulate"
+    module: oxicrypt
+    description: "ML-KEM-512 decapsulation (FIPS 203 Algorithm 21) after the FIPS 203 §7.3 check of dk."
+    signature: "pub fn Module::ml_kem_512_decapsulate(self, dk: &MlKem512DecapsulationKey, ct: &MlKem512Ciphertext) -> Result<SharedSecret, Error>"
+    returns:
+      type: "Result<SharedSecret, Error>"
+      description: "The shared secret, or the implicit-rejection secret for a modified ciphertext."
+      error_variants:
+        - name: InvalidInput
+          condition: "dk fails the FIPS 203 §7.3 hash check."
+    thread_safety: thread-safe
+    security:
+      constant_time: false
+      handles_secrets: true
+      fips_approved: false
+
+  - name: "Module::ml_kem_768_keygen"
+    module: oxicrypt
+    description: "ML-KEM-768 key generation (FIPS 203 Algorithm 19) with the seeds d and z drawn by the module from rbg; the module runs the pairwise consistency test on the pair and wipes the seeds; calls oxi_ml_kem_768_keygen_rbg."
+    signature: "pub fn Module::ml_kem_768_keygen(self, rbg: &mut Drbg) -> Result<(MlKem768EncapsulationKey, MlKem768DecapsulationKey), Error>"
+    returns:
+      type: "Result<(MlKem768EncapsulationKey, MlKem768DecapsulationKey), Error>"
+      description: "The key pair."
+      error_variants:
+        - name: RbgTooWeak
+          condition: "The DRBG's security strength is below 192 bits; nothing is drawn."
+        - name: Uninstantiated
+          condition: "The DRBG was not instantiated."
+        - name: InvalidInput
+          condition: "The DRBG was instantiated in another process, as after fork; Drbg::instantiate in this process makes it usable."
+        - name: Busy
+          condition: "A reseed waited too long on the module's seed path, which another thread holds; retry after a pause."
+        - name: EntropyUnavailable
+          condition: "The entropy source failed during a reseed; the module is then in its error state."
+        - name: ConditionalTestFailed
+          condition: "The pairwise consistency test failed; the module is then in its error state."
+        - name: AlgorithmRestricted
+          condition: "The active profile does not allow the parameter set or the DRBG."
+    thread_safety: thread-safe
+    security:
+      constant_time: false
+      handles_secrets: true
+      fips_approved: false
+
+  - name: "Module::ml_kem_768_keygen_with_seed"
+    module: oxicrypt
+    description: "ML-KEM-768 key generation as ml_kem_768_keygen, also returning the seed d ‖ z, from which ml_kem_768_expand_key reproduces the pair."
+    signature: "pub fn Module::ml_kem_768_keygen_with_seed(self, rbg: &mut Drbg) -> Result<(MlKem768EncapsulationKey, MlKem768DecapsulationKey, MlKem768Seed), Error>"
+    returns:
+      type: "Result<(MlKem768EncapsulationKey, MlKem768DecapsulationKey, MlKem768Seed), Error>"
+      description: "The key pair and its seed."
+      error_variants:
+        - name: RbgTooWeak
+          condition: "The DRBG's security strength is below 192 bits; nothing is drawn."
+        - name: Uninstantiated
+          condition: "The DRBG was not instantiated."
+        - name: InvalidInput
+          condition: "The DRBG was instantiated in another process, as after fork; Drbg::instantiate in this process makes it usable."
+        - name: Busy
+          condition: "A reseed waited too long on the module's seed path, which another thread holds; retry after a pause."
+        - name: EntropyUnavailable
+          condition: "The entropy source failed during a reseed; the module is then in its error state."
+        - name: ConditionalTestFailed
+          condition: "The pairwise consistency test failed; the module is then in its error state."
+        - name: AlgorithmRestricted
+          condition: "The active profile does not allow the parameter set or the DRBG."
+    thread_safety: thread-safe
+    security:
+      constant_time: false
+      handles_secrets: true
+      fips_approved: false
+
+  - name: "Module::ml_kem_768_expand_key"
+    module: oxicrypt
+    description: "ML-KEM-768 key expansion from a stored seed d ‖ z (FIPS 203 Algorithm 16) with the pairwise consistency test run on the pair; a seed built with from_bytes is a private key imported into the module; calls oxi_ml_kem_768_expand_key."
+    signature: "pub fn Module::ml_kem_768_expand_key(self, seed: &MlKem768Seed) -> Result<(MlKem768EncapsulationKey, MlKem768DecapsulationKey), Error>"
+    returns:
+      type: "Result<(MlKem768EncapsulationKey, MlKem768DecapsulationKey), Error>"
+      description: "The key pair."
+      error_variants:
+        - name: ConditionalTestFailed
+          condition: "The pairwise consistency test failed; the module is then in its error state."
+        - name: AlgorithmRestricted
+          condition: "The active profile does not allow the parameter set."
+    thread_safety: thread-safe
+    security:
+      constant_time: false
+      handles_secrets: true
+      fips_approved: false
+
+  - name: "Module::ml_kem_768_encapsulate"
+    module: oxicrypt
+    description: "ML-KEM-768 encapsulation (FIPS 203 Algorithm 20): the module checks ek (FIPS 203 §7.2) and draws m from rbg; calls oxi_ml_kem_768_encapsulate_rbg."
+    signature: "pub fn Module::ml_kem_768_encapsulate(self, ek: &MlKem768EncapsulationKey, rbg: &mut Drbg) -> Result<(SharedSecret, MlKem768Ciphertext), Error>"
+    returns:
+      type: "Result<(SharedSecret, MlKem768Ciphertext), Error>"
+      description: "The shared secret and ciphertext."
+      error_variants:
+        - name: InvalidInput
+          condition: "ek fails the FIPS 203 §7.2 modulus check; nothing is drawn."
+        - name: RbgTooWeak
+          condition: "The DRBG's security strength is below 192 bits; nothing is drawn."
+        - name: Uninstantiated
+          condition: "The DRBG was not instantiated."
+        - name: InvalidInput
+          condition: "The DRBG was instantiated in another process, as after fork; Drbg::instantiate in this process makes it usable."
+        - name: Busy
+          condition: "A reseed waited too long on the module's seed path, which another thread holds; retry after a pause."
+        - name: EntropyUnavailable
+          condition: "The entropy source failed during a reseed; the module is then in its error state."
+        - name: AlgorithmRestricted
+          condition: "The active profile does not allow the parameter set or the DRBG."
+    thread_safety: thread-safe
+    security:
+      constant_time: false
+      handles_secrets: true
+      fips_approved: false
+
+  - name: "Module::ml_kem_768_decapsulate"
+    module: oxicrypt
+    description: "ML-KEM-768 decapsulation (FIPS 203 Algorithm 21) after the FIPS 203 §7.3 check of dk."
+    signature: "pub fn Module::ml_kem_768_decapsulate(self, dk: &MlKem768DecapsulationKey, ct: &MlKem768Ciphertext) -> Result<SharedSecret, Error>"
+    returns:
+      type: "Result<SharedSecret, Error>"
+      description: "The shared secret, or the implicit-rejection secret for a modified ciphertext."
+      error_variants:
+        - name: InvalidInput
+          condition: "dk fails the FIPS 203 §7.3 hash check."
+    thread_safety: thread-safe
+    security:
+      constant_time: false
+      handles_secrets: true
+      fips_approved: false
+
   - name: "Module::ml_kem_1024_keygen"
     module: oxicrypt
-    description: "ML-KEM-1024 key generation (FIPS 203 §6.1); both seeds are consumed and zeroed."
-    signature: "pub fn Module::ml_kem_1024_keygen(self, d: MlKem1024KeySeedD, z: MlKem1024KeySeedZ) -> Result<(MlKem1024EncapsulationKey, MlKem1024DecapsulationKey), Error>"
+    description: "ML-KEM-1024 key generation (FIPS 203 Algorithm 19) with the seeds d and z drawn by the module from rbg; the module runs the pairwise consistency test on the pair and wipes the seeds; calls oxi_ml_kem_1024_keygen_rbg."
+    signature: "pub fn Module::ml_kem_1024_keygen(self, rbg: &mut Drbg) -> Result<(MlKem1024EncapsulationKey, MlKem1024DecapsulationKey), Error>"
     returns:
       type: "Result<(MlKem1024EncapsulationKey, MlKem1024DecapsulationKey), Error>"
       description: "The key pair."
+      error_variants:
+        - name: RbgTooWeak
+          condition: "The DRBG's security strength is below 256 bits; nothing is drawn."
+        - name: Uninstantiated
+          condition: "The DRBG was not instantiated."
+        - name: InvalidInput
+          condition: "The DRBG was instantiated in another process, as after fork; Drbg::instantiate in this process makes it usable."
+        - name: Busy
+          condition: "A reseed waited too long on the module's seed path, which another thread holds; retry after a pause."
+        - name: EntropyUnavailable
+          condition: "The entropy source failed during a reseed; the module is then in its error state."
+        - name: ConditionalTestFailed
+          condition: "The pairwise consistency test failed; the module is then in its error state."
+        - name: AlgorithmRestricted
+          condition: "The active profile does not allow the parameter set or the DRBG."
+    thread_safety: thread-safe
+    security:
+      constant_time: false
+      handles_secrets: true
+      fips_approved: false
+
+  - name: "Module::ml_kem_1024_keygen_with_seed"
+    module: oxicrypt
+    description: "ML-KEM-1024 key generation as ml_kem_1024_keygen, also returning the seed d ‖ z, from which ml_kem_1024_expand_key reproduces the pair."
+    signature: "pub fn Module::ml_kem_1024_keygen_with_seed(self, rbg: &mut Drbg) -> Result<(MlKem1024EncapsulationKey, MlKem1024DecapsulationKey, MlKem1024Seed), Error>"
+    returns:
+      type: "Result<(MlKem1024EncapsulationKey, MlKem1024DecapsulationKey, MlKem1024Seed), Error>"
+      description: "The key pair and its seed."
+      error_variants:
+        - name: RbgTooWeak
+          condition: "The DRBG's security strength is below 256 bits; nothing is drawn."
+        - name: Uninstantiated
+          condition: "The DRBG was not instantiated."
+        - name: InvalidInput
+          condition: "The DRBG was instantiated in another process, as after fork; Drbg::instantiate in this process makes it usable."
+        - name: Busy
+          condition: "A reseed waited too long on the module's seed path, which another thread holds; retry after a pause."
+        - name: EntropyUnavailable
+          condition: "The entropy source failed during a reseed; the module is then in its error state."
+        - name: ConditionalTestFailed
+          condition: "The pairwise consistency test failed; the module is then in its error state."
+        - name: AlgorithmRestricted
+          condition: "The active profile does not allow the parameter set or the DRBG."
+    thread_safety: thread-safe
+    security:
+      constant_time: false
+      handles_secrets: true
+      fips_approved: false
+
+  - name: "Module::ml_kem_1024_expand_key"
+    module: oxicrypt
+    description: "ML-KEM-1024 key expansion from a stored seed d ‖ z (FIPS 203 Algorithm 16) with the pairwise consistency test run on the pair; a seed built with from_bytes is a private key imported into the module; calls oxi_ml_kem_1024_expand_key."
+    signature: "pub fn Module::ml_kem_1024_expand_key(self, seed: &MlKem1024Seed) -> Result<(MlKem1024EncapsulationKey, MlKem1024DecapsulationKey), Error>"
+    returns:
+      type: "Result<(MlKem1024EncapsulationKey, MlKem1024DecapsulationKey), Error>"
+      description: "The key pair."
+      error_variants:
+        - name: ConditionalTestFailed
+          condition: "The pairwise consistency test failed; the module is then in its error state."
+        - name: AlgorithmRestricted
+          condition: "The active profile does not allow the parameter set."
     thread_safety: thread-safe
     security:
       constant_time: false
@@ -22921,11 +23611,26 @@ functions:
 
   - name: "Module::ml_kem_1024_encapsulate"
     module: oxicrypt
-    description: "ML-KEM-1024 encapsulation (FIPS 203 §6.2); m is consumed and zeroed, so it serves one encapsulation."
-    signature: "pub fn Module::ml_kem_1024_encapsulate(self, ek: &MlKem1024EncapsulationKey, m: MlKem1024EncapsSeed) -> Result<(SharedSecret, MlKem1024Ciphertext), Error>"
+    description: "ML-KEM-1024 encapsulation (FIPS 203 Algorithm 20): the module checks ek (FIPS 203 §7.2) and draws m from rbg; calls oxi_ml_kem_1024_encapsulate_rbg."
+    signature: "pub fn Module::ml_kem_1024_encapsulate(self, ek: &MlKem1024EncapsulationKey, rbg: &mut Drbg) -> Result<(SharedSecret, MlKem1024Ciphertext), Error>"
     returns:
       type: "Result<(SharedSecret, MlKem1024Ciphertext), Error>"
       description: "The shared secret and ciphertext."
+      error_variants:
+        - name: InvalidInput
+          condition: "ek fails the FIPS 203 §7.2 modulus check; nothing is drawn."
+        - name: RbgTooWeak
+          condition: "The DRBG's security strength is below 256 bits; nothing is drawn."
+        - name: Uninstantiated
+          condition: "The DRBG was not instantiated."
+        - name: InvalidInput
+          condition: "The DRBG was instantiated in another process, as after fork; Drbg::instantiate in this process makes it usable."
+        - name: Busy
+          condition: "A reseed waited too long on the module's seed path, which another thread holds; retry after a pause."
+        - name: EntropyUnavailable
+          condition: "The entropy source failed during a reseed; the module is then in its error state."
+        - name: AlgorithmRestricted
+          condition: "The active profile does not allow the parameter set or the DRBG."
     thread_safety: thread-safe
     security:
       constant_time: false
@@ -22934,11 +23639,14 @@ functions:
 
   - name: "Module::ml_kem_1024_decapsulate"
     module: oxicrypt
-    description: "ML-KEM-1024 decapsulation (FIPS 203 §6.3)."
+    description: "ML-KEM-1024 decapsulation (FIPS 203 Algorithm 21) after the FIPS 203 §7.3 check of dk."
     signature: "pub fn Module::ml_kem_1024_decapsulate(self, dk: &MlKem1024DecapsulationKey, ct: &MlKem1024Ciphertext) -> Result<SharedSecret, Error>"
     returns:
       type: "Result<SharedSecret, Error>"
       description: "The shared secret, or the implicit-rejection secret for a modified ciphertext."
+      error_variants:
+        - name: InvalidInput
+          condition: "dk fails the FIPS 203 §7.3 hash check."
     thread_safety: thread-safe
     security:
       constant_time: false
@@ -23075,12 +23783,12 @@ functions:
       handles_secrets: true
       fips_approved: false
 
-  - name: "MlDsa87KeySeed::from_bytes"
+  - name: "MlDsa44Seed::from_bytes"
     module: oxicrypt
     description: "Take a copy of 32 bytes; the caller's array is the caller's to zero."
-    signature: "pub fn MlDsa87KeySeed::from_bytes(bytes: &[u8; 32]) -> MlDsa87KeySeed"
+    signature: "pub fn MlDsa44Seed::from_bytes(bytes: &[u8; 32]) -> MlDsa44Seed"
     returns:
-      type: "MlDsa87KeySeed"
+      type: "MlDsa44Seed"
       description: "A copy, zeroed when dropped."
     thread_safety: thread-safe
     security:
@@ -23088,10 +23796,10 @@ functions:
       handles_secrets: true
       fips_approved: false
 
-  - name: "MlDsa87KeySeed::as_bytes"
+  - name: "MlDsa44Seed::as_bytes"
     module: oxicrypt
     description: "The secret bytes."
-    signature: "pub fn MlDsa87KeySeed::as_bytes(&self) -> &[u8; 32]"
+    signature: "pub fn MlDsa44Seed::as_bytes(&self) -> &[u8; 32]"
     returns:
       type: "&[u8; 32]"
       description: "The secret bytes."
@@ -23101,12 +23809,12 @@ functions:
       handles_secrets: true
       fips_approved: false
 
-  - name: "MlKem1024KeySeedD::from_bytes"
+  - name: "MlDsa65Seed::from_bytes"
     module: oxicrypt
     description: "Take a copy of 32 bytes; the caller's array is the caller's to zero."
-    signature: "pub fn MlKem1024KeySeedD::from_bytes(bytes: &[u8; 32]) -> MlKem1024KeySeedD"
+    signature: "pub fn MlDsa65Seed::from_bytes(bytes: &[u8; 32]) -> MlDsa65Seed"
     returns:
-      type: "MlKem1024KeySeedD"
+      type: "MlDsa65Seed"
       description: "A copy, zeroed when dropped."
     thread_safety: thread-safe
     security:
@@ -23114,10 +23822,10 @@ functions:
       handles_secrets: true
       fips_approved: false
 
-  - name: "MlKem1024KeySeedD::as_bytes"
+  - name: "MlDsa65Seed::as_bytes"
     module: oxicrypt
     description: "The secret bytes."
-    signature: "pub fn MlKem1024KeySeedD::as_bytes(&self) -> &[u8; 32]"
+    signature: "pub fn MlDsa65Seed::as_bytes(&self) -> &[u8; 32]"
     returns:
       type: "&[u8; 32]"
       description: "The secret bytes."
@@ -23127,12 +23835,12 @@ functions:
       handles_secrets: true
       fips_approved: false
 
-  - name: "MlKem1024KeySeedZ::from_bytes"
+  - name: "MlDsa87Seed::from_bytes"
     module: oxicrypt
     description: "Take a copy of 32 bytes; the caller's array is the caller's to zero."
-    signature: "pub fn MlKem1024KeySeedZ::from_bytes(bytes: &[u8; 32]) -> MlKem1024KeySeedZ"
+    signature: "pub fn MlDsa87Seed::from_bytes(bytes: &[u8; 32]) -> MlDsa87Seed"
     returns:
-      type: "MlKem1024KeySeedZ"
+      type: "MlDsa87Seed"
       description: "A copy, zeroed when dropped."
     thread_safety: thread-safe
     security:
@@ -23140,10 +23848,10 @@ functions:
       handles_secrets: true
       fips_approved: false
 
-  - name: "MlKem1024KeySeedZ::as_bytes"
+  - name: "MlDsa87Seed::as_bytes"
     module: oxicrypt
     description: "The secret bytes."
-    signature: "pub fn MlKem1024KeySeedZ::as_bytes(&self) -> &[u8; 32]"
+    signature: "pub fn MlDsa87Seed::as_bytes(&self) -> &[u8; 32]"
     returns:
       type: "&[u8; 32]"
       description: "The secret bytes."
@@ -23153,12 +23861,12 @@ functions:
       handles_secrets: true
       fips_approved: false
 
-  - name: "MlKem1024EncapsSeed::from_bytes"
+  - name: "MlKem512Seed::from_bytes"
     module: oxicrypt
-    description: "Take a copy of 32 bytes; the caller's array is the caller's to zero."
-    signature: "pub fn MlKem1024EncapsSeed::from_bytes(bytes: &[u8; 32]) -> MlKem1024EncapsSeed"
+    description: "Take a copy of 64 bytes; the caller's array is the caller's to zero."
+    signature: "pub fn MlKem512Seed::from_bytes(bytes: &[u8; 64]) -> MlKem512Seed"
     returns:
-      type: "MlKem1024EncapsSeed"
+      type: "MlKem512Seed"
       description: "A copy, zeroed when dropped."
     thread_safety: thread-safe
     security:
@@ -23166,12 +23874,116 @@ functions:
       handles_secrets: true
       fips_approved: false
 
-  - name: "MlKem1024EncapsSeed::as_bytes"
+  - name: "MlKem512Seed::as_bytes"
     module: oxicrypt
     description: "The secret bytes."
-    signature: "pub fn MlKem1024EncapsSeed::as_bytes(&self) -> &[u8; 32]"
+    signature: "pub fn MlKem512Seed::as_bytes(&self) -> &[u8; 64]"
     returns:
-      type: "&[u8; 32]"
+      type: "&[u8; 64]"
+      description: "The secret bytes."
+    thread_safety: thread-safe
+    security:
+      constant_time: false
+      handles_secrets: true
+      fips_approved: false
+
+  - name: "MlKem768Seed::from_bytes"
+    module: oxicrypt
+    description: "Take a copy of 64 bytes; the caller's array is the caller's to zero."
+    signature: "pub fn MlKem768Seed::from_bytes(bytes: &[u8; 64]) -> MlKem768Seed"
+    returns:
+      type: "MlKem768Seed"
+      description: "A copy, zeroed when dropped."
+    thread_safety: thread-safe
+    security:
+      constant_time: false
+      handles_secrets: true
+      fips_approved: false
+
+  - name: "MlKem768Seed::as_bytes"
+    module: oxicrypt
+    description: "The secret bytes."
+    signature: "pub fn MlKem768Seed::as_bytes(&self) -> &[u8; 64]"
+    returns:
+      type: "&[u8; 64]"
+      description: "The secret bytes."
+    thread_safety: thread-safe
+    security:
+      constant_time: false
+      handles_secrets: true
+      fips_approved: false
+
+  - name: "MlKem1024Seed::from_bytes"
+    module: oxicrypt
+    description: "Take a copy of 64 bytes; the caller's array is the caller's to zero."
+    signature: "pub fn MlKem1024Seed::from_bytes(bytes: &[u8; 64]) -> MlKem1024Seed"
+    returns:
+      type: "MlKem1024Seed"
+      description: "A copy, zeroed when dropped."
+    thread_safety: thread-safe
+    security:
+      constant_time: false
+      handles_secrets: true
+      fips_approved: false
+
+  - name: "MlKem1024Seed::as_bytes"
+    module: oxicrypt
+    description: "The secret bytes."
+    signature: "pub fn MlKem1024Seed::as_bytes(&self) -> &[u8; 64]"
+    returns:
+      type: "&[u8; 64]"
+      description: "The secret bytes."
+    thread_safety: thread-safe
+    security:
+      constant_time: false
+      handles_secrets: true
+      fips_approved: false
+
+  - name: "MlDsa44SecretKey::from_bytes"
+    module: oxicrypt
+    description: "Take a copy of 2560 bytes; the caller's array is the caller's to zero."
+    signature: "pub fn MlDsa44SecretKey::from_bytes(bytes: &[u8; 2560]) -> MlDsa44SecretKey"
+    returns:
+      type: "MlDsa44SecretKey"
+      description: "A copy, zeroed when dropped."
+    thread_safety: thread-safe
+    security:
+      constant_time: false
+      handles_secrets: true
+      fips_approved: false
+
+  - name: "MlDsa44SecretKey::as_bytes"
+    module: oxicrypt
+    description: "The secret bytes."
+    signature: "pub fn MlDsa44SecretKey::as_bytes(&self) -> &[u8; 2560]"
+    returns:
+      type: "&[u8; 2560]"
+      description: "The secret bytes."
+    thread_safety: thread-safe
+    security:
+      constant_time: false
+      handles_secrets: true
+      fips_approved: false
+
+  - name: "MlDsa65SecretKey::from_bytes"
+    module: oxicrypt
+    description: "Take a copy of 4032 bytes; the caller's array is the caller's to zero."
+    signature: "pub fn MlDsa65SecretKey::from_bytes(bytes: &[u8; 4032]) -> MlDsa65SecretKey"
+    returns:
+      type: "MlDsa65SecretKey"
+      description: "A copy, zeroed when dropped."
+    thread_safety: thread-safe
+    security:
+      constant_time: false
+      handles_secrets: true
+      fips_approved: false
+
+  - name: "MlDsa65SecretKey::as_bytes"
+    module: oxicrypt
+    description: "The secret bytes."
+    signature: "pub fn MlDsa65SecretKey::as_bytes(&self) -> &[u8; 4032]"
+    returns:
+      type: "&[u8; 4032]"
       description: "The secret bytes."
     thread_safety: thread-safe
     security:
@@ -23198,6 +24010,58 @@ functions:
     signature: "pub fn MlDsa87SecretKey::as_bytes(&self) -> &[u8; 4896]"
     returns:
       type: "&[u8; 4896]"
+      description: "The secret bytes."
+    thread_safety: thread-safe
+    security:
+      constant_time: false
+      handles_secrets: true
+      fips_approved: false
+
+  - name: "MlKem512DecapsulationKey::from_bytes"
+    module: oxicrypt
+    description: "Take a copy of 1632 bytes; the caller's array is the caller's to zero."
+    signature: "pub fn MlKem512DecapsulationKey::from_bytes(bytes: &[u8; 1632]) -> MlKem512DecapsulationKey"
+    returns:
+      type: "MlKem512DecapsulationKey"
+      description: "A copy, zeroed when dropped."
+    thread_safety: thread-safe
+    security:
+      constant_time: false
+      handles_secrets: true
+      fips_approved: false
+
+  - name: "MlKem512DecapsulationKey::as_bytes"
+    module: oxicrypt
+    description: "The secret bytes."
+    signature: "pub fn MlKem512DecapsulationKey::as_bytes(&self) -> &[u8; 1632]"
+    returns:
+      type: "&[u8; 1632]"
+      description: "The secret bytes."
+    thread_safety: thread-safe
+    security:
+      constant_time: false
+      handles_secrets: true
+      fips_approved: false
+
+  - name: "MlKem768DecapsulationKey::from_bytes"
+    module: oxicrypt
+    description: "Take a copy of 2400 bytes; the caller's array is the caller's to zero."
+    signature: "pub fn MlKem768DecapsulationKey::from_bytes(bytes: &[u8; 2400]) -> MlKem768DecapsulationKey"
+    returns:
+      type: "MlKem768DecapsulationKey"
+      description: "A copy, zeroed when dropped."
+    thread_safety: thread-safe
+    security:
+      constant_time: false
+      handles_secrets: true
+      fips_approved: false
+
+  - name: "MlKem768DecapsulationKey::as_bytes"
+    module: oxicrypt
+    description: "The secret bytes."
+    signature: "pub fn MlKem768DecapsulationKey::as_bytes(&self) -> &[u8; 2400]"
+    returns:
+      type: "&[u8; 2400]"
       description: "The secret bytes."
     thread_safety: thread-safe
     security:
@@ -24360,7 +25224,7 @@ constants:
   - name: OXI_ABI_VERSION
     module: oxicrypt
     type: i32
-    value: "1"
+    value: "4"
     description: "The ABI number of the C interface the crate was built against, which Module::init requires the library to report."
 
   - name: SHA384_LEN
@@ -24411,11 +25275,59 @@ constants:
     value: "65536"
     description: "The most bytes one HMAC_DRBG-SHA-256 generate call returns."
 
+  - name: ML_DSA_44_SEED_LEN
+    module: oxicrypt
+    type: usize
+    value: "32"
+    description: "ML-DSA-44 key-generation seed ξ length."
+
+  - name: ML_DSA_44_PUBLIC_KEY_LEN
+    module: oxicrypt
+    type: usize
+    value: "1312"
+    description: "ML-DSA-44 public key length."
+
+  - name: ML_DSA_44_SECRET_KEY_LEN
+    module: oxicrypt
+    type: usize
+    value: "2560"
+    description: "ML-DSA-44 secret key length."
+
+  - name: ML_DSA_44_SIGNATURE_LEN
+    module: oxicrypt
+    type: usize
+    value: "2420"
+    description: "ML-DSA-44 signature length."
+
+  - name: ML_DSA_65_SEED_LEN
+    module: oxicrypt
+    type: usize
+    value: "32"
+    description: "ML-DSA-65 key-generation seed ξ length."
+
+  - name: ML_DSA_65_PUBLIC_KEY_LEN
+    module: oxicrypt
+    type: usize
+    value: "1952"
+    description: "ML-DSA-65 public key length."
+
+  - name: ML_DSA_65_SECRET_KEY_LEN
+    module: oxicrypt
+    type: usize
+    value: "4032"
+    description: "ML-DSA-65 secret key length."
+
+  - name: ML_DSA_65_SIGNATURE_LEN
+    module: oxicrypt
+    type: usize
+    value: "3309"
+    description: "ML-DSA-65 signature length."
+
   - name: ML_DSA_87_SEED_LEN
     module: oxicrypt
     type: usize
     value: "32"
-    description: "ML-DSA-87 key-generation seed length."
+    description: "ML-DSA-87 key-generation seed ξ length."
 
   - name: ML_DSA_87_PUBLIC_KEY_LEN
     module: oxicrypt
@@ -24435,17 +25347,71 @@ constants:
     value: "4627"
     description: "ML-DSA-87 signature length."
 
+  - name: ML_DSA_MAX_CONTEXT_LEN
+    module: oxicrypt
+    type: usize
+    value: "255"
+    description: "The longest ML-DSA context string, for every parameter set."
+
   - name: ML_DSA_87_MAX_CONTEXT_LEN
     module: oxicrypt
     type: usize
     value: "255"
-    description: "The longest ML-DSA-87 context string."
+    description: "ML_DSA_MAX_CONTEXT_LEN under the ML-DSA-87 name."
+
+  - name: ML_KEM_512_SEED_LEN
+    module: oxicrypt
+    type: usize
+    value: "64"
+    description: "ML-KEM-512 key-generation seed d ‖ z length."
+
+  - name: ML_KEM_512_ENCAPSULATION_KEY_LEN
+    module: oxicrypt
+    type: usize
+    value: "800"
+    description: "ML-KEM-512 encapsulation key length."
+
+  - name: ML_KEM_512_DECAPSULATION_KEY_LEN
+    module: oxicrypt
+    type: usize
+    value: "1632"
+    description: "ML-KEM-512 decapsulation key length."
+
+  - name: ML_KEM_512_CIPHERTEXT_LEN
+    module: oxicrypt
+    type: usize
+    value: "768"
+    description: "ML-KEM-512 ciphertext length."
+
+  - name: ML_KEM_768_SEED_LEN
+    module: oxicrypt
+    type: usize
+    value: "64"
+    description: "ML-KEM-768 key-generation seed d ‖ z length."
+
+  - name: ML_KEM_768_ENCAPSULATION_KEY_LEN
+    module: oxicrypt
+    type: usize
+    value: "1184"
+    description: "ML-KEM-768 encapsulation key length."
+
+  - name: ML_KEM_768_DECAPSULATION_KEY_LEN
+    module: oxicrypt
+    type: usize
+    value: "2400"
+    description: "ML-KEM-768 decapsulation key length."
+
+  - name: ML_KEM_768_CIPHERTEXT_LEN
+    module: oxicrypt
+    type: usize
+    value: "1088"
+    description: "ML-KEM-768 ciphertext length."
 
   - name: ML_KEM_1024_SEED_LEN
     module: oxicrypt
     type: usize
-    value: "32"
-    description: "ML-KEM-1024 seed length, for each of d, z and m."
+    value: "64"
+    description: "ML-KEM-1024 key-generation seed d ‖ z length."
 
   - name: ML_KEM_1024_ENCAPSULATION_KEY_LEN
     module: oxicrypt
@@ -24465,8 +25431,14 @@ constants:
     value: "1568"
     description: "ML-KEM-1024 ciphertext length."
 
+  - name: ML_KEM_SHARED_SECRET_LEN
+    module: oxicrypt
+    type: usize
+    value: "32"
+    description: "ML-KEM shared secret length, the same for every parameter set."
+
   - name: ML_KEM_1024_SHARED_SECRET_LEN
     module: oxicrypt
     type: usize
     value: "32"
-    description: "ML-KEM-1024 shared secret length."
+    description: "ML_KEM_SHARED_SECRET_LEN under the ML-KEM-1024 name."

@@ -6,13 +6,16 @@ use core::ptr::{self, NonNull};
 use crate::error::{Error, Site, status};
 use crate::module::{Module, check};
 use crate::secret::{
-    HkdfPrk, MlDsa87KeySeed, MlDsa87SecretKey, MlKem1024DecapsulationKey, MlKem1024EncapsSeed,
-    MlKem1024KeySeedD, MlKem1024KeySeedZ, Okm, SharedSecret, wipe,
+    HkdfPrk, MlDsa44SecretKey, MlDsa44Seed, MlDsa65SecretKey, MlDsa65Seed, MlDsa87SecretKey,
+    MlDsa87Seed, MlKem512DecapsulationKey, MlKem512Seed, MlKem768DecapsulationKey, MlKem768Seed,
+    MlKem1024DecapsulationKey, MlKem1024Seed, Okm, SharedSecret, wipe,
 };
 use crate::sys;
 use crate::{
     AES_GCM_IV_LEN, AES_GCM_TAG_LEN, HKDF_SHA384_MAX_OKM_LEN, HMAC_DRBG_MAX_REQUEST_LEN,
-    MlDsa87PublicKey, MlDsa87Signature, MlKem1024Ciphertext, MlKem1024EncapsulationKey, SHA384_LEN,
+    MlDsa44PublicKey, MlDsa44Signature, MlDsa65PublicKey, MlDsa65Signature, MlDsa87PublicKey,
+    MlDsa87Signature, MlKem512Ciphertext, MlKem512EncapsulationKey, MlKem768Ciphertext,
+    MlKem768EncapsulationKey, MlKem1024Ciphertext, MlKem1024EncapsulationKey, SHA384_LEN,
 };
 
 /// `Ok(())` for status 0. On any other status, zeroes `out`, which the
@@ -54,7 +57,6 @@ fn input(bytes: &[u8]) -> *const u8 {
     }
 }
 
-/// The handle a `_key_new` wrote on status 0, else the mapped error.
 fn owned<T>(code: c_int, handle: *mut T) -> Result<NonNull<T>, Error> {
     check(code)?;
     NonNull::new(handle).ok_or(Error::NullPointer)
@@ -877,152 +879,425 @@ impl Module {
         let label = unsafe { CStr::from_ptr(label) };
         label.to_str().map_err(|_| Error::Internal)
     }
+}
 
-    /// ML-DSA-87 key generation from a 32-byte seed (FIPS 204 §6.1).
-    ///
-    /// The key is generated inside the module. Its approved status depends
-    /// on where the seed came from; a seed passed to
-    /// [`MlDsa87KeySeed::from_bytes`] comes from outside the module. The seed
-    /// is consumed and zeroed.
-    pub fn ml_dsa_87_keygen(
-        self,
-        seed: MlDsa87KeySeed,
-    ) -> Result<(MlDsa87PublicKey, MlDsa87SecretKey), Error> {
-        let mut pk = [0u8; crate::ML_DSA_87_PUBLIC_KEY_LEN];
-        let mut sk = MlDsa87SecretKey::zeroed();
-        // SAFETY: U1; U3, `seed.bytes` is 32 readable bytes, `pk` and
-        // `sk.bytes` are the documented writable lengths, `sk` owned by the
-        // zeroing type.
-        let code = unsafe {
-            sys::oxi_ml_dsa_87_keygen(seed.bytes.as_ptr(), pk.as_mut_ptr(), sk.bytes.as_mut_ptr())
-        };
-        // The seed is used once: zeroed here, whatever the status.
-        drop(seed);
-        check(code)?;
-        Ok((pk, sk))
-    }
+/// The length of `d`, the first part of an ML-KEM seed `d ‖ z`
+/// (FIPS 203 Algorithm 16).
+const ML_KEM_D_LEN: usize = 32;
 
-    /// Deterministic ML-DSA-87 signature of `msg` under context `ctx`
-    /// (FIPS 204 §5.2). The library refuses a context over 255 bytes with
-    /// [`Error::InvalidInput`].
-    pub fn ml_dsa_87_sign(
-        self,
-        sk: &MlDsa87SecretKey,
-        msg: &[u8],
-        ctx: &[u8],
-    ) -> Result<MlDsa87Signature, Error> {
-        let mut sig = [0u8; crate::ML_DSA_87_SIGNATURE_LEN];
-        // SAFETY: U1; U3, `sk.bytes` is the 4,896 bytes read and `sig` the
-        // 4,627 written; U2 for `msg` and `ctx`.
-        let code = unsafe {
-            sys::oxi_ml_dsa_87_sign(
-                sk.bytes.as_ptr(),
-                input(msg),
-                msg.len(),
-                input(ctx),
-                ctx.len(),
-                sig.as_mut_ptr(),
-            )
-        };
-        check(code)?;
-        Ok(sig)
-    }
+macro_rules! rbg_errors_doc {
+    () => {
+        concat!(
+            "A DRBG never instantiated is [`Error::Uninstantiated`], with nothing drawn, ",
+            "and one instantiated in another process, as a handle inherited across ",
+            "`fork` is, is [`Error::InvalidInput`] until [`Drbg::instantiate`] runs in ",
+            "this process. A reseed the DRBG starts is [`Error::Busy`] when another ",
+            "thread holds the module's seed path past its wait bound, which a retry ",
+            "after a pause clears, and [`Error::EntropyUnavailable`] when the entropy ",
+            "source fails, after which the module is in its error state."
+        )
+    };
+}
 
-    /// ML-DSA-87 verification (FIPS 204 §5.3). A signature that does not
-    /// verify, and a signature or key that does not decode, are both
-    /// [`Error::SignatureInvalid`].
-    pub fn ml_dsa_87_verify(
-        self,
-        pk: &MlDsa87PublicKey,
-        msg: &[u8],
-        ctx: &[u8],
-        sig: &MlDsa87Signature,
-    ) -> Result<(), Error> {
-        // SAFETY: U1; U3, `pk` and `sig` are the 2,592 and 4,627 bytes the
-        // function reads, fixed by their types; U2 for `msg` and `ctx`.
-        let code = unsafe {
-            sys::oxi_ml_dsa_87_verify(
-                pk.as_ptr(),
-                input(msg),
-                msg.len(),
-                input(ctx),
-                ctx.len(),
-                sig.as_ptr(),
-            )
-        };
-        status(code, Site::SignatureVerify)
-    }
+macro_rules! keygen_errors_doc {
+    () => {
+        concat!(
+            "A failed pairwise consistency test is [`Error::ConditionalTestFailed`], ",
+            "after which the module is in its error state and every call returns ",
+            "[`Error::NotOperational`]. A profile that does not admit the parameter ",
+            "set or the DRBG is [`Error::AlgorithmRestricted`]."
+        )
+    };
+}
 
-    /// ML-KEM-1024 key generation from seeds `d` and `z` (FIPS 203 §6.1),
-    /// with the same note on seed provenance as
-    /// [`Module::ml_dsa_87_keygen`]. Both seeds are consumed and zeroed.
-    pub fn ml_kem_1024_keygen(
-        self,
-        d: MlKem1024KeySeedD,
-        z: MlKem1024KeySeedZ,
-    ) -> Result<(MlKem1024EncapsulationKey, MlKem1024DecapsulationKey), Error> {
-        let mut ek = [0u8; crate::ML_KEM_1024_ENCAPSULATION_KEY_LEN];
-        let mut dk = MlKem1024DecapsulationKey::zeroed();
-        // SAFETY: U1; U3, `d` and `z` are 32 readable bytes each, `ek` and
-        // `dk.bytes` the documented writable lengths, `dk` owned by the
-        // zeroing type.
-        let code = unsafe {
-            sys::oxi_ml_kem_1024_keygen(
-                d.bytes.as_ptr(),
-                z.bytes.as_ptr(),
-                ek.as_mut_ptr(),
-                dk.bytes.as_mut_ptr(),
-            )
-        };
-        // The seeds are used once: zeroed here, whatever the status.
-        drop((d, z));
-        check(code)?;
-        Ok((ek, dk))
-    }
+#[rustfmt::skip]
+macro_rules! ml_dsa_wrappers {
+    (
+        set: $set:literal,
+        strength: $bits:literal,
+        seed: $Seed:ident,
+        public_key: $Pk:ident = $pk_len:ident,
+        secret_key: $Sk:ident,
+        signature: $Sig:ident = $sig_len:ident,
+        keygen: $keygen:ident => $c_keygen:path,
+        keygen_with_seed: $keygen_with_seed:ident,
+        expand_key: $expand_key:ident => $c_expand_key:path,
+        sign: $sign:ident => $c_sign:path,
+        verify: $verify:ident => $c_verify:path $(,)?
+    ) => {
+        impl Module {
+            #[doc = concat!(
+                "ML-DSA-", $set, " key generation (FIPS 204 Algorithm 1): the module ",
+                "draws the seed `ξ` from `rbg`, expands the key pair, runs the pairwise ",
+                "consistency test on it (FIPS 140-3 IG 10.3.A) and wipes `ξ`. Calls `oxi_ml_dsa_",
+                $set, "_keygen_rbg`.\n\n",
+                "A DRBG below ", $bits, " bits of security strength is ",
+                "[`Error::RbgTooWeak`], with nothing drawn."
+            )]
+            #[doc = rbg_errors_doc!()]
+            #[doc = keygen_errors_doc!()]
+            pub fn $keygen(self, rbg: &mut Drbg) -> Result<($Pk, $Sk), Error> {
+                let mut pk = [0u8; crate::$pk_len];
+                let mut sk = $Sk::zeroed();
+                // SAFETY: U1; U4 for `rbg`; U3, `pk` and `sk.bytes` are the
+                // documented writable lengths, `sk` owned by the zeroing
+                // type; `seed_out` NULL, which the header permits.
+                let code = unsafe {
+                    $c_keygen(
+                        rbg.ptr.as_ptr(),
+                        pk.as_mut_ptr(),
+                        sk.bytes.as_mut_ptr(),
+                        ptr::null_mut(),
+                    )
+                };
+                check(code)?;
+                Ok((pk, sk))
+            }
 
-    /// ML-KEM-1024 encapsulation against `ek` with randomness `m`
-    /// (FIPS 203 §6.2). `m` is consumed and zeroed, so one value cannot
-    /// serve two encapsulations.
-    pub fn ml_kem_1024_encapsulate(
-        self,
-        ek: &MlKem1024EncapsulationKey,
-        m: MlKem1024EncapsSeed,
-    ) -> Result<(SharedSecret, MlKem1024Ciphertext), Error> {
-        let mut ss = SharedSecret::zeroed();
-        let mut ct = [0u8; crate::ML_KEM_1024_CIPHERTEXT_LEN];
-        // SAFETY: U1; U3, `ek` is the 1,568 bytes read and `m` the 32; `ss`
-        // and `ct` are the documented writable lengths, `ss` owned by the
-        // zeroing type.
-        let code = unsafe {
-            sys::oxi_ml_kem_1024_encapsulate(
-                ek.as_ptr(),
-                m.bytes.as_ptr(),
-                ss.bytes.as_mut_ptr(),
-                ct.as_mut_ptr(),
-            )
-        };
-        // The seed is used once: zeroed here, whatever the status.
-        drop(m);
-        check(code)?;
-        Ok((ss, ct))
-    }
+            #[doc = concat!(
+                "ML-DSA-", $set, " key generation as [`Module::", stringify!($keygen),
+                "`], also returning the seed `ξ`, from which [`Module::",
+                stringify!($expand_key), "`] reproduces the pair. Errors as for [`Module::",
+                stringify!($keygen), "`]."
+            )]
+            pub fn $keygen_with_seed(self, rbg: &mut Drbg) -> Result<($Pk, $Sk, $Seed), Error> {
+                let mut pk = [0u8; crate::$pk_len];
+                let mut sk = $Sk::zeroed();
+                let mut seed = $Seed::zeroed();
+                // SAFETY: U1; U4 for `rbg`; U3, `pk`, `sk.bytes` and
+                // `seed.bytes` are the documented writable lengths, `sk` and
+                // `seed` owned by the zeroing types.
+                let code = unsafe {
+                    $c_keygen(
+                        rbg.ptr.as_ptr(),
+                        pk.as_mut_ptr(),
+                        sk.bytes.as_mut_ptr(),
+                        seed.bytes.as_mut_ptr(),
+                    )
+                };
+                check(code)?;
+                Ok((pk, sk, seed))
+            }
 
-    /// ML-KEM-1024 decapsulation (FIPS 203 §6.3). A modified ciphertext is
-    /// not an error: the scheme returns an implicit-rejection secret.
-    pub fn ml_kem_1024_decapsulate(
-        self,
-        dk: &MlKem1024DecapsulationKey,
-        ct: &MlKem1024Ciphertext,
-    ) -> Result<SharedSecret, Error> {
-        let mut ss = SharedSecret::zeroed();
-        // SAFETY: U1; U3, `dk.bytes` and `ct` are the 3,168 and 1,568 bytes
-        // read, `ss` the 32 written, owned by the zeroing type.
-        let code = unsafe {
-            sys::oxi_ml_kem_1024_decapsulate(dk.bytes.as_ptr(), ct.as_ptr(), ss.bytes.as_mut_ptr())
-        };
-        check(code)?;
-        Ok(ss)
-    }
+            #[doc = concat!(
+                "ML-DSA-", $set, " key expansion from a stored seed `ξ` (FIPS 204 ",
+                "Algorithm 6), with the pairwise consistency test run on the pair. Calls ",
+                "`oxi_ml_dsa_", $set, "_expand_key`.\n\n",
+                "A seed built with [`", stringify!($Seed), "::from_bytes`] rather than ",
+                "returned by [`Module::", stringify!($keygen_with_seed), "`] is a private ",
+                "key imported into the module. A failed pairwise consistency test is ",
+                "[`Error::ConditionalTestFailed`], as for [`Module::", stringify!($keygen),
+                "`]. A profile that does not admit the parameter set is ",
+                "[`Error::AlgorithmRestricted`]."
+            )]
+            pub fn $expand_key(self, seed: &$Seed) -> Result<($Pk, $Sk), Error> {
+                let mut pk = [0u8; crate::$pk_len];
+                let mut sk = $Sk::zeroed();
+                // SAFETY: U1; U3, `seed.bytes` is the 32 bytes read, `pk` and
+                // `sk.bytes` the documented writable lengths, `sk` owned by
+                // the zeroing type.
+                let code = unsafe {
+                    $c_expand_key(seed.bytes.as_ptr(), pk.as_mut_ptr(), sk.bytes.as_mut_ptr())
+                };
+                check(code)?;
+                Ok((pk, sk))
+            }
+
+            #[doc = concat!(
+                "Deterministic ML-DSA-", $set, " signature of `msg` under context `ctx` ",
+                "(FIPS 204 §5.2). The library refuses a context over 255 bytes with ",
+                "[`Error::InvalidInput`]."
+            )]
+            pub fn $sign(self, sk: &$Sk, msg: &[u8], ctx: &[u8]) -> Result<$Sig, Error> {
+                let mut sig = [0u8; crate::$sig_len];
+                // SAFETY: U1; U3, `sk.bytes` is the secret-key length read and
+                // `sig` the signature length written, fixed by their types;
+                // U2 for `msg` and `ctx`.
+                let code = unsafe {
+                    $c_sign(
+                        sk.bytes.as_ptr(),
+                        input(msg),
+                        msg.len(),
+                        input(ctx),
+                        ctx.len(),
+                        sig.as_mut_ptr(),
+                    )
+                };
+                check(code)?;
+                Ok(sig)
+            }
+
+            #[doc = concat!(
+                "ML-DSA-", $set, " verification (FIPS 204 §5.3). A signature that does ",
+                "not verify, and a signature or key that does not decode, are both ",
+                "[`Error::SignatureInvalid`]."
+            )]
+            pub fn $verify(
+                self,
+                pk: &$Pk,
+                msg: &[u8],
+                ctx: &[u8],
+                sig: &$Sig,
+            ) -> Result<(), Error> {
+                // SAFETY: U1; U3, `pk` and `sig` are the lengths the function
+                // reads, fixed by their types; U2 for `msg` and `ctx`.
+                let code = unsafe {
+                    $c_verify(
+                        pk.as_ptr(),
+                        input(msg),
+                        msg.len(),
+                        input(ctx),
+                        ctx.len(),
+                        sig.as_ptr(),
+                    )
+                };
+                status(code, Site::SignatureVerify)
+            }
+        }
+    };
+}
+
+#[rustfmt::skip]
+macro_rules! ml_kem_wrappers {
+    (
+        set: $set:literal,
+        $(strength: $bits:literal,)?
+        seed: $Seed:ident,
+        encapsulation_key: $Ek:ident = $ek_len:ident,
+        decapsulation_key: $Dk:ident,
+        ciphertext: $Ct:ident = $ct_len:ident,
+        keygen: $keygen:ident => $c_keygen:path,
+        keygen_with_seed: $keygen_with_seed:ident,
+        expand_key: $expand_key:ident => $c_expand_key:path,
+        encapsulate: $encapsulate:ident => $c_encapsulate:path,
+        decapsulate: $decapsulate:ident => $c_decapsulate:path $(,)?
+    ) => {
+        impl Module {
+            #[doc = concat!(
+                "ML-KEM-", $set, " key generation (FIPS 203 Algorithm 19): the module ",
+                "draws the seeds `d` and `z` from `rbg`, expands the key pair, runs the ",
+                "pairwise consistency test on it (FIPS 140-3 IG 10.3.A) and wipes the ",
+                "seeds. Calls `oxi_ml_kem_", $set, "_keygen_rbg`.\n"
+            )]
+            $(#[doc = concat!(
+                "A DRBG below ", $bits, " bits of security strength is ",
+                "[`Error::RbgTooWeak`], with nothing drawn."
+            )])?
+            #[doc = rbg_errors_doc!()]
+            #[doc = keygen_errors_doc!()]
+            pub fn $keygen(self, rbg: &mut Drbg) -> Result<($Ek, $Dk), Error> {
+                let mut ek = [0u8; crate::$ek_len];
+                let mut dk = $Dk::zeroed();
+                // SAFETY: U1; U4 for `rbg`; U3, `ek` and `dk.bytes` are the
+                // documented writable lengths, `dk` owned by the zeroing
+                // type; `seed_out` NULL, which the header permits.
+                let code = unsafe {
+                    $c_keygen(
+                        rbg.ptr.as_ptr(),
+                        ek.as_mut_ptr(),
+                        dk.bytes.as_mut_ptr(),
+                        ptr::null_mut(),
+                    )
+                };
+                check(code)?;
+                Ok((ek, dk))
+            }
+
+            #[doc = concat!(
+                "ML-KEM-", $set, " key generation as [`Module::", stringify!($keygen),
+                "`], also returning the seed `d ‖ z`, from which [`Module::",
+                stringify!($expand_key), "`] reproduces the pair. Errors as for [`Module::",
+                stringify!($keygen), "`]."
+            )]
+            pub fn $keygen_with_seed(self, rbg: &mut Drbg) -> Result<($Ek, $Dk, $Seed), Error> {
+                let mut ek = [0u8; crate::$ek_len];
+                let mut dk = $Dk::zeroed();
+                let mut seed = $Seed::zeroed();
+                // SAFETY: U1; U4 for `rbg`; U3, `ek`, `dk.bytes` and
+                // `seed.bytes` are the documented writable lengths, `dk` and
+                // `seed` owned by the zeroing types.
+                let code = unsafe {
+                    $c_keygen(
+                        rbg.ptr.as_ptr(),
+                        ek.as_mut_ptr(),
+                        dk.bytes.as_mut_ptr(),
+                        seed.bytes.as_mut_ptr(),
+                    )
+                };
+                check(code)?;
+                Ok((ek, dk, seed))
+            }
+
+            #[doc = concat!(
+                "ML-KEM-", $set, " key expansion from a stored seed `d ‖ z` (FIPS 203 ",
+                "Algorithm 16), with the pairwise consistency test run on the pair. Calls ",
+                "`oxi_ml_kem_", $set, "_expand_key`.\n\n",
+                "A seed built with [`", stringify!($Seed), "::from_bytes`] rather than ",
+                "returned by [`Module::", stringify!($keygen_with_seed), "`] is a private ",
+                "key imported into the module. A failed pairwise consistency test is ",
+                "[`Error::ConditionalTestFailed`], as for [`Module::", stringify!($keygen),
+                "`]. A profile that does not admit the parameter set is ",
+                "[`Error::AlgorithmRestricted`]."
+            )]
+            pub fn $expand_key(self, seed: &$Seed) -> Result<($Ek, $Dk), Error> {
+                let mut ek = [0u8; crate::$ek_len];
+                let mut dk = $Dk::zeroed();
+                let (d, z) = seed.bytes.split_at(ML_KEM_D_LEN);
+                // SAFETY: U1; U3, `d` and `z` are the 32 bytes read each,
+                // the two parts of the 64-byte seed; `ek` and `dk.bytes` the
+                // documented writable lengths, `dk` owned by the zeroing type.
+                let code = unsafe {
+                    $c_expand_key(
+                        d.as_ptr(),
+                        z.as_ptr(),
+                        ek.as_mut_ptr(),
+                        dk.bytes.as_mut_ptr(),
+                    )
+                };
+                check(code)?;
+                Ok((ek, dk))
+            }
+
+            #[doc = concat!(
+                "ML-KEM-", $set, " encapsulation against `ek` (FIPS 203 Algorithm 20): ",
+                "the module checks `ek` (FIPS 203 §7.2) and draws `m` from `rbg`. Calls ",
+                "`oxi_ml_kem_", $set, "_encapsulate_rbg`.\n\n",
+                "An `ek` that fails the check is [`Error::InvalidInput`], with nothing ",
+                "drawn."
+            )]
+            $(#[doc = concat!(
+                "A DRBG below ", $bits, " bits of security strength is ",
+                "[`Error::RbgTooWeak`], with nothing drawn."
+            )])?
+            #[doc = rbg_errors_doc!()]
+            #[doc = concat!(
+                "A profile that does not admit the parameter set or the DRBG is ",
+                "[`Error::AlgorithmRestricted`]."
+            )]
+            pub fn $encapsulate(
+                self,
+                ek: &$Ek,
+                rbg: &mut Drbg,
+            ) -> Result<(SharedSecret, $Ct), Error> {
+                let mut ss = SharedSecret::zeroed();
+                let mut ct = [0u8; crate::$ct_len];
+                // SAFETY: U1; U4 for `rbg`; U3, `ek` is the length read, fixed
+                // by its type; `ss` and `ct` are the documented writable
+                // lengths, `ss` owned by the zeroing type.
+                let code = unsafe {
+                    $c_encapsulate(
+                        ek.as_ptr(),
+                        rbg.ptr.as_ptr(),
+                        ss.bytes.as_mut_ptr(),
+                        ct.as_mut_ptr(),
+                    )
+                };
+                check(code)?;
+                Ok((ss, ct))
+            }
+
+            #[doc = concat!(
+                "ML-KEM-", $set, " decapsulation (FIPS 203 Algorithm 21). The module ",
+                "checks `dk` (FIPS 203 §7.3) and refuses one that fails with ",
+                "[`Error::InvalidInput`]. A modified ciphertext is not an error: the ",
+                "scheme returns an implicit-rejection secret (FIPS 203 §6.3)."
+            )]
+            pub fn $decapsulate(self, dk: &$Dk, ct: &$Ct) -> Result<SharedSecret, Error> {
+                let mut ss = SharedSecret::zeroed();
+                // SAFETY: U1; U3, `dk.bytes` and `ct` are the lengths read,
+                // fixed by their types; `ss` the 32 written, owned by the
+                // zeroing type.
+                let code = unsafe {
+                    $c_decapsulate(dk.bytes.as_ptr(), ct.as_ptr(), ss.bytes.as_mut_ptr())
+                };
+                check(code)?;
+                Ok(ss)
+            }
+        }
+    };
+}
+
+ml_dsa_wrappers! {
+    set: "44",
+    strength: "192",
+    seed: MlDsa44Seed,
+    public_key: MlDsa44PublicKey = ML_DSA_44_PUBLIC_KEY_LEN,
+    secret_key: MlDsa44SecretKey,
+    signature: MlDsa44Signature = ML_DSA_44_SIGNATURE_LEN,
+    keygen: ml_dsa_44_keygen => sys::oxi_ml_dsa_44_keygen_rbg,
+    keygen_with_seed: ml_dsa_44_keygen_with_seed,
+    expand_key: ml_dsa_44_expand_key => sys::oxi_ml_dsa_44_expand_key,
+    sign: ml_dsa_44_sign => sys::oxi_ml_dsa_44_sign,
+    verify: ml_dsa_44_verify => sys::oxi_ml_dsa_44_verify,
+}
+
+ml_dsa_wrappers! {
+    set: "65",
+    strength: "192",
+    seed: MlDsa65Seed,
+    public_key: MlDsa65PublicKey = ML_DSA_65_PUBLIC_KEY_LEN,
+    secret_key: MlDsa65SecretKey,
+    signature: MlDsa65Signature = ML_DSA_65_SIGNATURE_LEN,
+    keygen: ml_dsa_65_keygen => sys::oxi_ml_dsa_65_keygen_rbg,
+    keygen_with_seed: ml_dsa_65_keygen_with_seed,
+    expand_key: ml_dsa_65_expand_key => sys::oxi_ml_dsa_65_expand_key,
+    sign: ml_dsa_65_sign => sys::oxi_ml_dsa_65_sign,
+    verify: ml_dsa_65_verify => sys::oxi_ml_dsa_65_verify,
+}
+
+ml_dsa_wrappers! {
+    set: "87",
+    strength: "256",
+    seed: MlDsa87Seed,
+    public_key: MlDsa87PublicKey = ML_DSA_87_PUBLIC_KEY_LEN,
+    secret_key: MlDsa87SecretKey,
+    signature: MlDsa87Signature = ML_DSA_87_SIGNATURE_LEN,
+    keygen: ml_dsa_87_keygen => sys::oxi_ml_dsa_87_keygen_rbg,
+    keygen_with_seed: ml_dsa_87_keygen_with_seed,
+    expand_key: ml_dsa_87_expand_key => sys::oxi_ml_dsa_87_expand_key,
+    sign: ml_dsa_87_sign => sys::oxi_ml_dsa_87_sign,
+    verify: ml_dsa_87_verify => sys::oxi_ml_dsa_87_verify,
+}
+
+ml_kem_wrappers! {
+    set: "512",
+    seed: MlKem512Seed,
+    encapsulation_key: MlKem512EncapsulationKey = ML_KEM_512_ENCAPSULATION_KEY_LEN,
+    decapsulation_key: MlKem512DecapsulationKey,
+    ciphertext: MlKem512Ciphertext = ML_KEM_512_CIPHERTEXT_LEN,
+    keygen: ml_kem_512_keygen => sys::oxi_ml_kem_512_keygen_rbg,
+    keygen_with_seed: ml_kem_512_keygen_with_seed,
+    expand_key: ml_kem_512_expand_key => sys::oxi_ml_kem_512_expand_key,
+    encapsulate: ml_kem_512_encapsulate => sys::oxi_ml_kem_512_encapsulate_rbg,
+    decapsulate: ml_kem_512_decapsulate => sys::oxi_ml_kem_512_decapsulate,
+}
+
+ml_kem_wrappers! {
+    set: "768",
+    strength: "192",
+    seed: MlKem768Seed,
+    encapsulation_key: MlKem768EncapsulationKey = ML_KEM_768_ENCAPSULATION_KEY_LEN,
+    decapsulation_key: MlKem768DecapsulationKey,
+    ciphertext: MlKem768Ciphertext = ML_KEM_768_CIPHERTEXT_LEN,
+    keygen: ml_kem_768_keygen => sys::oxi_ml_kem_768_keygen_rbg,
+    keygen_with_seed: ml_kem_768_keygen_with_seed,
+    expand_key: ml_kem_768_expand_key => sys::oxi_ml_kem_768_expand_key,
+    encapsulate: ml_kem_768_encapsulate => sys::oxi_ml_kem_768_encapsulate_rbg,
+    decapsulate: ml_kem_768_decapsulate => sys::oxi_ml_kem_768_decapsulate,
+}
+
+ml_kem_wrappers! {
+    set: "1024",
+    strength: "256",
+    seed: MlKem1024Seed,
+    encapsulation_key: MlKem1024EncapsulationKey = ML_KEM_1024_ENCAPSULATION_KEY_LEN,
+    decapsulation_key: MlKem1024DecapsulationKey,
+    ciphertext: MlKem1024Ciphertext = ML_KEM_1024_CIPHERTEXT_LEN,
+    keygen: ml_kem_1024_keygen => sys::oxi_ml_kem_1024_keygen_rbg,
+    keygen_with_seed: ml_kem_1024_keygen_with_seed,
+    expand_key: ml_kem_1024_expand_key => sys::oxi_ml_kem_1024_expand_key,
+    encapsulate: ml_kem_1024_encapsulate => sys::oxi_ml_kem_1024_encapsulate_rbg,
+    decapsulate: ml_kem_1024_decapsulate => sys::oxi_ml_kem_1024_decapsulate,
 }
 
 /// The IV and tag of one AES-GCM encryption, both public once the encryption

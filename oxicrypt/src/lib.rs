@@ -76,7 +76,7 @@
 //! or deploy the library where the loader looks: on Windows, the
 //! application's directory. When the library is missing, the loader refuses
 //! to start the program with its own message, before any Rust code runs: on
-//! Linux `error while loading shared libraries: liboxicrypt_ffi.so.3: cannot
+//! Linux `error while loading shared libraries: liboxicrypt_ffi.so.4: cannot
 //! open shared object file`, naming the library's delivered name, exit status
 //! 127; on macOS `dyld: Library not
 //! loaded`; on Windows a dialog or exit status `0xC0000135`
@@ -111,13 +111,17 @@
 //! # fn main() {}
 //! ```
 //!
-//! Key generation and encapsulation take caller-supplied seeds, as the C ABI
-//! does; the crate generates no randomness of its own. The approved status
-//! of a key generated through this crate depends on where its seed came
-//! from: a seed passed to `from_bytes` comes from outside the module. Each
-//! seed role has its own type ([`MlDsa87KeySeed`], [`MlKem1024KeySeedD`],
-//! [`MlKem1024KeySeedZ`], [`MlKem1024EncapsSeed`]), and each is consumed by
-//! the call that uses it.
+//! ML-DSA (44, 65, 87) and ML-KEM (512, 768, 1024) key generation and ML-KEM
+//! encapsulation take a [`Drbg`], from which the module draws the seeds and
+//! `m`; the crate generates no randomness of its own. The module refuses a
+//! DRBG whose security strength is below the parameter set's with
+//! [`Error::RbgTooWeak`], and runs the pairwise consistency test on every key
+//! pair it generates or expands. `keygen` keeps the seed inside the module;
+//! `keygen_with_seed` also returns it, as [`MlDsa44Seed`], [`MlDsa65Seed`],
+//! [`MlDsa87Seed`] (`ξ`, 32 bytes) or [`MlKem512Seed`], [`MlKem768Seed`],
+//! [`MlKem1024Seed`] (`d ‖ z`, 64 bytes), and `expand_key` reproduces the
+//! pair from it. A seed built with `from_bytes` is a private key imported
+//! into the module.
 //! AES keys are handles of one mode each ([`AesGcmKey`], [`AesCcmKey`],
 //! [`AesCbcKey`], [`AesCtrKey`], [`AesKwKey`], [`AesCmacKey`]), built from 16,
 //! 24 or 32 key bytes. AES-GCM encryption takes a [`Drbg`], from which the
@@ -129,53 +133,43 @@
 //! source's on-demand test.
 //!
 //! Secrets the crate returns zero themselves when dropped (see [`HkdfPrk`],
-//! [`Okm`], [`MlDsa87SecretKey`], [`MlKem1024DecapsulationKey`],
-//! [`SharedSecret`] and the seed types); an output is exposed only when the library
-//! returned status 0.
+//! [`Okm`], the ML-DSA secret keys, the ML-KEM decapsulation keys,
+//! [`SharedSecret`] and the seed types); an output is exposed only when the
+//! library returned status 0.
 //!
 //! # Compile-time guarantees
 //!
-//! Each seed is consumed by the call that uses it, so one encapsulation
-//! seed cannot serve two encapsulations:
-//!
-//! ```compile_fail,E0382
-//! fn twice(
-//!     m: oxicrypt::Module,
-//!     ek: &oxicrypt::MlKem1024EncapsulationKey,
-//!     seed: oxicrypt::MlKem1024EncapsSeed,
-//! ) {
-//!     let _ = m.ml_kem_1024_encapsulate(ek, seed);
-//!     let _ = m.ml_kem_1024_encapsulate(ek, seed);
-//! }
-//! ```
-//!
-//! and each role has its own type, so seeds cannot be swapped between roles:
+//! Each parameter set has its own seed type, so a seed of one set cannot
+//! reach another set's key expansion:
 //!
 //! ```compile_fail,E0308
-//! fn swapped(m: oxicrypt::Module, d: oxicrypt::MlKem1024KeySeedD, z: oxicrypt::MlKem1024KeySeedZ) {
-//!     let _ = m.ml_kem_1024_keygen(z, d);
+//! fn crossed(m: oxicrypt::Module, seed: &oxicrypt::MlKem768Seed) {
+//!     let _ = m.ml_kem_1024_expand_key(seed);
 //! }
 //! ```
 //!
 //! ```compile_fail,E0308
-//! fn crossed(m: oxicrypt::Module, seed: oxicrypt::MlDsa87KeySeed, z: oxicrypt::MlKem1024KeySeedZ) {
-//!     let _ = m.ml_kem_1024_keygen(seed, z);
+//! fn crossed(m: oxicrypt::Module, seed: &oxicrypt::MlDsa87Seed) {
+//!     let _ = m.ml_dsa_65_expand_key(seed);
 //! }
 //! ```
 //!
 //! The same calls, used as intended, compile:
 //!
 //! ```
-//! fn once(
+//! fn matched(
 //!     m: oxicrypt::Module,
-//!     d: oxicrypt::MlKem1024KeySeedD,
-//!     z: oxicrypt::MlKem1024KeySeedZ,
-//!     seed: oxicrypt::MlKem1024EncapsSeed,
-//!     dsa: oxicrypt::MlDsa87KeySeed,
+//!     kem: &oxicrypt::MlKem768Seed,
+//!     dsa: &oxicrypt::MlDsa87Seed,
+//!     rbg: &mut oxicrypt::Drbg,
 //! ) -> Result<(), oxicrypt::Error> {
-//!     let (ek, _dk) = m.ml_kem_1024_keygen(d, z)?;
-//!     let _ = m.ml_kem_1024_encapsulate(&ek, seed)?;
-//!     let _ = m.ml_dsa_87_keygen(dsa)?;
+//!     let (ek, _dk) = m.ml_kem_768_expand_key(kem)?;
+//!     let _ = m.ml_kem_768_encapsulate(&ek, rbg)?;
+//!     let (_ek, _dk, seed) = m.ml_kem_1024_keygen_with_seed(rbg)?;
+//!     let _ = m.ml_kem_1024_expand_key(&seed)?;
+//!     let _ = m.ml_dsa_87_expand_key(dsa)?;
+//!     let (_pk, _sk, seed) = m.ml_dsa_65_keygen_with_seed(rbg)?;
+//!     let _ = m.ml_dsa_65_expand_key(&seed)?;
 //!     Ok(())
 //! }
 //! ```
@@ -318,11 +312,29 @@
 //! - `oxi_drbg_strength_bits`
 //! - `oxi_drbg_free`
 //! - `oxi_entropy_on_demand_test`
-//! - `oxi_ml_dsa_87_keygen`
+//! - `oxi_ml_dsa_44_keygen_rbg`
+//! - `oxi_ml_dsa_44_expand_key`
+//! - `oxi_ml_dsa_44_sign`
+//! - `oxi_ml_dsa_44_verify`
+//! - `oxi_ml_dsa_65_keygen_rbg`
+//! - `oxi_ml_dsa_65_expand_key`
+//! - `oxi_ml_dsa_65_sign`
+//! - `oxi_ml_dsa_65_verify`
+//! - `oxi_ml_dsa_87_keygen_rbg`
+//! - `oxi_ml_dsa_87_expand_key`
 //! - `oxi_ml_dsa_87_sign`
 //! - `oxi_ml_dsa_87_verify`
-//! - `oxi_ml_kem_1024_keygen`
-//! - `oxi_ml_kem_1024_encapsulate`
+//! - `oxi_ml_kem_512_keygen_rbg`
+//! - `oxi_ml_kem_512_expand_key`
+//! - `oxi_ml_kem_512_encapsulate_rbg`
+//! - `oxi_ml_kem_512_decapsulate`
+//! - `oxi_ml_kem_768_keygen_rbg`
+//! - `oxi_ml_kem_768_expand_key`
+//! - `oxi_ml_kem_768_encapsulate_rbg`
+//! - `oxi_ml_kem_768_decapsulate`
+//! - `oxi_ml_kem_1024_keygen_rbg`
+//! - `oxi_ml_kem_1024_expand_key`
+//! - `oxi_ml_kem_1024_encapsulate_rbg`
 //! - `oxi_ml_kem_1024_decapsulate`
 //! <!-- wrapped:end -->
 //!
@@ -343,7 +355,7 @@
 //!
 //! | crate built against | accepts |
 //! |---|---|
-//! | ABI 3 | a library reporting ABI 3 that exports every function the crate calls; a library without `oxi_abi_version` only at the crate's own release version |
+//! | ABI 4 | a library reporting ABI 4 that exports every function the crate calls; a library without `oxi_abi_version` only at the crate's own release version |
 //!
 //! On Linux the library's `SONAME` is `liboxicrypt_ffi.so.<ABI>` and on macOS
 //! its install name is `@rpath/liboxicrypt_ffi.<ABI>.dylib`: the loader asks
@@ -368,12 +380,13 @@ pub use ops::{
     AesCbcKey, AesCcmKey, AesCmacKey, AesCtrKey, AesGcmKey, AesKwKey, Drbg, DrbgKind, GcmSealed,
 };
 pub use secret::{
-    HkdfPrk, MlDsa87KeySeed, MlDsa87SecretKey, MlKem1024DecapsulationKey, MlKem1024EncapsSeed,
-    MlKem1024KeySeedD, MlKem1024KeySeedZ, Okm, SharedSecret,
+    HkdfPrk, MlDsa44SecretKey, MlDsa44Seed, MlDsa65SecretKey, MlDsa65Seed, MlDsa87SecretKey,
+    MlDsa87Seed, MlKem512DecapsulationKey, MlKem512Seed, MlKem768DecapsulationKey, MlKem768Seed,
+    MlKem1024DecapsulationKey, MlKem1024Seed, Okm, SharedSecret,
 };
 
 /// The ABI number of the C interface this crate was built against.
-pub const OXI_ABI_VERSION: i32 = 3;
+pub const OXI_ABI_VERSION: i32 = 4;
 
 /// SHA-384 digest length.
 pub const SHA384_LEN: usize = 48;
@@ -394,7 +407,23 @@ pub const HMAC_DRBG_MAX_PROVIDED_LEN: usize = 768;
 /// The most bytes one [`Drbg::generate`] call returns (SP 800-90A Tables 2
 /// and 3).
 pub const HMAC_DRBG_MAX_REQUEST_LEN: usize = 65_536;
-/// ML-DSA-87 key-generation seed length.
+/// ML-DSA-44 key-generation seed `ξ` length.
+pub const ML_DSA_44_SEED_LEN: usize = 32;
+/// ML-DSA-44 public key length.
+pub const ML_DSA_44_PUBLIC_KEY_LEN: usize = 1_312;
+/// ML-DSA-44 secret key length.
+pub const ML_DSA_44_SECRET_KEY_LEN: usize = 2_560;
+/// ML-DSA-44 signature length.
+pub const ML_DSA_44_SIGNATURE_LEN: usize = 2_420;
+/// ML-DSA-65 key-generation seed `ξ` length.
+pub const ML_DSA_65_SEED_LEN: usize = 32;
+/// ML-DSA-65 public key length.
+pub const ML_DSA_65_PUBLIC_KEY_LEN: usize = 1_952;
+/// ML-DSA-65 secret key length.
+pub const ML_DSA_65_SECRET_KEY_LEN: usize = 4_032;
+/// ML-DSA-65 signature length.
+pub const ML_DSA_65_SIGNATURE_LEN: usize = 3_309;
+/// ML-DSA-87 key-generation seed `ξ` length.
 pub const ML_DSA_87_SEED_LEN: usize = 32;
 /// ML-DSA-87 public key length.
 pub const ML_DSA_87_PUBLIC_KEY_LEN: usize = 2_592;
@@ -402,23 +431,60 @@ pub const ML_DSA_87_PUBLIC_KEY_LEN: usize = 2_592;
 pub const ML_DSA_87_SECRET_KEY_LEN: usize = 4_896;
 /// ML-DSA-87 signature length.
 pub const ML_DSA_87_SIGNATURE_LEN: usize = 4_627;
-/// The longest ML-DSA-87 context string (FIPS 204 §5.2).
-pub const ML_DSA_87_MAX_CONTEXT_LEN: usize = 255;
-/// ML-KEM-1024 seed length, for each of `d`, `z` and `m`.
-pub const ML_KEM_1024_SEED_LEN: usize = 32;
+/// The longest ML-DSA context string, for every parameter set (FIPS 204
+/// §5.2).
+pub const ML_DSA_MAX_CONTEXT_LEN: usize = 255;
+/// [`ML_DSA_MAX_CONTEXT_LEN`], under the ML-DSA-87 name.
+pub const ML_DSA_87_MAX_CONTEXT_LEN: usize = ML_DSA_MAX_CONTEXT_LEN;
+/// ML-KEM-512 key-generation seed `d ‖ z` length.
+pub const ML_KEM_512_SEED_LEN: usize = 64;
+/// ML-KEM-512 encapsulation key length.
+pub const ML_KEM_512_ENCAPSULATION_KEY_LEN: usize = 800;
+/// ML-KEM-512 decapsulation key length.
+pub const ML_KEM_512_DECAPSULATION_KEY_LEN: usize = 1_632;
+/// ML-KEM-512 ciphertext length.
+pub const ML_KEM_512_CIPHERTEXT_LEN: usize = 768;
+/// ML-KEM-768 key-generation seed `d ‖ z` length.
+pub const ML_KEM_768_SEED_LEN: usize = 64;
+/// ML-KEM-768 encapsulation key length.
+pub const ML_KEM_768_ENCAPSULATION_KEY_LEN: usize = 1_184;
+/// ML-KEM-768 decapsulation key length.
+pub const ML_KEM_768_DECAPSULATION_KEY_LEN: usize = 2_400;
+/// ML-KEM-768 ciphertext length.
+pub const ML_KEM_768_CIPHERTEXT_LEN: usize = 1_088;
+/// ML-KEM-1024 key-generation seed `d ‖ z` length.
+pub const ML_KEM_1024_SEED_LEN: usize = 64;
 /// ML-KEM-1024 encapsulation key length.
 pub const ML_KEM_1024_ENCAPSULATION_KEY_LEN: usize = 1_568;
 /// ML-KEM-1024 decapsulation key length.
 pub const ML_KEM_1024_DECAPSULATION_KEY_LEN: usize = 3_168;
 /// ML-KEM-1024 ciphertext length.
 pub const ML_KEM_1024_CIPHERTEXT_LEN: usize = 1_568;
-/// ML-KEM-1024 shared secret length.
-pub const ML_KEM_1024_SHARED_SECRET_LEN: usize = 32;
+/// ML-KEM shared secret length, the same for every parameter set.
+pub const ML_KEM_SHARED_SECRET_LEN: usize = 32;
+/// [`ML_KEM_SHARED_SECRET_LEN`], under the ML-KEM-1024 name.
+pub const ML_KEM_1024_SHARED_SECRET_LEN: usize = ML_KEM_SHARED_SECRET_LEN;
 
+/// An ML-DSA-44 public key.
+pub type MlDsa44PublicKey = [u8; ML_DSA_44_PUBLIC_KEY_LEN];
+/// An ML-DSA-44 signature.
+pub type MlDsa44Signature = [u8; ML_DSA_44_SIGNATURE_LEN];
+/// An ML-DSA-65 public key.
+pub type MlDsa65PublicKey = [u8; ML_DSA_65_PUBLIC_KEY_LEN];
+/// An ML-DSA-65 signature.
+pub type MlDsa65Signature = [u8; ML_DSA_65_SIGNATURE_LEN];
 /// An ML-DSA-87 public key.
 pub type MlDsa87PublicKey = [u8; ML_DSA_87_PUBLIC_KEY_LEN];
 /// An ML-DSA-87 signature.
 pub type MlDsa87Signature = [u8; ML_DSA_87_SIGNATURE_LEN];
+/// An ML-KEM-512 encapsulation key.
+pub type MlKem512EncapsulationKey = [u8; ML_KEM_512_ENCAPSULATION_KEY_LEN];
+/// An ML-KEM-512 ciphertext.
+pub type MlKem512Ciphertext = [u8; ML_KEM_512_CIPHERTEXT_LEN];
+/// An ML-KEM-768 encapsulation key.
+pub type MlKem768EncapsulationKey = [u8; ML_KEM_768_ENCAPSULATION_KEY_LEN];
+/// An ML-KEM-768 ciphertext.
+pub type MlKem768Ciphertext = [u8; ML_KEM_768_CIPHERTEXT_LEN];
 /// An ML-KEM-1024 encapsulation key.
 pub type MlKem1024EncapsulationKey = [u8; ML_KEM_1024_ENCAPSULATION_KEY_LEN];
 /// An ML-KEM-1024 ciphertext.

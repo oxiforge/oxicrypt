@@ -14,7 +14,8 @@ use crate::module::{Fingerprint, IntegrityStatus, Profile};
 pub enum Site {
     /// An AEAD decryption (`oxi_aes_gcm_open`, `oxi_aes_ccm_open`).
     AeadDecrypt,
-    /// A signature verification (`oxi_ml_dsa_87_verify`).
+    /// A signature verification (`oxi_ml_dsa_44_verify`, `oxi_ml_dsa_65_verify`,
+    /// `oxi_ml_dsa_87_verify`).
     SignatureVerify,
     /// Any other function.
     Other,
@@ -48,9 +49,6 @@ pub enum Error {
     /// Code 8: a DRBG handle was used before it was instantiated.
     Uninstantiated,
     /// Code 9: a DRBG passed its reseed interval and cannot reseed itself.
-    /// The library returns no code 9 at ABI 3, because every DRBG it
-    /// exposes is seeded by the module and reseeds itself; the variant is
-    /// kept so the code keeps its meaning.
     ReseedRequired,
     /// Code 10: a required pointer was null.
     NullPointer,
@@ -185,7 +183,6 @@ impl Error {
     }
 }
 
-/// `Ok(())` for status 0, else the mapped error.
 pub(crate) fn status(code: core::ffi::c_int, site: Site) -> Result<(), Error> {
     if code == 0 {
         Ok(())

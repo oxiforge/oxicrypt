@@ -15,8 +15,7 @@
 
 #[cfg(any(oxicrypt_pinned, oxicrypt_unpinned))]
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    use oxicrypt::{DrbgKind, MlDsa87KeySeed, MlKem1024EncapsSeed, Module, Profile};
-    use oxicrypt::{MlKem1024KeySeedD, MlKem1024KeySeedZ};
+    use oxicrypt::{DrbgKind, Module, Profile};
 
     fn hex(bytes: &[u8]) -> String {
         use std::fmt::Write;
@@ -102,30 +101,28 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     drbg.instantiate(b"quickstart")?;
     drbg.reseed(&[])?;
     println!("hmac_drbg-sha256: {} bits", drbg.strength_bits()?);
-    let mut seed = [0u8; 32];
-    drbg.generate(&[], &mut seed)?;
 
-    let (pk, sk) = module.ml_dsa_87_keygen(MlDsa87KeySeed::from_bytes(&seed))?;
+    let (pk, sk) = module.ml_dsa_87_keygen(&mut drbg)?;
     let sig = module.ml_dsa_87_sign(&sk, b"message", b"")?;
     module.ml_dsa_87_verify(&pk, b"message", b"", &sig)?;
     println!("ml-dsa-87: signature verified");
     let wrong = module.ml_dsa_87_verify(&pk, b"other message", b"", &sig);
     println!("ml-dsa-87 other message: {:?}", wrong.err());
+    let (pk, _, seed) = module.ml_dsa_87_keygen_with_seed(&mut drbg)?;
+    let (again, _) = module.ml_dsa_87_expand_key(&seed)?;
+    println!("ml-dsa-87: expand_key reproduces the key: {}", again == pk);
 
-    let (mut d, mut z, mut m) = ([0u8; 32], [0u8; 32], [0u8; 32]);
-    drbg.generate(&[], &mut d)?;
-    drbg.generate(&[], &mut z)?;
-    drbg.generate(&[], &mut m)?;
-    let (ek, dk) = module.ml_kem_1024_keygen(
-        MlKem1024KeySeedD::from_bytes(&d),
-        MlKem1024KeySeedZ::from_bytes(&z),
-    )?;
-    let (sent, ct) = module.ml_kem_1024_encapsulate(&ek, MlKem1024EncapsSeed::from_bytes(&m))?;
+    let (ek, dk) = module.ml_kem_1024_keygen(&mut drbg)?;
+    let (sent, ct) = module.ml_kem_1024_encapsulate(&ek, &mut drbg)?;
     let received = module.ml_kem_1024_decapsulate(&dk, &ct)?;
     println!(
         "ml-kem-1024: shared secrets agree: {}",
         sent.as_bytes() == received.as_bytes()
     );
+    let mut weak = module.drbg(DrbgKind::CtrAes128)?;
+    weak.instantiate(b"quickstart")?;
+    let refused = module.ml_kem_1024_keygen(&mut weak);
+    println!("ml-kem-1024 with ctr_drbg-aes128: {:?}", refused.err());
     Ok(())
 }
 

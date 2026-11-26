@@ -1,27 +1,31 @@
 //! Types that hold secret bytes, and the primitive that zeroes them.
 //!
 //! Each type zeroes its bytes when dropped and prints only its name from
-//! `Debug`. A seed is consumed by the call that uses it, and each seed role
-//! has its own type. None implements `Clone`, `Copy`, `PartialEq`, `Eq`, `Hash`,
-//! `Display`, `Deref` or `AsRef<[u8]>`: comparison is the library's. Bytes
-//! come out only through `as_bytes` and go in only through `from_bytes`.
+//! `Debug`. Each parameter set has its own seed and key types, so a value of
+//! one set cannot reach another set's call. None implements `Clone`, `Copy`,
+//! `PartialEq`, `Eq`, `Hash`, `Display`, `Deref` or `AsRef<[u8]>`: comparison
+//! is the library's. Bytes come out only through `as_bytes` and go in only
+//! through `from_bytes`.
 //!
 //! The library writes each secret directly into the storage that will zero
 //! it: the owner is constructed zeroed before the call and the library is
 //! handed a pointer into it. A failed call drops the owner, which zeroes it.
 //!
 //! `Drop` zeroes the value's final resting place. Moving a value can leave an
-//! unzeroed copy in a dead stack frame or a register; the two large keys and
-//! [`Okm`] are boxed so that a move carries a pointer, and for the 32- and
-//! 48-byte types that is a stated limitation. Copies the application makes
-//! are the application's.
+//! unzeroed copy in a dead stack frame or a register; the secret and
+//! decapsulation keys and [`Okm`] are boxed so that a move carries a pointer,
+//! and for the 32-, 48- and 64-byte types that is a stated limitation. Copies
+//! the application makes are the application's.
 
 use core::fmt;
 use core::sync::atomic::{Ordering, compiler_fence};
 
 use crate::{
-    HKDF_SHA384_PRK_LEN, ML_DSA_87_SECRET_KEY_LEN, ML_DSA_87_SEED_LEN,
-    ML_KEM_1024_DECAPSULATION_KEY_LEN, ML_KEM_1024_SEED_LEN, ML_KEM_1024_SHARED_SECRET_LEN,
+    HKDF_SHA384_PRK_LEN, ML_DSA_44_SECRET_KEY_LEN, ML_DSA_44_SEED_LEN, ML_DSA_65_SECRET_KEY_LEN,
+    ML_DSA_65_SEED_LEN, ML_DSA_87_SECRET_KEY_LEN, ML_DSA_87_SEED_LEN,
+    ML_KEM_512_DECAPSULATION_KEY_LEN, ML_KEM_512_SEED_LEN, ML_KEM_768_DECAPSULATION_KEY_LEN,
+    ML_KEM_768_SEED_LEN, ML_KEM_1024_DECAPSULATION_KEY_LEN, ML_KEM_1024_SEED_LEN,
+    ML_KEM_SHARED_SECRET_LEN,
 };
 
 /// Writes zero to every byte of `buf` with volatile stores, then a compiler
@@ -129,45 +133,102 @@ stack_secret!(
 );
 
 stack_secret!(
-    /// A 32-byte ML-KEM-1024 shared secret.
+    /// A 32-byte ML-KEM shared secret, the same length for every parameter
+    /// set.
     SharedSecret,
-    ML_KEM_1024_SHARED_SECRET_LEN
+    ML_KEM_SHARED_SECRET_LEN
 );
 
 stack_secret!(
-    /// The 32-byte seed `ξ` of ML-DSA-87 key generation (FIPS 204 §6.1).
-    /// Consumed by [`Module::ml_dsa_87_keygen`](crate::Module::ml_dsa_87_keygen).
-    MlDsa87KeySeed,
+    /// The 32-byte seed `ξ` of ML-DSA-44 key generation (FIPS 204 §6.1),
+    /// from [`Module::ml_dsa_44_keygen_with_seed`](crate::Module::ml_dsa_44_keygen_with_seed)
+    /// and read by [`Module::ml_dsa_44_expand_key`](crate::Module::ml_dsa_44_expand_key).
+    /// It computes the secret key and needs the same protection (FIPS 204
+    /// §3.6.3).
+    MlDsa44Seed,
+    ML_DSA_44_SEED_LEN
+);
+
+stack_secret!(
+    /// The 32-byte seed `ξ` of ML-DSA-65 key generation (FIPS 204 §6.1),
+    /// from [`Module::ml_dsa_65_keygen_with_seed`](crate::Module::ml_dsa_65_keygen_with_seed)
+    /// and read by [`Module::ml_dsa_65_expand_key`](crate::Module::ml_dsa_65_expand_key).
+    /// It computes the secret key and needs the same protection (FIPS 204
+    /// §3.6.3).
+    MlDsa65Seed,
+    ML_DSA_65_SEED_LEN
+);
+
+stack_secret!(
+    /// The 32-byte seed `ξ` of ML-DSA-87 key generation (FIPS 204 §6.1),
+    /// from [`Module::ml_dsa_87_keygen_with_seed`](crate::Module::ml_dsa_87_keygen_with_seed)
+    /// and read by [`Module::ml_dsa_87_expand_key`](crate::Module::ml_dsa_87_expand_key).
+    /// It computes the secret key and needs the same protection (FIPS 204
+    /// §3.6.3).
+    MlDsa87Seed,
     ML_DSA_87_SEED_LEN
 );
 
 stack_secret!(
-    /// The 32-byte seed `d` of ML-KEM-1024 key generation (FIPS 203 §6.1).
-    /// Consumed by [`Module::ml_kem_1024_keygen`](crate::Module::ml_kem_1024_keygen).
-    MlKem1024KeySeedD,
-    ML_KEM_1024_SEED_LEN
+    /// The 64-byte seed `d ‖ z` of ML-KEM-512 key generation (FIPS 203
+    /// §6.1): the K-PKE seed `d` in the first 32 bytes, the
+    /// implicit-rejection seed `z` in the last 32. From
+    /// [`Module::ml_kem_512_keygen_with_seed`](crate::Module::ml_kem_512_keygen_with_seed)
+    /// and read by [`Module::ml_kem_512_expand_key`](crate::Module::ml_kem_512_expand_key).
+    MlKem512Seed,
+    ML_KEM_512_SEED_LEN
 );
 
 stack_secret!(
-    /// The 32-byte implicit-rejection seed `z` of ML-KEM-1024 key generation
-    /// (FIPS 203 §6.1). Consumed by
-    /// [`Module::ml_kem_1024_keygen`](crate::Module::ml_kem_1024_keygen).
-    MlKem1024KeySeedZ,
-    ML_KEM_1024_SEED_LEN
+    /// The 64-byte seed `d ‖ z` of ML-KEM-768 key generation (FIPS 203
+    /// §6.1): the K-PKE seed `d` in the first 32 bytes, the
+    /// implicit-rejection seed `z` in the last 32. From
+    /// [`Module::ml_kem_768_keygen_with_seed`](crate::Module::ml_kem_768_keygen_with_seed)
+    /// and read by [`Module::ml_kem_768_expand_key`](crate::Module::ml_kem_768_expand_key).
+    MlKem768Seed,
+    ML_KEM_768_SEED_LEN
 );
 
 stack_secret!(
-    /// The 32-byte randomness `m` of one ML-KEM-1024 encapsulation
-    /// (FIPS 203 §6.2), which must be fresh for each. Consumed by
-    /// [`Module::ml_kem_1024_encapsulate`](crate::Module::ml_kem_1024_encapsulate).
-    MlKem1024EncapsSeed,
+    /// The 64-byte seed `d ‖ z` of ML-KEM-1024 key generation (FIPS 203
+    /// §6.1): the K-PKE seed `d` in the first 32 bytes, the
+    /// implicit-rejection seed `z` in the last 32. From
+    /// [`Module::ml_kem_1024_keygen_with_seed`](crate::Module::ml_kem_1024_keygen_with_seed)
+    /// and read by [`Module::ml_kem_1024_expand_key`](crate::Module::ml_kem_1024_expand_key).
+    MlKem1024Seed,
     ML_KEM_1024_SEED_LEN
+);
+
+boxed_secret!(
+    /// An ML-DSA-44 secret key, 2,560 bytes on the heap.
+    MlDsa44SecretKey,
+    ML_DSA_44_SECRET_KEY_LEN
+);
+
+boxed_secret!(
+    /// An ML-DSA-65 secret key, 4,032 bytes on the heap.
+    MlDsa65SecretKey,
+    ML_DSA_65_SECRET_KEY_LEN
 );
 
 boxed_secret!(
     /// An ML-DSA-87 secret key, 4,896 bytes on the heap.
     MlDsa87SecretKey,
     ML_DSA_87_SECRET_KEY_LEN
+);
+
+boxed_secret!(
+    /// An ML-KEM-512 decapsulation key, 1,632 bytes on the heap. Borrowed,
+    /// never cloned, to decapsulate many ciphertexts.
+    MlKem512DecapsulationKey,
+    ML_KEM_512_DECAPSULATION_KEY_LEN
+);
+
+boxed_secret!(
+    /// An ML-KEM-768 decapsulation key, 2,400 bytes on the heap. Borrowed,
+    /// never cloned, to decapsulate many ciphertexts.
+    MlKem768DecapsulationKey,
+    ML_KEM_768_DECAPSULATION_KEY_LEN
 );
 
 boxed_secret!(

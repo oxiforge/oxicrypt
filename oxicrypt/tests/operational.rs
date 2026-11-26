@@ -11,9 +11,10 @@ mod common;
 
 use common::{acvp, array, init};
 use oxicrypt::{
-    Drbg, DrbgKind, Error, HKDF_SHA384_MAX_OKM_LEN, IntegrityStatus, MlDsa87KeySeed,
-    MlDsa87SecretKey, MlKem1024DecapsulationKey, MlKem1024EncapsSeed, MlKem1024KeySeedD,
-    MlKem1024KeySeedZ, Module, Profile,
+    Drbg, DrbgKind, Error, HKDF_SHA384_MAX_OKM_LEN, IntegrityStatus, MlDsa44SecretKey, MlDsa44Seed,
+    MlDsa65SecretKey, MlDsa65Seed, MlDsa87SecretKey, MlDsa87Seed, MlKem512DecapsulationKey,
+    MlKem512Seed, MlKem768DecapsulationKey, MlKem768Seed, MlKem1024DecapsulationKey, MlKem1024Seed,
+    Module, Profile,
 };
 
 fn module() -> Module {
@@ -144,7 +145,6 @@ const GCM256_CT: &str = "522dc1f099567d07f47f37a32a84427d643a8cdcbfe5c0c97598a2b
                          8cb08e48590dbb3da7b08b1056828838c5f61e6393ba7a0abcc9f662898015ad";
 const GCM256_TAG: &str = "b094dac5d93471bdec1a502270e3cc6c";
 
-/// Key, IV, plaintext, ciphertext and tag.
 type GcmCase = ([u8; 32], [u8; 12], Vec<u8>, Vec<u8>, [u8; 16]);
 
 type CcmFault<'a> = (&'a str, &'a [u8], &'a [u8], &'a [u8]);
@@ -159,7 +159,6 @@ fn gcm_inputs() -> GcmCase {
     )
 }
 
-/// A DRBG the CNSA 2.0 profile allows, instantiated.
 fn cnsa2_drbg(m: Module) -> Drbg {
     let mut drbg = m.drbg(DrbgKind::HmacSha512).unwrap();
     drbg.instantiate(b"gcm").unwrap();
@@ -946,8 +945,8 @@ const KEYGEN: (&str, &str) = ("ML-DSA-keyGen-FIPS204", "kat-slice.json");
 const SIGGEN: (&str, &str) = ("ML-DSA-sigGen-FIPS204", "kat-slice.json");
 
 /// ACVP ML-DSA-keyGen-FIPS204, ML-DSA-87, tgId 3, tcId 51.
-fn dsa_keygen_vector() -> (MlDsa87KeySeed, Vec<u8>, Vec<u8>) {
-    let seed = MlDsa87KeySeed::from_bytes(&array(&acvp(KEYGEN.0, KEYGEN.1, 51, "seed")));
+fn dsa_keygen_vector() -> (MlDsa87Seed, Vec<u8>, Vec<u8>) {
+    let seed = MlDsa87Seed::from_bytes(&array(&acvp(KEYGEN.0, KEYGEN.1, 51, "seed")));
     (
         seed,
         acvp(KEYGEN.0, KEYGEN.1, 51, "pk"),
@@ -956,12 +955,49 @@ fn dsa_keygen_vector() -> (MlDsa87KeySeed, Vec<u8>, Vec<u8>) {
 }
 
 #[test]
-fn ml_dsa_87_keygen_known_answer() {
+fn ml_dsa_87_expand_key_known_answer() {
     let m = module();
     let (seed, expected_public, expected_secret) = dsa_keygen_vector();
-    let (public, secret) = m.ml_dsa_87_keygen(seed).unwrap();
+    let (public, secret) = m.ml_dsa_87_expand_key(&seed).unwrap();
     assert_eq!(public.as_slice(), expected_public.as_slice());
     assert_eq!(secret.as_bytes().as_slice(), expected_secret.as_slice());
+}
+
+#[test]
+fn ml_dsa_87_keygen_round_trips() {
+    let m = module();
+    let mut rbg = cnsa2_drbg(m);
+    let (pk, sk) = m.ml_dsa_87_keygen(&mut rbg).unwrap();
+    let sig = m.ml_dsa_87_sign(&sk, b"message", b"ctx").unwrap();
+    assert_eq!(m.ml_dsa_87_verify(&pk, b"message", b"ctx", &sig), Ok(()));
+
+    let (other, _) = m.ml_dsa_87_keygen(&mut rbg).unwrap();
+    assert_ne!(other, pk, "a second key generation draws a fresh seed");
+    assert_eq!(
+        m.ml_dsa_87_verify(&other, b"message", b"ctx", &sig),
+        Err(Error::SignatureInvalid)
+    );
+}
+
+#[test]
+fn ml_dsa_87_keygen_with_seed_is_reproduced_by_expand_key() {
+    let m = module();
+    let mut rbg = cnsa2_drbg(m);
+    let (pk, sk, seed) = m.ml_dsa_87_keygen_with_seed(&mut rbg).unwrap();
+    assert_ne!(seed.as_bytes(), &[0; 32]);
+    let expanded = m.ml_dsa_87_expand_key(&seed).unwrap();
+    assert_eq!(expanded.0, pk);
+    assert_eq!(expanded.1.as_bytes(), sk.as_bytes());
+}
+
+#[test]
+fn ml_dsa_87_keygen_refuses_an_uninstantiated_drbg() {
+    let m = module();
+    let mut rbg = m.drbg(DrbgKind::HmacSha384).unwrap();
+    assert_eq!(
+        m.ml_dsa_87_keygen(&mut rbg).unwrap_err(),
+        Error::Uninstantiated
+    );
 }
 
 #[test]
@@ -981,7 +1017,7 @@ fn ml_dsa_87_verify_accepts_and_refuses() {
     let m = module();
     let (seed, pk, _) = dsa_keygen_vector();
     let pk: [u8; 2592] = array(&pk);
-    let (_, sk) = m.ml_dsa_87_keygen(seed).unwrap();
+    let (_, sk) = m.ml_dsa_87_expand_key(&seed).unwrap();
     let sig = m.ml_dsa_87_sign(&sk, b"message", b"ctx").unwrap();
     assert_eq!(m.ml_dsa_87_verify(&pk, b"message", b"ctx", &sig), Ok(()));
 
@@ -1015,7 +1051,7 @@ fn ml_dsa_87_verify_accepts_and_refuses() {
 fn ml_dsa_87_context_bound_is_the_librarys() {
     let m = module();
     let (seed, _, _) = dsa_keygen_vector();
-    let (_, sk) = m.ml_dsa_87_keygen(seed).unwrap();
+    let (_, sk) = m.ml_dsa_87_expand_key(&seed).unwrap();
     assert!(m.ml_dsa_87_sign(&sk, b"m", &[0; 255]).is_ok());
     assert_eq!(
         m.ml_dsa_87_sign(&sk, b"m", &[0; 256]).unwrap_err(),
@@ -1030,12 +1066,15 @@ const KEM_ENCAP: (&str, &str) = ("ML-KEM-encapDecap-FIPS203", "kat-slice.json");
 const KEM_DECAP: (&str, &str) = ("ML-KEM-encapDecap-FIPS203", "cast-slice.json");
 
 #[test]
-fn ml_kem_1024_keygen_known_answer() {
+fn ml_kem_1024_expand_key_known_answer() {
     let m = module();
     // ACVP ML-KEM-keyGen-FIPS203, ML-KEM-1024, tgId 3, tcId 51.
-    let d = MlKem1024KeySeedD::from_bytes(&array(&acvp(KEM_KEYGEN.0, KEM_KEYGEN.1, 51, "d")));
-    let z = MlKem1024KeySeedZ::from_bytes(&array(&acvp(KEM_KEYGEN.0, KEM_KEYGEN.1, 51, "z")));
-    let (ek, dk) = m.ml_kem_1024_keygen(d, z).unwrap();
+    let mut seed = [0u8; 64];
+    seed[..32].copy_from_slice(&acvp(KEM_KEYGEN.0, KEM_KEYGEN.1, 51, "d"));
+    seed[32..].copy_from_slice(&acvp(KEM_KEYGEN.0, KEM_KEYGEN.1, 51, "z"));
+    let (ek, dk) = m
+        .ml_kem_1024_expand_key(&MlKem1024Seed::from_bytes(&seed))
+        .unwrap();
     assert_eq!(ek.as_slice(), acvp(KEM_KEYGEN.0, KEM_KEYGEN.1, 51, "ek"));
     assert_eq!(
         dk.as_bytes().as_slice(),
@@ -1044,16 +1083,81 @@ fn ml_kem_1024_keygen_known_answer() {
 }
 
 #[test]
-fn ml_kem_1024_encapsulate_known_answer() {
+fn ml_kem_1024_encapsulates_to_a_published_key_pair() {
     let m = module();
-    // ACVP ML-KEM-encapDecap-FIPS203, ML-KEM-1024 encapsulation, tgId 3, tcId 51.
+    let mut rbg = cnsa2_drbg(m);
+    // ACVP ML-KEM-encapDecap-FIPS203, ML-KEM-1024 encapsulation, tgId 3,
+    // tcId 51; `m` is drawn by the module, so the vector gives the pair and
+    // its decapsulation is the expected secret.
     let ek: [u8; 1568] = array(&acvp(KEM_ENCAP.0, KEM_ENCAP.1, 51, "ek"));
-    let msg = MlKem1024EncapsSeed::from_bytes(&array(&acvp(KEM_ENCAP.0, KEM_ENCAP.1, 51, "m")));
-    let (ss, ct) = m.ml_kem_1024_encapsulate(&ek, msg).unwrap();
-    assert_eq!(ct.as_slice(), acvp(KEM_ENCAP.0, KEM_ENCAP.1, 51, "c"));
+    let dk =
+        MlKem1024DecapsulationKey::from_bytes(&array(&acvp(KEM_ENCAP.0, KEM_ENCAP.1, 51, "dk")));
+    let (ss, ct) = m.ml_kem_1024_encapsulate(&ek, &mut rbg).unwrap();
+    let received = m.ml_kem_1024_decapsulate(&dk, &ct).unwrap();
+    assert_eq!(received.as_bytes(), ss.as_bytes());
+
+    let (again, other) = m.ml_kem_1024_encapsulate(&ek, &mut rbg).unwrap();
+    assert_ne!(ct, other, "each encapsulation draws a fresh m");
+    assert_ne!(ss.as_bytes(), again.as_bytes());
+}
+
+#[test]
+fn ml_kem_1024_decapsulate_refuses_a_key_failing_the_hash_check() {
+    let m = module();
+    let mut rbg = cnsa2_drbg(m);
+    let (ek, dk) = m.ml_kem_1024_keygen(&mut rbg).unwrap();
+    let (_, ct) = m.ml_kem_1024_encapsulate(&ek, &mut rbg).unwrap();
+    // FIPS 203 §7.3: dk = dk_PKE ‖ ek ‖ H(ek) ‖ z, so H(ek) starts 64 bytes
+    // from the end.
+    let mut bytes = *dk.as_bytes();
+    bytes[3168 - 64] ^= 0x01;
+    let broken = MlKem1024DecapsulationKey::from_bytes(&bytes);
     assert_eq!(
-        ss.as_bytes().as_slice(),
-        acvp(KEM_ENCAP.0, KEM_ENCAP.1, 51, "k")
+        m.ml_kem_1024_decapsulate(&broken, &ct).unwrap_err(),
+        Error::InvalidInput
+    );
+    assert!(
+        m.ml_kem_1024_decapsulate(&dk, &ct).is_ok(),
+        "positive control"
+    );
+}
+
+#[test]
+fn ml_kem_1024_keygen_round_trips() {
+    let m = module();
+    let mut rbg = cnsa2_drbg(m);
+    let (ek, dk) = m.ml_kem_1024_keygen(&mut rbg).unwrap();
+    let (sent, ct) = m.ml_kem_1024_encapsulate(&ek, &mut rbg).unwrap();
+    let received = m.ml_kem_1024_decapsulate(&dk, &ct).unwrap();
+    assert_eq!(received.as_bytes(), sent.as_bytes());
+
+    let (_, other) = m.ml_kem_1024_keygen(&mut rbg).unwrap();
+    let rejected = m.ml_kem_1024_decapsulate(&other, &ct).unwrap();
+    assert_ne!(rejected.as_bytes(), sent.as_bytes());
+}
+
+#[test]
+fn ml_kem_1024_keygen_with_seed_is_reproduced_by_expand_key() {
+    let m = module();
+    let mut rbg = cnsa2_drbg(m);
+    let (ek, dk, seed) = m.ml_kem_1024_keygen_with_seed(&mut rbg).unwrap();
+    assert_ne!(seed.as_bytes(), &[0; 64]);
+    let expanded = m.ml_kem_1024_expand_key(&seed).unwrap();
+    assert_eq!(expanded.0, ek);
+    assert_eq!(expanded.1.as_bytes(), dk.as_bytes());
+}
+
+#[test]
+fn ml_kem_1024_encapsulate_refuses_a_key_failing_the_modulus_check() {
+    let m = module();
+    let mut rbg = cnsa2_drbg(m);
+    // FIPS 203 §7.2: every 12-bit coefficient of ek must be below q = 3329;
+    // 0xFF bytes encode 4095.
+    let mut ek: [u8; 1568] = array(&acvp(KEM_ENCAP.0, KEM_ENCAP.1, 51, "ek"));
+    ek[..3].fill(0xFF);
+    assert_eq!(
+        m.ml_kem_1024_encapsulate(&ek, &mut rbg).unwrap_err(),
+        Error::InvalidInput
     );
 }
 
@@ -1078,4 +1182,76 @@ fn ml_kem_1024_decapsulate_known_answers() {
             "tcId {tc}"
         );
     }
+}
+
+// ----- the parameter sets CNSA 2.0 does not admit -----
+
+#[test]
+fn ml_dsa_44_and_65_are_restricted_under_cnsa2() {
+    let m = module();
+    let mut rbg = cnsa2_drbg(m);
+    let restricted = Err(Error::AlgorithmRestricted);
+
+    assert_eq!(m.ml_dsa_44_keygen(&mut rbg).map(drop), restricted);
+    assert_eq!(m.ml_dsa_44_keygen_with_seed(&mut rbg).map(drop), restricted);
+    let seed = MlDsa44Seed::from_bytes(&[1; 32]);
+    assert_eq!(m.ml_dsa_44_expand_key(&seed).map(drop), restricted);
+    let sk = MlDsa44SecretKey::from_bytes(&[0; 2560]);
+    assert_eq!(m.ml_dsa_44_sign(&sk, b"m", b"").map(drop), restricted);
+    assert_eq!(
+        m.ml_dsa_44_verify(&[0; 1312], b"m", b"", &[0; 2420]),
+        restricted
+    );
+
+    assert_eq!(m.ml_dsa_65_keygen(&mut rbg).map(drop), restricted);
+    assert_eq!(m.ml_dsa_65_keygen_with_seed(&mut rbg).map(drop), restricted);
+    let seed = MlDsa65Seed::from_bytes(&[1; 32]);
+    assert_eq!(m.ml_dsa_65_expand_key(&seed).map(drop), restricted);
+    let sk = MlDsa65SecretKey::from_bytes(&[0; 4032]);
+    assert_eq!(m.ml_dsa_65_sign(&sk, b"m", b"").map(drop), restricted);
+    assert_eq!(
+        m.ml_dsa_65_verify(&[0; 1952], b"m", b"", &[0; 3309]),
+        restricted
+    );
+}
+
+#[test]
+fn ml_kem_512_and_768_are_restricted_under_cnsa2() {
+    let m = module();
+    let mut rbg = cnsa2_drbg(m);
+    let restricted = Err(Error::AlgorithmRestricted);
+
+    assert_eq!(m.ml_kem_512_keygen(&mut rbg).map(drop), restricted);
+    assert_eq!(
+        m.ml_kem_512_keygen_with_seed(&mut rbg).map(drop),
+        restricted
+    );
+    let seed = MlKem512Seed::from_bytes(&[1; 64]);
+    assert_eq!(m.ml_kem_512_expand_key(&seed).map(drop), restricted);
+    assert_eq!(
+        m.ml_kem_512_encapsulate(&[0; 800], &mut rbg).map(drop),
+        restricted
+    );
+    let dk = MlKem512DecapsulationKey::from_bytes(&[0; 1632]);
+    assert_eq!(
+        m.ml_kem_512_decapsulate(&dk, &[0; 768]).map(drop),
+        restricted
+    );
+
+    assert_eq!(m.ml_kem_768_keygen(&mut rbg).map(drop), restricted);
+    assert_eq!(
+        m.ml_kem_768_keygen_with_seed(&mut rbg).map(drop),
+        restricted
+    );
+    let seed = MlKem768Seed::from_bytes(&[1; 64]);
+    assert_eq!(m.ml_kem_768_expand_key(&seed).map(drop), restricted);
+    assert_eq!(
+        m.ml_kem_768_encapsulate(&[0; 1184], &mut rbg).map(drop),
+        restricted
+    );
+    let dk = MlKem768DecapsulationKey::from_bytes(&[0; 2400]);
+    assert_eq!(
+        m.ml_kem_768_decapsulate(&dk, &[0; 1088]).map(drop),
+        restricted
+    );
 }
