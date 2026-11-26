@@ -37,10 +37,10 @@ can call a C function. Nothing to compile, nothing to sign.
 
 | Platform | Bundle | Library inside |
 |----------|--------|----------------|
-| Linux x86_64 | `oxicrypt-ffi-<version>-linux-x86_64.tar.gz` | `liboxicrypt_ffi.so.3` |
-| Linux aarch64 | `oxicrypt-ffi-<version>-linux-aarch64.tar.gz` | `liboxicrypt_ffi.so.3` |
-| macOS Apple silicon | `oxicrypt-ffi-<version>-macos-aarch64.tar.gz` | `liboxicrypt_ffi.3.dylib` |
-| macOS Intel | `oxicrypt-ffi-<version>-macos-x86_64.tar.gz` | `liboxicrypt_ffi.3.dylib` |
+| Linux x86_64 | `oxicrypt-ffi-<version>-linux-x86_64.tar.gz` | `liboxicrypt_ffi.so.4` |
+| Linux aarch64 | `oxicrypt-ffi-<version>-linux-aarch64.tar.gz` | `liboxicrypt_ffi.so.4` |
+| macOS Apple silicon | `oxicrypt-ffi-<version>-macos-aarch64.tar.gz` | `liboxicrypt_ffi.4.dylib` |
+| macOS Intel | `oxicrypt-ffi-<version>-macos-x86_64.tar.gz` | `liboxicrypt_ffi.4.dylib` |
 | Windows x86_64 | `oxicrypt-ffi-<version>-windows-x86_64.tar.gz` | `oxicrypt_ffi.dll` (+ `oxicrypt_ffi.dll.lib` import library, `oxicrypt_ffi.lib` static) |
 | Android arm64-v8a | `oxicrypt-ffi-<version>-android-aarch64.tar.gz` | `liboxicrypt_ffi.so` |
 | Android x86_64 | `oxicrypt-ffi-<version>-android-x86_64.tar.gz` | `liboxicrypt_ffi.so` |
@@ -61,7 +61,7 @@ SHA-256 of `"abc"` from Python, with nothing installed but Python:
 
 ```python
 import ctypes
-lib = ctypes.CDLL("./liboxicrypt_ffi.so.3")   # macOS: liboxicrypt_ffi.3.dylib · Windows: oxicrypt_ffi.dll
+lib = ctypes.CDLL("./liboxicrypt_ffi.so.4")   # macOS: liboxicrypt_ffi.4.dylib · Windows: oxicrypt_ffi.dll
 lib.oxi_sha256.argtypes = [ctypes.c_char_p, ctypes.c_size_t, ctypes.POINTER(ctypes.c_uint8)]
 assert lib.oxi_init(0) == 0                   # power-up self-tests and the integrity test run here
 out = (ctypes.c_uint8 * 32)()
@@ -95,8 +95,9 @@ cc -o sha256_demo sha256_demo.c -I"$DIR" -L"$DIR" -loxicrypt_ffi -Wl,-rpath,"$DI
 
 [`examples/c/`](examples/c/) continues from here to an ML-DSA-87 signature and an ML-KEM-1024 shared secret.
 
-The same program in Go, Node.js, Java and C#, each with the commands to
-build and run it against a bundle, is in [`examples/`](examples/).
+[`examples/`](examples/) holds six such programs, in C, Python, Go, Node.js,
+Java and C#, each continuing to an ML-DSA-87 signature and an ML-KEM-1024
+shared secret, with the commands to build and run it against a bundle.
 
 `oxi_init(0)` selects the unrestricted profile; `1` is CNSA 2.0. Every
 function, its buffer sizes and its status codes are in the header and in
@@ -609,7 +610,7 @@ cargo build --release -p oxicrypt-ffi
 
 The C interface has an ABI number, `oxi_abi_version()`, which changes only when
 the interface breaks compatibility. The shared library's `SONAME` carries it
-(`liboxicrypt_ffi.so.3` on Linux; on macOS the install name `@rpath/liboxicrypt_ffi.3.dylib`;
+(`liboxicrypt_ffi.so.4` on Linux; on macOS the install name `@rpath/liboxicrypt_ffi.4.dylib`;
 Android keeps the plain `liboxicrypt_ffi.so`, the only form an application packages),
 so a program linked against it asks the loader for that file: deploy the library
 under that name, with `liboxicrypt_ffi.so` as a link to it for the linker, as the
@@ -725,21 +726,42 @@ for building and signing the library it loads.
 ## `oxi` CLI
 
 A lightweight command-line tool that exposes the module's approved
-services to the terminal:
+services to the terminal. `oxi` runs the module's integrity test before it
+does anything, so it must be signed: take it already signed from the
+[releases page](https://github.com/oxiforge/oxicrypt/releases)
+(`oxicrypt-cli-<version>-<platform>.tar.gz`), or build and sign it from a
+checkout with `OXICRYPT_INTEGRITY_VERIFY_KEY` set:
 
 ```bash
-# Hash stdin with SHA-256
-echo -n "abc" | cargo run -p oxicrypt-cli -- hash sha256
-
-# HMAC-SHA-256 with a hex key
-echo -n "msg" | cargo run -p oxicrypt-cli -- hmac sha256 0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b
-
-# Generate 32 random bytes from HMAC_DRBG-SHA-256
-cargo run -p oxicrypt-cli -- rand 32
-
-# Dump the LAMA manifest
-cargo run -p oxicrypt-cli -- --lama
+cargo xtask sign oxicrypt-cli --release --key <dir>/integrity-signing.key
 ```
+
+[`docs/integrity-signing.md`](docs/integrity-signing.md) explains the key pair
+and the step. With a signed `oxi` on the path:
+
+```bash
+echo -n "abc" | oxi hash sha256                          # SHA-256 of stdin
+echo -n "msg" | oxi hmac sha256 0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b
+oxi rand 32                                              # 32 bytes from HMAC_DRBG-SHA-256
+oxi --lama                                               # the LAMA manifest
+
+oxi ml-dsa keygen 87 --pk alice.pk --sk alice.sk
+oxi ml-dsa sign 87 --sk alice.sk --sig message.sig message.txt
+oxi ml-dsa verify 87 --pk alice.pk --sig message.sig message.txt
+
+oxi ml-kem keygen 1024 --ek bob.ek --dk bob.dk
+oxi ml-kem encaps 1024 --ek bob.ek --ct secret.ct        # prints the shared secret
+oxi ml-kem decaps 1024 --dk bob.dk --ct secret.ct        # prints the same secret
+```
+
+- Keys, signatures and ciphertexts are raw bytes in the files you name, of the FIPS 203 and FIPS 204 sizes.
+- The shared secret goes to the file named by `--ss`, or to stdout as 64 hex characters.
+- `oxi ml-dsa verify` exits 5 when the signature is not valid, separate from 1 (the module failed) and 2 (bad arguments).
+
+Every flag, the seed options, how outputs are written and every exit code are
+in [`oxi/README.md`](oxi/README.md#signatures-and-key-establishment); what a
+program around the module must do is in
+[`docs/integration.md`](docs/integration.md).
 
 ## Runnable examples
 

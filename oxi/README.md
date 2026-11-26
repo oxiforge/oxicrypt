@@ -48,6 +48,13 @@ oxi rand <nbytes>                Generate random bytes (hex)
 oxi selftest [--quiet]           Report the module's power-up self-tests by name
 oxi --integrity                  Report the integrity test's outcome
 oxi --lama                       Dump the LAMA manifest (YAML)
+
+oxi ml-dsa keygen <44|65|87>     --pk FILE --sk FILE [--seed HEX | --seed-out FILE]
+oxi ml-dsa sign   <44|65|87>     --sk FILE --sig FILE [--ctx HEX] [--] [MESSAGE]
+oxi ml-dsa verify <44|65|87>     --pk FILE --sig FILE [--ctx HEX] [--] [MESSAGE]
+oxi ml-kem keygen <512|768|1024> --ek FILE --dk FILE [--d HEX --z HEX | --seed-out FILE]
+oxi ml-kem encaps <512|768|1024> --ek FILE --ct FILE [--ss FILE]
+oxi ml-kem decaps <512|768|1024> --dk FILE --ct FILE [--ss FILE]
 ```
 
 Algorithms: `sha1`, `sha224`, `sha256`, `sha384`, `sha512`, `sha512-224`,
@@ -57,6 +64,89 @@ Algorithms: `sha1`, `sha224`, `sha256`, `sha384`, `sha512`, `sha512-224`,
 matches, but a later algorithm self-test failed.
 
 `hmac` takes the same eleven, which is also the set `oxi selftest` reports.
+
+## Signatures and key establishment
+
+`oxi ml-dsa` signs and verifies with ML-DSA (FIPS 204) and `oxi ml-kem`
+establishes a shared secret with ML-KEM (FIPS 203), each at all three
+parameter sets:
+
+```sh
+$ oxi ml-dsa keygen 87 --pk alice.pk --sk alice.sk
+$ oxi ml-dsa sign 87 --sk alice.sk --sig message.sig message.txt
+$ oxi ml-dsa verify 87 --pk alice.pk --sig message.sig message.txt && echo valid
+valid
+$ oxi ml-kem keygen 1024 --ek bob.ek --dk bob.dk
+$ oxi ml-kem encaps 1024 --ek bob.ek --ct secret.ct
+<64 hex characters>
+$ oxi ml-kem decaps 1024 --dk bob.dk --ct secret.ct
+<the same 64 hex characters>
+```
+
+**Files.** Keys, signatures and ciphertexts are raw bytes in the files you
+name, with no header or encoding. An input file whose length is not exactly
+the size below is refused, naming the size it expected.
+
+| Parameter set | Public or encapsulation key | Secret or decapsulation key | Signature or ciphertext |
+|---|---|---|---|
+| ML-DSA-44 | 1312 | 2560 | 2420 |
+| ML-DSA-65 | 1952 | 4032 | 3309 |
+| ML-DSA-87 | 2592 | 4896 | 4627 |
+| ML-KEM-512 | 800 | 1632 | 768 |
+| ML-KEM-768 | 1184 | 2400 | 1088 |
+| ML-KEM-1024 | 1568 | 3168 | 1568 |
+
+The shared secret is 32 bytes. `encaps` and `decaps` write it to the file
+named by `--ss`, or, without `--ss`, print it on stdout as 64 lowercase hex
+characters and a newline, with nothing else on stdout. A ciphertext that was
+altered still decapsulates, to a different secret (FIPS 203 implicit
+rejection), so `decaps` exits 0 either way; comparing the two secrets is how a
+program finds out.
+
+**Messages and flags.** `MESSAGE` is a file, or stdin when it is absent or
+given as `-`; a file literally named `-` is given as `./-`. `--` ends the
+flags, so a message file whose name begins with `-` can follow it. A flag's
+value cannot begin with `--`; name such a file as `./--name`. `--ctx` is the
+FIPS 204 context string, 0 to 255 bytes as hex; absent means the empty
+context, and `verify` needs the same context `sign` used. Every flag is given
+at most once; an unknown, repeated or valueless flag is a usage error.
+
+**Seeds.** Without a seed flag, `keygen` draws its seed inside the module from
+an HMAC_DRBG-SHA-256 that the module seeds from its own entropy source; `oxi`
+never reads operating-system entropy. `--seed` (ML-DSA) and `--d` with `--z`
+(ML-KEM), 32 bytes each as 64 hex characters, instead expand the key pair from
+a seed you hold, and print `seed supplied: protect this seed as you would the
+secret key` on stderr. A seed on the command line is visible to anyone who can
+read the process list. `--seed-out FILE` makes `keygen` also write the seed it
+drew (32 bytes, or 64 bytes `d` then `z`) for later expansion; it cannot be
+combined with the seed flags. There is no flag for encapsulation's randomness:
+it is always drawn inside the module.
+
+**Output files.** No output file is replaced on a filesystem with hard links: a path that already exists
+is refused before anything is written. Each output is written to its name with
+`.oxi-partial` appended, then hard-linked into place, so a run that was
+interrupted leaves no partial file at the name you gave, only a `.oxi-partial`
+file to delete, and `oxi` refuses an output whose `.oxi-partial` file
+exists. On a filesystem that refuses hard links the file is renamed into
+place instead, and there the no-replace guarantee is best effort; a refusal
+`oxi` does not recognise as that case is reported as an error. Files holding
+secret material (`--sk`, `--dk`, `--ss` and `--seed-out`) are created
+owner-only where the operating
+system has file modes. A secret temporary left by a failed write is
+zero-filled before it is removed; on a copy-on-write filesystem (Btrfs, ZFS,
+APFS) that overwrite does not reach the blocks first written. Outputs are
+written in a fixed order: public key, then
+secret key; encapsulation key, then decapsulation key; ciphertext, then
+secret.
+
+**Exit codes.**
+
+| Code | Meaning |
+|---|---|
+| 0 | Success. For `verify`, the signature is valid. |
+| 1 | The module did not become operational, reported an error during the operation (including a key pair that failed its pairwise consistency test), or its entropy source was unavailable; or an output could not be written. Stderr says which, and names any outputs already in place. |
+| 2 | Usage error, including a missing, unreadable or wrong-length input file, a key that fails the FIPS 203 input checks, and an output that already exists. Nothing is written. |
+| 5 | `ml-dsa verify` only: every input has its exact length, and the signature is not valid for this public key, message and context. A public key or signature of the right length but malformed content gets the same verdict. |
 
 ## Watching the module test itself
 

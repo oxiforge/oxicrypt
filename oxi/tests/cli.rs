@@ -2679,3 +2679,50 @@ fn help_lists_the_post_quantum_commands() {
         );
     }
 }
+
+/// The contents of the fenced `text` block that follows the first line of
+/// `doc` containing `label`.
+fn block_after<'a>(doc: &'a str, label: &str) -> &'a str {
+    let (_, after) = doc
+        .split_once(label)
+        .unwrap_or_else(|| panic!("no {label:?} in the document"));
+    let (block, _) = after
+        .split_once("```text\n")
+        .and_then(|(_, rest)| rest.split_once("\n```"))
+        .unwrap_or_else(|| panic!("no text block after {label:?}"));
+    block.trim()
+}
+
+/// The seed and public-key digest `examples/README.md` gives for NIST's
+/// ML-DSA-87 key-generation vector are the committed fixture's, the digest
+/// computed by `oxi hash sha256`.
+#[test]
+fn readme_nist_known_answer_matches_the_fixture() {
+    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../examples/README.md");
+    let readme = std::fs::read_to_string(&path).unwrap_or_else(|e| {
+        panic!(
+            "read {}: {e}; this test needs the repository checkout, not the packaged crate",
+            path.display()
+        )
+    });
+    let section = readme
+        .split_once("## A known answer from NIST")
+        .map(|(_, rest)| rest)
+        .expect("the known-answer section");
+    let seed = block_after(section, "has the seed");
+    let digest = block_after(section, "SHA-256 digest");
+    assert_eq!((seed.len(), digest.len()), (64, 64), "{seed:?} {digest:?}");
+
+    assert_eq!(seed, hex(&data("ml-dsa-87-keygen-tg3-tc51.seed")), "seed");
+    let oxi = signed("readme-kat");
+    std::fs::write(
+        dir(&oxi).join("nist.pk"),
+        data("ml-dsa-87-keygen-tg3-tc51.pk"),
+    )
+    .expect("write nist.pk");
+    assert_eq!(
+        sha256_of(&oxi, "nist.pk"),
+        format!("{digest}  -\n"),
+        "digest"
+    );
+}

@@ -70,4 +70,9 @@ and its public key has the SHA-256 digest
 40298270777d3306d2fcb6b4691d7a7ab799cd1069eea88f843cf0ec26d4b01f
 ```
 
-The seed and the public key are committed as `oxi/tests/data/ml-dsa-87-keygen-tg3-tc51.seed` and `.pk`.
+The seed and the public key are committed as `oxi/tests/data/ml-dsa-87-keygen-tg3-tc51.seed` and `.pk`. With a signed `oxi`, the two commands that derive the digest from the seed are:
+
+```sh
+oxi ml-dsa keygen 87 --seed f7052fbb921759cd8716773ba6355630121d6927899fdda5768e2bc240fccb7b --pk nist.pk --sk nist.sk
+oxi hash sha256 nist.pk
+```

@@ -323,10 +323,19 @@ modules:
     no_std: true
     depends_on: []
   - name: oxicrypt-cli
-    description: Command-line front end to the module, installed with `cargo install oxi` and self-describing via `oxi --lama`; a binary crate with no public Rust items, so no API surface is described here.
+    description: "Command-line front end to the module, the crate oxicrypt-cli installed as the binary `oxi` and self-describing via `oxi --lama`, whose commands hash, hmac, rand, selftest, --integrity and --lama are joined by ml-dsa keygen, ml-dsa sign and ml-dsa verify for ML-DSA-44, -65 and -87 and ml-kem keygen, ml-kem encaps and ml-kem decaps for ML-KEM-512, -768 and -1024, reading and writing raw-byte key, signature and ciphertext files of the FIPS 203 and FIPS 204 sizes, never replacing an output file, and exiting 0 on success, 1 on a module or write failure, 2 on a usage error and 5 when ml-dsa verify finds the signature not valid; a binary crate with no public Rust items, so no API surface is described here."
     no_std: false
     depends_on:
     - oxicrypt-module
+    - oxicrypt-integrity
+    - oxicrypt-sha
+    - oxicrypt-hmac
+    - oxicrypt-aes
+    - oxicrypt-drbg
+    - oxicrypt-xof
+    - oxicrypt-ml-dsa
+    - oxicrypt-ml-kem
+    - oxicrypt-zeroize
 
   - name: doc-guard
     description: Out-of-boundary test crate asserting documentation claims against the workspace as built; publish = false, so no API surface is described here.
