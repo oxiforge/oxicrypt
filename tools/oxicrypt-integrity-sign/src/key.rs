@@ -92,7 +92,7 @@ impl SigningKey {
             secret: [0u8; ml_dsa_87::SK_LEN],
             public: [0u8; VERIFY_KEY_LEN],
         };
-        let (public, mut secret) = ml_dsa_87::keygen(&key.seed)
+        let (public, mut secret) = ml_dsa_87::expand_key(&key.seed)
             .map_err(|e| format!("SigningKeyAbsent: key generation from the seed failed: {e}"))?;
         key.secret.copy_from_slice(&secret);
         oxicrypt_zeroize::zeroize(&mut secret);

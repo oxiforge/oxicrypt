@@ -9,7 +9,7 @@
 //!
 //! ML-DSA-44 is **not** part of CNSA 2.0 (which mandates ML-DSA-87)
 //! and is **not** in the CNSA 1.0 suite. The
-//! `Service::MlDsa44Sign` / `Verify` / `Keygen` variants are
+//! `Service::MlDsa44Sign` / `Verify` / `Keygen` / `ExpandKey` variants are
 //! permitted only under [`oxicrypt_module::AlgorithmProfile::Unrestricted`].
 //! See `crates/oxicrypt-module/src/lib.rs` `is_cnsa1_allowed` and
 //! `is_cnsa2_allowed` — neither extends to ML-DSA-44.
@@ -40,8 +40,11 @@ crate::ml_dsa_impl::ml_dsa_impl! {
     beta = 78;
     omega = 80;
     svc_keygen = Service::MlDsa44Keygen;
+    svc_expand_key = Service::MlDsa44ExpandKey;
     svc_sign = Service::MlDsa44Sign;
     svc_verify = Service::MlDsa44Verify;
+    rbg_strength_bits = 192;
+    pct_reason = "ML-DSA-44 pairwise consistency";
 }
 
 #[cfg(test)]
@@ -53,6 +56,28 @@ crate::ml_dsa_impl::ml_dsa_impl! {
 )]
 mod tests {
     use super::*;
+
+    /// FIPS 204 §3.6.1 permits 128 bits for ML-DSA-44 but reduces the claim
+    /// below 192; the module requires 192.
+    #[test]
+    fn strength_floor_is_192() {
+        let refused = Err(Error::RbgTooWeak);
+        assert_eq!(rbg_services::with_strength(191), (refused, refused, 0));
+        assert_eq!(rbg_services::with_strength(192), (Ok(()), Ok(()), 2));
+    }
+
+    /// ACVP ML-DSA specification (draft-celi-acvp-ml-dsa-01) §6.1.2
+    /// Table 1, row 1: the seed and SHA2-256(pk ‖ sk).
+    #[test]
+    fn expand_key_reproduces_acvp_vector() {
+        use crate::cast_vectors::ml_dsa_44 as v;
+        crate::test_support::start_module();
+        let (pk, sk) = expand_key(&v::REJ_SEED).unwrap();
+        let mut h = oxicrypt_sha::sha256::Sha256::new().unwrap();
+        h.update(&pk);
+        h.update(&sk);
+        assert_eq!(h.finalize().unwrap(), v::REJ_KEY_HASH);
+    }
 
     #[test]
     fn key_sizes_match_spec() {

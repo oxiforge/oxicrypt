@@ -1,9 +1,6 @@
 //! ML-DSA (FIPS 204) — lattice-based digital signature algorithm.
 //!
-//! # Status
-//!
-//! **Implemented for all three parameter sets.** This crate provides
-//! ML-DSA-44, ML-DSA-65, and ML-DSA-87 as specified in FIPS 204
+//! This crate provides ML-DSA-44, ML-DSA-65, and ML-DSA-87 as specified in FIPS 204
 //! (August 2024): key generation, deterministic signing (Fiat-Shamir
 //! with aborts / rejection sampling), and signature verification.
 //!
@@ -21,9 +18,22 @@
 //!
 //! | Service | Description | CNSA-1.0 | CNSA-2.0 | Migration |
 //! |---------|-------------|----------|----------|-----------|
-//! | `MlDsa44Keygen` / `Sign` / `Verify` | ML-DSA-44 | No | No | No |
-//! | `MlDsa65Keygen` / `Sign` / `Verify` | ML-DSA-65 | No | No | No |
-//! | `MlDsa87Keygen` / `Sign` / `Verify` | ML-DSA-87 | No | Yes | Yes |
+//! | `MlDsa44Keygen` / `ExpandKey` / `Sign` / `Verify` | ML-DSA-44 | No | No | No |
+//! | `MlDsa65Keygen` / `ExpandKey` / `Sign` / `Verify` | ML-DSA-65 | No | No | No |
+//! | `MlDsa87Keygen` / `ExpandKey` / `Sign` / `Verify` | ML-DSA-87 | No | Yes | Yes |
+//!
+//! `Keygen` covers `keygen` and `keygen_with_seed`, which draw ξ from an
+//! RBG the caller passes (FIPS 204 Algorithm 1); `ExpandKey` covers
+//! `expand_key`, which expands a stored ξ (FIPS 204 §3.6.3). `keygen` and
+//! `keygen_with_seed` refuse an RBG below the parameter set's strength
+//! before any draw: 192 bits for ML-DSA-44 and ML-DSA-65, 256 bits for
+//! ML-DSA-87 (FIPS 204 §3.6.1; for ML-DSA-44 the standard requires 128 and
+//! recommends 192, and below 192 the claim drops to category 1). All three
+//! run a pairwise consistency test on the pair before returning it
+//! (FIPS 140-3 IG 10.3.A); a failure wipes the pair,
+//! returns `Error::ConditionalTestFailed` with the reason
+//! `"ML-DSA-NN pairwise consistency"`, and puts the module in its error
+//! state.
 //!
 //! ML-DSA-44 and ML-DSA-65 are permitted only under the
 //! [`AlgorithmProfile::Unrestricted`](oxicrypt_module::AlgorithmProfile)
@@ -60,23 +70,24 @@
 //! CASTs compare digests. All three parameter sets share one
 //! implementation through the `ml_dsa_impl!` macro.
 //!
-//! # Backward compatibility
+//! # Crate-root re-exports
 //!
 //! The crate root re-exports the ML-DSA-87 surface ([`keygen`],
 //! [`sign`], [`verify`], [`verify_internal`], [`PK_LEN`], [`SK_LEN`],
 //! [`SIG_LEN`], and with the `testing-interfaces` feature
 //! `keygen_internal` and `sign_internal`), so `oxicrypt_ml_dsa::keygen`
-//! and the rest resolve to ML-DSA-87. Callers that need another set name
+//! and the rest resolve to ML-DSA-87. `keygen_with_seed` and `expand_key`
+//! are reached through [`ml_dsa_87`]. Callers that need another set name
 //! [`ml_dsa_44`], [`ml_dsa_65`] or [`ml_dsa_87`].
 //!
 //! # Sensitive security parameters
 //!
 //! | SSP | Description | Zeroization |
 //! |-----|-------------|-------------|
-//! | sk  | Secret key (per-variant length) | Caller responsibility |
-//! | ξ   | Keygen randomness (32 bytes) | Caller responsibility |
-//! | s₁, s₂ | Secret vectors | Embedded in sk |
-//! | K   | Signing key seed (32 bytes) | Embedded in sk |
+//! | sk  | Secret key (per-variant length) | Module copies wiped on every exit; the returned key is the caller's |
+//! | ξ   | Key-generation seed (32 bytes) | Drawn inside the module and wiped on every exit; returned by `keygen_with_seed` in a `Zeroizing` that wipes it on drop; the caller's `expand_key` argument is the caller's to wipe |
+//! | ρ′, K, tr | Key-generation intermediates | Wiped on every exit (FIPS 204 §3.6.3) |
+//! | s₁, s₂ | Secret vectors | Embedded in sk; working copies wiped on drop |
 //!
 //! # External vs internal API
 //!
@@ -91,8 +102,10 @@
 //!
 //! The `*_internal` surface (`keygen_internal`, `sign_internal`,
 //! [`verify_internal`]) exposes Algorithms 6, 7 and 8 directly: the
-//! raw-message primitive with no framing. These are `#[doc(hidden)]` and
-//! serve FIPS 204 CAVP / ACVP test harnesses.
+//! raw-message primitive with no framing. These are `#[doc(hidden)]`:
+//! `keygen_internal` and `sign_internal` serve FIPS 204 CAVP / ACVP test
+//! harnesses, and [`verify_internal`] also serves the software integrity
+//! test.
 //!
 //! # The `testing-interfaces` feature (default OFF)
 //!
@@ -136,15 +149,22 @@
 //! let _ = oxicrypt_ml_dsa::verify_internal;
 //! ```
 //!
+//! # The `fault-injection` feature (default OFF)
+//!
+//! Compiles the `seam` module, whose `corrupt_next_pk` makes the next key
+//! generation's pairwise consistency test fail, for the tests of that
+//! failure path. No shipped build enables it.
+//!
 //! # FIPS module gating
 //!
-//! Public entry points (`keygen`, `sign`, `verify` per variant) gate
-//! on [`oxicrypt_module::require_operational`] and
-//! [`oxicrypt_module::require_allowed`]. The `*_internal` surface
-//! (hidden) runs without the operational gate so power-up KATs can
-//! execute during `SelfTest`; it calls
+//! Public entry points (`keygen`, `keygen_with_seed`, `expand_key`, `sign`,
+//! `verify` per variant) gate on [`oxicrypt_module::require_operational`]
+//! and [`oxicrypt_module::require_allowed`]. The `*_internal` surface
+//! (hidden) runs without the operational gate: it calls
 //! [`oxicrypt_module::require_self_test_started`] instead, so it refuses
-//! in every state other than `SelfTest` and `Operational`.
+//! in every state other than `SelfTest` and `Operational`. The power-up
+//! self-tests reach the same guarded cores without the
+//! `testing-interfaces` feature.
 //!
 //! # Timing properties
 //!
@@ -187,8 +207,13 @@ pub mod params;
 mod poly;
 #[cfg(test)]
 mod rejection_counts;
+/// Test seams for the key-generation services; available with the
+/// `fault-injection` feature or in the crate's own tests.
+#[cfg(any(test, feature = "fault-injection"))]
+pub mod seam;
 #[cfg(feature = "parallel")]
 mod sweep;
+mod wipe;
 
 use oxicrypt_module::Error;
 
@@ -207,8 +232,6 @@ pub mod ml_dsa_87;
 pub use ml_dsa_87::{PK_LEN, SIG_LEN, SK_LEN, keygen, sign, verify, verify_internal};
 #[cfg(feature = "testing-interfaces")]
 pub use ml_dsa_87::{keygen_internal, sign_internal};
-
-// ── External-API ctx-framing helper (shared across all variants) ────
 
 /// Maximum size of the external API framing prefix: 2 header bytes
 /// (`0x00` domain separator + `|ctx|` length byte) plus the 255-byte
@@ -255,8 +278,6 @@ pub(crate) fn build_external_prefix(ctx: &[u8]) -> Result<ExternalPrefix, Error>
     })
 }
 
-// ── Wiped temporaries ────────────────────────────────────────────────
-
 /// A byte buffer that is zeroised when it is dropped, so a temporary of the
 /// key generation, signing or verification algorithm that the function owns
 /// is wiped on every return path, including an early `?`.
@@ -281,20 +302,37 @@ impl<const N: usize> Drop for WipedWords<N> {
     }
 }
 
-/// What the last `Drop` of a [`Wiped`] or [`WipedWords`] on this thread
-/// left in its buffer, read by the drop itself while the buffer is still
-/// owned. Reading the memory after the drop would need `unsafe` and would
-/// be a read of freed storage; this observes the same fact soundly.
+/// What the drops of [`Wiped`], [`WipedWords`] and `Poly` on this thread
+/// left in their buffers: the last drop's result, and running counts of
+/// drops and of drops that left a nonzero element. Each drop records this
+/// itself while the buffer is still owned. Reading the memory after the drop
+/// would need `unsafe` and would be a read of freed storage; this observes
+/// the same fact soundly.
 #[cfg(test)]
 mod wipe_witness {
     extern crate std;
 
     std::thread_local! {
         static LAST: core::cell::Cell<Option<bool>> = const { core::cell::Cell::new(None) };
+        static COUNTS: core::cell::Cell<(u64, u64)> = const { core::cell::Cell::new((0, 0)) };
     }
 
     pub(crate) fn record(zeroed: bool) {
         LAST.with(|c| c.set(Some(zeroed)));
+        COUNTS.with(|c| {
+            let (drops, unzeroed) = c.get();
+            c.set((
+                drops.saturating_add(1),
+                unzeroed.saturating_add(u64::from(!zeroed)),
+            ));
+        });
+    }
+
+    /// The drops recorded on this thread so far, and how many of them left
+    /// a nonzero element.
+    #[cfg(feature = "fault-injection")]
+    pub(crate) fn counts() -> (u64, u64) {
+        COUNTS.with(core::cell::Cell::get)
     }
 
     /// `Some(true)` when the last drop left its buffer all zero.
@@ -330,11 +368,7 @@ mod wiped_tests {
     }
 }
 
-// ── Power-up self-tests ──────────────────────────────────────────────
-
 pub use cast::{KATS, VERIFY_CAST_NAME, verify_cast};
-
-// ── Crate-internal tests (NTT roundtrip / field arithmetic) ──────────
 
 #[cfg(test)]
 #[allow(

@@ -568,6 +568,26 @@ jobs:
           t=cmac::tests::subkeys_zeroized_on_all_paths
           grep -Eq "PASS \[.*\] .*oxicrypt-cmac.* ${t}\$" "$log" \
             || { echo "the oxicrypt-cmac fault-injection run did not pass $t" >&2; exit 1; }
+      # The ML-DSA pairwise consistency failure tests and the per-identity
+      # wipe test, which compile only with the feature.
+      - name: cargo nextest run -p oxicrypt-ml-dsa --features fault-injection
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        run: |
+          set -o pipefail
+          log="$RUNNER_TEMP/nextest-ml-dsa-fault.log"
+          cargo nextest run -p oxicrypt-ml-dsa --features fault-injection --color never 2>&1 | tee "$log"
+          grep -Eq "[1-9][0-9]* tests? run: [1-9][0-9]* passed" "$log" \
+            || { echo "the oxicrypt-ml-dsa fault-injection run passed no tests" >&2; exit 1; }
+          for t in pct_fault_ml_dsa_44 pct_fault_ml_dsa_65 pct_fault_ml_dsa_87 \
+                   ml_dsa_44::wipe_on_exit::seeds_wiped_on_every_exit \
+                   ml_dsa_65::wipe_on_exit::seeds_wiped_on_every_exit \
+                   ml_dsa_87::wipe_on_exit::seeds_wiped_on_every_exit; do
+            grep -Eq "PASS \[.*\] .*oxicrypt-ml-dsa.* ${t}\$" "$log" \
+              || { echo "the oxicrypt-ml-dsa fault-injection run did not pass $t" >&2; exit 1; }
+          done
+      - name: cargo clippy -p oxicrypt-ml-dsa --features fault-injection
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        run: cargo clippy -p oxicrypt-ml-dsa --features fault-injection --all-targets -- -D warnings
       # Requires the unsigned copy refused (integrity status 3), the signed copy operational (1), and a copy with one byte flipped inside the signed region refused (2).
       - name: Unsigned, signed and tampered library through oxi_init
         if: ${{ !cancelled() && steps.build.outcome == 'success' }}

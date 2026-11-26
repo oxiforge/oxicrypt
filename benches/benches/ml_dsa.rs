@@ -6,12 +6,13 @@
 )]
 
 //! ML-DSA (FIPS 204) benchmarks — all three parameter sets
-//! (ML-DSA-44, -65, -87), measuring keygen, sign, and verify.
+//! (ML-DSA-44, -65, -87), measuring key expansion, sign, and verify.
 //!
-//! `keygen` takes a 32-byte seed (`xi` — FIPS 204 §6.1); the external
-//! `sign`/`verify` take a context string `ctx` (empty here) alongside
-//! the message. Signing is deterministic, so a fixed seed + message
-//! gives a reproducible suite. The sign bench reuses one secret key
+//! The `expand_key` group expands a fixed 32-byte seed ξ (FIPS 204 §3.6.3)
+//! and runs the pairwise consistency test, a signature and a verification;
+//! the external `sign`/`verify` take a context string `ctx` (empty here)
+//! alongside the message. Signing is deterministic, so a fixed seed +
+//! message gives a reproducible suite. The sign bench reuses one secret key
 //! across iterations (ML-DSA is stateless); the verify bench signs once
 //! outside the timing loop and measures a single verification.
 
@@ -24,15 +25,15 @@ const MSG: &[u8] = b"benchmark message for ML-DSA (FIPS 204)";
 /// Empty context string (FIPS 204 §5.2 external API).
 const CTX: &[u8] = b"";
 
-/// Keygen bench for one ML-DSA parameter set.
+/// Key-expansion bench for one ML-DSA parameter set.
 macro_rules! ml_dsa_keygen_bench {
     ($fn_name:ident, $variant:ident, $label:literal) => {
         fn $fn_name(c: &mut Criterion) {
             oxicrypt_bench::init_module();
 
-            let mut group = c.benchmark_group("ML-DSA keygen");
+            let mut group = c.benchmark_group("ML-DSA expand_key");
             group.bench_function($label, |b| {
-                b.iter(|| $variant::keygen(black_box(&XI)).expect("keygen"));
+                b.iter(|| $variant::expand_key(black_box(&XI)).expect("expand_key"));
             });
             group.finish();
         }
@@ -46,7 +47,7 @@ macro_rules! ml_dsa_sign_bench {
         fn $fn_name(c: &mut Criterion) {
             oxicrypt_bench::init_module();
 
-            let (_pk, sk) = $variant::keygen(&XI).expect("keygen");
+            let (_pk, sk) = $variant::expand_key(&XI).expect("expand_key");
 
             let mut group = c.benchmark_group("ML-DSA sign");
             group.bench_function($label, |b| {
@@ -64,7 +65,7 @@ macro_rules! ml_dsa_verify_bench {
         fn $fn_name(c: &mut Criterion) {
             oxicrypt_bench::init_module();
 
-            let (pk, sk) = $variant::keygen(&XI).expect("keygen");
+            let (pk, sk) = $variant::expand_key(&XI).expect("expand_key");
             let sig = $variant::sign(&sk, MSG, CTX).expect("sign");
 
             let mut group = c.benchmark_group("ML-DSA verify");

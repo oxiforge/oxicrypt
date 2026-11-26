@@ -3000,7 +3000,7 @@ pub unsafe extern "C" fn oxi_ml_dsa_87_keygen(
     let Ok(seed_arr) = <&[u8; 32]>::try_from(seed) else {
         return R::Internal as c_int;
     };
-    let (pk, sk) = match oxicrypt_ml_dsa::keygen(seed_arr) {
+    let (pk, sk) = match oxicrypt_ml_dsa::ml_dsa_87::expand_key(seed_arr) {
         Ok(pair) => pair,
         Err(e) => return R::from(e) as c_int,
     };
@@ -3184,7 +3184,7 @@ pub unsafe extern "C" fn oxi_ml_dsa_44_keygen(
     let Ok(seed_arr) = <&[u8; 32]>::try_from(seed) else {
         return R::Internal as c_int;
     };
-    let (pk, sk) = match oxicrypt_ml_dsa::ml_dsa_44::keygen(seed_arr) {
+    let (pk, sk) = match oxicrypt_ml_dsa::ml_dsa_44::expand_key(seed_arr) {
         Ok(pair) => pair,
         Err(e) => return R::from(e) as c_int,
     };
@@ -3368,7 +3368,7 @@ pub unsafe extern "C" fn oxi_ml_dsa_65_keygen(
     let Ok(seed_arr) = <&[u8; 32]>::try_from(seed) else {
         return R::Internal as c_int;
     };
-    let (pk, sk) = match oxicrypt_ml_dsa::ml_dsa_65::keygen(seed_arr) {
+    let (pk, sk) = match oxicrypt_ml_dsa::ml_dsa_65::expand_key(seed_arr) {
         Ok(pair) => pair,
         Err(e) => return R::from(e) as c_int,
     };

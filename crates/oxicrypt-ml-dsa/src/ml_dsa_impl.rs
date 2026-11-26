@@ -22,6 +22,14 @@
 //! | `beta` | Norm bound β = τ · η |
 //! | `omega` | Max hint weight (nonzero entries in h across k polys) |
 //!
+//! Per-variant module inputs:
+//!
+//! | Input | Meaning |
+//! |-------|---------|
+//! | `svc_keygen`, `svc_expand_key`, `svc_sign`, `svc_verify` | The `Service` each public entry point is gated on |
+//! | `rbg_strength_bits` | The RBG security strength key generation requires (FIPS 204 §3.6.1) |
+//! | `pct_reason` | The `reason` of a failed pairwise consistency test |
+//!
 //! Derived constants emitted by the macro:
 //!
 //! | Constant | Derivation |
@@ -46,11 +54,13 @@
 //! | `expand_a`, `expand_s`, `expand_mask`, `sample_in_ball`, `rej_bounded_poly` | private | Per-variant sampling |
 //! | `decompose`, `high_bits`, `low_bits`, `make_hint`, `use_hint`, `power2round` | private | Per-γ₂ rounding |
 //! | `pack_eta`, `unpack_eta`, `pack_z`, `unpack_z`, `pack_t0`, `unpack_t0`, `pack_t1`, `unpack_t1`, `pack_hint`, `unpack_hint`, `pack_pk/sk/sig`, `unpack_pk/sk/sig`, `pack_w1` | private | Per-variant byte encoding |
-//! | `ml_dsa_keygen`, `ml_dsa_sign`, `ml_dsa_verify` | private | FIPS 204 §6 internal primitives |
-//! | `keygen`, `sign`, `verify` | `pub` | Module-gated FIPS 204 §5.2 external API (with `ctx` framing) |
+//! | `ml_dsa_keygen`, `ml_dsa_keygen_into`, `ml_dsa_sign`, `ml_dsa_sign_into`, `ml_dsa_verify` | private | FIPS 204 §6 internal primitives |
+//! | `keygen`, `keygen_with_seed`, `expand_key` | `pub` | Module-gated key generation from an RBG (FIPS 204 Algorithm 1) and expansion of a stored seed (§3.6.3), each with the pairwise consistency test |
+//! | `draw_xi`, `expand_checked`, `pairwise_consistency`, `pairwise_consistency_failed` | private | The strength check and draw, and the expansion with the pairwise consistency test (FIPS 140-3 IG 10.3.A) |
+//! | `sign`, `verify` | `pub` | Module-gated FIPS 204 §5.2 external API (with `ctx` framing) |
 //! | `keygen_internal`, `sign_internal` | `pub` (hidden), `testing-interfaces` only | FIPS 204 §6 mirrors without the operational gate (CAVP testing only) |
 //! | `verify_internal` | `pub` (hidden) | FIPS 204 §6 mirror without the operational gate |
-//! | `keygen_internal_guarded`, `sign_internal_guarded` | `pub(crate)` | The same behind `require_self_test_started`, for the power-up self-tests |
+//! | `keygen_internal_guarded`, `sign_internal_guarded` | `pub(crate)` | The same behind `require_self_test_started`, for the power-up self-tests, the unit tests and the `*_internal` wrappers |
 //!
 //! # Architectural note
 //!
@@ -84,15 +94,17 @@ macro_rules! ml_dsa_impl {
         eta = $eta:expr;
         beta = $beta:expr;
         omega = $omega:expr;
-        // Service variants for module gating.
         svc_keygen = $svc_keygen:expr;
+        svc_expand_key = $svc_expand_key:expr;
         svc_sign = $svc_sign:expr;
         svc_verify = $svc_verify:expr;
+        rbg_strength_bits = $rbg_strength_bits:expr;
+        pct_reason = $pct_reason:expr;
     ) => {
         use oxicrypt_module::{Error, SelfTestStarted, Service};
         use oxicrypt_xof::{Shake128, Shake256};
         use $crate::field::reduce32;
-        use $crate::params::{D, N, Q, SEED_LEN as SHARED_SEED_LEN, T0_PACKED, T1_PACKED};
+        use $crate::params::{D, N, Q, T0_PACKED, T1_PACKED};
         use $crate::poly::Poly;
 
         /// Security category bits (128 / 192 / 256).
@@ -1310,57 +1322,71 @@ macro_rules! ml_dsa_impl {
         ///
         /// Every intermediate this function owns is wiped when it is dropped,
         /// on every return path (ISO/IEC 19790:2012 §7.9.7): byte
-        /// buffers through `Wiped`, polynomials through `Poly`'s `Drop`, the
-        /// sponge through its own. What that does not reach: a value moved
+        /// buffers through `Wiped` and `wipe::Tagged`, polynomials through
+        /// `Poly`'s `Drop`, the sponge through its own. What that does not
+        /// reach: a value moved
         /// out of a frame can leave a bitwise copy in the dead frame, scalars
         /// held in registers or spilled are not wiped, and with
         /// `panic = "abort"` no destructor runs on a panic, which ends the
         /// process.
         fn ml_dsa_keygen(xi: &[u8; 32]) -> Result<([u8; PK_LEN], [u8; SK_LEN]), Error> {
+            let mut pk = [0u8; PK_LEN];
+            // The private key is assembled in a wiped buffer; the returned
+            // array is a copy of it.
+            let mut sk = $crate::Wiped([0u8; SK_LEN]);
+            ml_dsa_keygen_into(xi, &mut pk, &mut sk.0)?;
+            Ok((pk, sk.0))
+        }
+
+        fn ml_dsa_keygen_into(
+            xi: &[u8; 32],
+            pk: &mut [u8; PK_LEN],
+            sk: &mut [u8; SK_LEN],
+        ) -> Result<(), Error> {
+            use $crate::wipe::{Tagged, WipedBuffer, observed};
+
             let mut h = Shake256::new_internal()?;
             h.update(xi);
             h.update(&[K as u8]);
             h.update(&[L as u8]);
             h.finalize();
 
-            let mut rho = $crate::Wiped([0u8; 32]);
-            let mut sigma = $crate::Wiped([0u8; 64]);
-            let mut key = $crate::Wiped([0u8; 32]);
-            h.squeeze(&mut rho.0)?;
-            h.squeeze(&mut sigma.0)?;
-            h.squeeze(&mut key.0)?;
+            let mut rho = Tagged::<32>::new(WipedBuffer::Rho);
+            let mut rho_prime = Tagged::<64>::new(WipedBuffer::RhoPrime);
+            let mut key = Tagged::<32>::new(WipedBuffer::Key);
+            h.squeeze(&mut rho.bytes)?;
+            h.squeeze(&mut rho_prime.bytes)?;
+            h.squeeze(&mut key.bytes)?;
 
-            let a_hat = expand_a(&rho.0)?;
-            let (s1, s2) = expand_s(&sigma.0)?;
+            let a_hat = observed(WipedBuffer::KeygenA, expand_a(&rho.bytes)?);
+            let (s1, s2) = expand_s(&rho_prime.bytes)?;
+            let s1 = observed(WipedBuffer::KeygenS1, s1);
+            let s2 = observed(WipedBuffer::KeygenS2, s2);
 
-            let mut s1_hat = s1.clone();
+            let mut s1_hat = observed(WipedBuffer::KeygenS1Hat, s1.clone());
             s1_hat.ntt();
 
-            let mut t = PolyVecK::zero();
+            let mut t = observed(WipedBuffer::KeygenT, PolyVecK::zero());
             matrix_pointwise_mul(&mut t, &a_hat, &s1_hat);
             t.inv_ntt();
             t.add_assign(&s2);
             t.reduce();
 
-            let mut t1 = PolyVecK::zero();
-            let mut t0 = PolyVecK::zero();
+            let mut t1 = observed(WipedBuffer::KeygenT1, PolyVecK::zero());
+            let mut t0 = observed(WipedBuffer::KeygenT0, PolyVecK::zero());
             polyveck_power2round(&t, &mut t1, &mut t0);
 
-            let mut pk = [0u8; PK_LEN];
-            pack_pk(&rho.0, &t1, &mut pk);
+            pack_pk(&rho.bytes, &t1, pk);
 
-            let mut tr = $crate::Wiped([0u8; 64]);
+            let mut tr = Tagged::<64>::new(WipedBuffer::Tr);
             let mut h_pk = Shake256::new_internal()?;
-            h_pk.update(&pk);
+            h_pk.update(pk);
             h_pk.finalize();
-            h_pk.squeeze(&mut tr.0)?;
+            h_pk.squeeze(&mut tr.bytes)?;
 
-            // The private key is assembled in a wiped buffer; the returned
-            // array is a copy of it.
-            let mut sk = $crate::Wiped([0u8; SK_LEN]);
-            pack_sk(&rho.0, &key.0, &tr.0, &s1, &s2, &t0, &mut sk.0);
+            pack_sk(&rho.bytes, &key.bytes, &tr.bytes, &s1, &s2, &t0, sk);
 
-            Ok((pk, sk.0))
+            Ok(())
         }
 
         /// ML-DSA.Sign_internal (FIPS 204 §6.2 Algorithm 7).
@@ -1378,43 +1404,68 @@ macro_rules! ml_dsa_impl {
             message: &[u8],
             rnd: &[u8; 32],
         ) -> Result<Option<[u8; SIG_LEN]>, Error> {
+            let mut sig = [0u8; SIG_LEN];
+            if ml_dsa_sign_into(sk, m_prefix, message, rnd, &mut sig)? {
+                Ok(Some(sig))
+            } else {
+                Ok(None)
+            }
+        }
+
+        /// `false`, with `out` zeroized, when the rejection loop is
+        /// exhausted.
+        fn ml_dsa_sign_into(
+            sk: &[u8; SK_LEN],
+            m_prefix: &[u8],
+            message: &[u8],
+            rnd: &[u8; 32],
+            out: &mut [u8; SIG_LEN],
+        ) -> Result<bool, Error> {
+            use $crate::wipe::{Tagged, WipedBuffer as B, observed};
+
             let mut rho = $crate::Wiped([0u8; 32]);
-            let mut key = $crate::Wiped([0u8; 32]);
+            let mut key = Tagged::<32>::new(B::SignKey);
             let mut tr = $crate::Wiped([0u8; 64]);
-            let mut s1 = PolyVecL::zero();
-            let mut s2 = PolyVecK::zero();
-            let mut t0 = PolyVecK::zero();
+            let mut s1 = observed(B::SignS1, PolyVecL::zero());
+            let mut s2 = observed(B::SignS2, PolyVecK::zero());
+            let mut t0 = observed(B::SignT0, PolyVecK::zero());
             unpack_sk(
-                sk, &mut rho.0, &mut key.0, &mut tr.0, &mut s1, &mut s2, &mut t0,
+                sk,
+                &mut rho.0,
+                &mut key.bytes,
+                &mut tr.0,
+                &mut s1,
+                &mut s2,
+                &mut t0,
             );
 
-            let a_hat = expand_a(&rho.0)?;
+            let a_hat = observed(B::SignA, expand_a(&rho.0)?);
 
-            let mut mu = $crate::Wiped([0u8; 64]);
+            let mut mu = Tagged::<64>::new(B::SignMu);
             {
                 let mut h = Shake256::new_internal()?;
                 h.update(&tr.0);
                 h.update(m_prefix);
                 h.update(message);
                 h.finalize();
-                h.squeeze(&mut mu.0)?;
+                h.squeeze(&mut mu.bytes)?;
             }
 
-            let mut rho_pp = $crate::Wiped([0u8; 64]);
+            let mut rho_pp = Tagged::<64>::new(B::SignRhoPrimePrime);
             {
                 let mut h = Shake256::new_internal()?;
-                h.update(&key.0);
+                h.update(&key.bytes);
                 h.update(rnd);
-                h.update(&mu.0);
+                h.update(&mu.bytes);
                 h.finalize();
-                h.squeeze(&mut rho_pp.0)?;
+                h.squeeze(&mut rho_pp.bytes)?;
             }
 
-            let mut s1_hat = s1.clone();
+            let mut s1_hat = observed(B::SignS1Hat, s1.clone());
             s1_hat.ntt();
-            let mut s2_hat = s2.clone();
+            let mut s2_hat = observed(B::SignS2Hat, s2.clone());
             s2_hat.ntt();
-            let mut t0_hat = t0.clone();
+            let mut t0_hat = observed(B::SignT0Hat, t0.clone());
             t0_hat.ntt();
 
             let mut kappa: u16 = 0;
@@ -1422,20 +1473,21 @@ macro_rules! ml_dsa_impl {
 
             loop {
                 if kappa >= max_iters {
-                    return Ok(None);
+                    oxicrypt_zeroize::zeroize(out);
+                    return Ok(false);
                 }
 
-                let y = expand_mask(&rho_pp.0, kappa * L as u16)?;
+                let y = observed(B::SignY, expand_mask(&rho_pp.bytes, kappa * L as u16)?);
 
-                let mut y_hat = y.clone();
+                let mut y_hat = observed(B::SignYHat, y.clone());
                 y_hat.ntt();
-                let mut w = PolyVecK::zero();
+                let mut w = observed(B::SignW, PolyVecK::zero());
                 matrix_pointwise_mul(&mut w, &a_hat, &y_hat);
                 w.inv_ntt();
                 w.reduce();
 
-                let mut w1 = PolyVecK::zero();
-                let mut w0 = PolyVecK::zero();
+                let mut w1 = observed(B::SignW1, PolyVecK::zero());
+                let mut w0 = observed(B::SignW0, PolyVecK::zero());
                 polyveck_decompose(&w, &mut w1, &mut w0);
 
                 let mut ctilde = $crate::Wiped([0u8; CTILDE_LEN]);
@@ -1443,17 +1495,17 @@ macro_rules! ml_dsa_impl {
                     let mut w1_packed = $crate::Wiped([0u8; W1_PACKED_TOTAL]);
                     pack_w1(&w1, &mut w1_packed.0);
                     let mut h = Shake256::new_internal()?;
-                    h.update(&mu.0);
+                    h.update(&mu.bytes);
                     h.update(&w1_packed.0);
                     h.finalize();
                     h.squeeze(&mut ctilde.0)?;
                 }
 
-                let c = sample_in_ball(&ctilde.0)?;
-                let mut c_hat = c.clone();
+                let c = observed(B::SignC, sample_in_ball(&ctilde.0)?);
+                let mut c_hat = observed(B::SignCHat, c.clone());
                 c_hat.ntt();
 
-                let mut z = PolyVecL::zero();
+                let mut z = observed(B::SignZ, PolyVecL::zero());
                 for i in 0..L {
                     poly_pointwise(&mut z.polys[i], &c_hat, &s1_hat.polys[i]);
                 }
@@ -1468,13 +1520,13 @@ macro_rules! ml_dsa_impl {
                     continue;
                 }
 
-                let mut cs2 = PolyVecK::zero();
+                let mut cs2 = observed(B::SignCs2, PolyVecK::zero());
                 for i in 0..K {
                     poly_pointwise(&mut cs2.polys[i], &c_hat, &s2_hat.polys[i]);
                 }
                 cs2.inv_ntt();
 
-                let mut r0 = w0.clone();
+                let mut r0 = observed(B::SignR0, w0.clone());
                 r0.sub_assign(&cs2);
                 reduce_polyveck(&mut r0);
 
@@ -1485,7 +1537,7 @@ macro_rules! ml_dsa_impl {
                     continue;
                 }
 
-                let mut ct0 = PolyVecK::zero();
+                let mut ct0 = observed(B::SignCt0, PolyVecK::zero());
                 for i in 0..K {
                     poly_pointwise(&mut ct0.polys[i], &c_hat, &t0_hat.polys[i]);
                 }
@@ -1507,7 +1559,7 @@ macro_rules! ml_dsa_impl {
                 // `a0 == −γ₂` fence must give 1 when `w₁ ≠ 0`, as Decompose's
                 // `(−γ₂, γ₂]` convention makes Algorithm 39 return; the ACVP
                 // regression in `tests/acvts_regressions.rs` exercises it.
-                let mut a0 = r0.clone();
+                let mut a0 = observed(B::SignA0, r0.clone());
                 a0.add_assign(&ct0);
                 reduce_polyveck(&mut a0);
                 for p in &mut a0.polys {
@@ -1518,7 +1570,7 @@ macro_rules! ml_dsa_impl {
                     }
                 }
 
-                let mut h_vec = PolyVecK::zero();
+                let mut h_vec = observed(B::SignHint, PolyVecK::zero());
                 let hint_count = polyveck_make_hint(&mut h_vec, &a0, &w1);
 
                 if hint_count > OMEGA {
@@ -1528,13 +1580,12 @@ macro_rules! ml_dsa_impl {
                     continue;
                 }
 
-                let mut sig = [0u8; SIG_LEN];
-                if !pack_sig(&ctilde.0, &z, &h_vec, &mut sig) {
+                if !pack_sig(&ctilde.0, &z, &h_vec, out) {
                     kappa += 1;
                     continue;
                 }
 
-                return Ok(Some(sig));
+                return Ok(true);
             }
         }
 
@@ -1551,13 +1602,15 @@ macro_rules! ml_dsa_impl {
             message: &[u8],
             sig: &[u8; SIG_LEN],
         ) -> Result<bool, Error> {
+            use $crate::wipe::{WipedBuffer as B, observed};
+
             let mut rho = $crate::Wiped([0u8; 32]);
-            let mut t1 = PolyVecK::zero();
+            let mut t1 = observed(B::VerifyT1, PolyVecK::zero());
             unpack_pk(pk, &mut rho.0, &mut t1);
 
             let mut ctilde = $crate::Wiped([0u8; CTILDE_LEN]);
-            let mut z = PolyVecL::zero();
-            let mut h_vec = PolyVecK::zero();
+            let mut z = observed(B::VerifyZ, PolyVecL::zero());
+            let mut h_vec = observed(B::VerifyHint, PolyVecK::zero());
             if !unpack_sig(sig, &mut ctilde.0, &mut z, &mut h_vec) {
                 return Ok(false);
             }
@@ -1566,7 +1619,7 @@ macro_rules! ml_dsa_impl {
                 return Ok(false);
             }
 
-            let a_hat = expand_a(&rho.0)?;
+            let a_hat = observed(B::VerifyA, expand_a(&rho.0)?);
 
             let mut tr = $crate::Wiped([0u8; 64]);
             {
@@ -1586,17 +1639,17 @@ macro_rules! ml_dsa_impl {
                 h_mu.squeeze(&mut mu.0)?;
             }
 
-            let c = sample_in_ball(&ctilde.0)?;
-            let mut c_hat = c.clone();
+            let c = observed(B::VerifyC, sample_in_ball(&ctilde.0)?);
+            let mut c_hat = observed(B::VerifyCHat, c.clone());
             c_hat.ntt();
 
-            let mut z_hat = z.clone();
+            let mut z_hat = observed(B::VerifyZHat, z.clone());
             z_hat.ntt();
 
-            let mut w_prime = PolyVecK::zero();
+            let mut w_prime = observed(B::VerifyWPrime, PolyVecK::zero());
             matrix_pointwise_mul(&mut w_prime, &a_hat, &z_hat);
 
-            let mut t1_scaled = t1.clone();
+            let mut t1_scaled = observed(B::VerifyT1Scaled, t1.clone());
             for p in &mut t1_scaled.polys {
                 for coeff in &mut p.coeffs {
                     *coeff <<= D;
@@ -1604,7 +1657,7 @@ macro_rules! ml_dsa_impl {
             }
             t1_scaled.ntt();
 
-            let mut ct1 = PolyVecK::zero();
+            let mut ct1 = observed(B::VerifyCt1, PolyVecK::zero());
             for i in 0..K {
                 poly_pointwise(&mut ct1.polys[i], &c_hat, &t1_scaled.polys[i]);
             }
@@ -1613,7 +1666,7 @@ macro_rules! ml_dsa_impl {
             w_prime.inv_ntt();
             w_prime.reduce();
 
-            let mut w1_prime = PolyVecK::zero();
+            let mut w1_prime = observed(B::VerifyW1Prime, PolyVecK::zero());
             polyveck_use_hint(&mut w1_prime, &w_prime, &h_vec);
 
             let mut ctilde_prime = $crate::Wiped([0u8; CTILDE_LEN]);
@@ -1630,11 +1683,159 @@ macro_rules! ml_dsa_impl {
             Ok(ctilde.0 == ctilde_prime.0)
         }
 
-        /// Generate a key pair (FIPS 204 §6.1).
-        pub fn keygen(xi: &[u8; SEED_LEN]) -> Result<([u8; PK_LEN], [u8; SK_LEN]), Error> {
+        /// The RBG security strength key generation requires, in bits
+        /// (FIPS 204 §3.6.1: 192 for ML-DSA-65, 256 for ML-DSA-87; for
+        /// ML-DSA-44 the module requires 192, so the claim is never reduced
+        /// to category 1).
+        const RBG_STRENGTH_BITS: u32 = $rbg_strength_bits;
+
+        const PCT_REASON: &str = $pct_reason;
+
+        /// ML-DSA.KeyGen (FIPS 204 §5.1 Algorithm 1): checks the strength of
+        /// `rbg`, draws ξ from it, expands the pair and runs the pairwise
+        /// consistency test. ξ is wiped before the function returns.
+        ///
+        /// # Errors
+        ///
+        /// - [`Error::NotOperational`] unless the module is operational.
+        /// - [`Error::AlgorithmRestricted`] when the active profile does not
+        ///   admit this parameter set's key generation.
+        /// - [`Error::RbgTooWeak`] when `rbg.strength_bits()` is below the
+        ///   requirement (192 bits for ML-DSA-44 and ML-DSA-65, 256 for
+        ///   ML-DSA-87), before any draw.
+        /// - [`Error::Rbg`] when the draw fails.
+        /// - [`Error::ConditionalTestFailed`] when the pairwise consistency
+        ///   test fails (FIPS 140-3 IG 10.3.A); the module has entered its
+        ///   error state.
+        pub fn keygen<R: oxicrypt_module::Rbg>(
+            rbg: &mut R,
+        ) -> Result<([u8; PK_LEN], [u8; SK_LEN]), Error> {
             oxicrypt_module::require_operational()?;
             oxicrypt_module::require_allowed($svc_keygen)?;
-            keygen_internal_guarded(xi)
+            let (_xi, pk, sk) = expand_checked(draw_xi(rbg)?)?;
+            Ok((pk, sk))
+        }
+
+        /// As [`keygen`], and also returns ξ so that the caller can store it
+        /// for later expansion with [`expand_key`] (FIPS 204 §3.6.3). ξ
+        /// computes the private key and needs the same safeguards.
+        ///
+        /// # Errors
+        ///
+        /// As [`keygen`].
+        pub fn keygen_with_seed<R: oxicrypt_module::Rbg>(
+            rbg: &mut R,
+        ) -> Result<
+            (
+                oxicrypt_zeroize::Zeroizing<[u8; SEED_LEN]>,
+                [u8; PK_LEN],
+                [u8; SK_LEN],
+            ),
+            Error,
+        > {
+            oxicrypt_module::require_operational()?;
+            oxicrypt_module::require_allowed($svc_keygen)?;
+            let (xi, pk, sk) = expand_checked(draw_xi(rbg)?)?;
+            Ok((oxicrypt_zeroize::Zeroizing::new(xi.bytes), pk, sk))
+        }
+
+        /// Expands the key pair from a stored seed ξ (FIPS 204 §3.6.3) and
+        /// runs the pairwise consistency test, on every call (FIPS 140-3
+        /// IG 10.3.A). A seed that did not come from this module's
+        /// [`keygen_with_seed`] is a private key imported from outside the
+        /// boundary. `xi` is the caller's and is not modified.
+        ///
+        /// # Errors
+        ///
+        /// - [`Error::NotOperational`] unless the module is operational.
+        /// - [`Error::AlgorithmRestricted`] when the active profile does not
+        ///   admit this parameter set's key expansion.
+        /// - [`Error::ConditionalTestFailed`] as for [`keygen`].
+        pub fn expand_key(xi: &[u8; SEED_LEN]) -> Result<([u8; PK_LEN], [u8; SK_LEN]), Error> {
+            oxicrypt_module::require_operational()?;
+            oxicrypt_module::require_allowed($svc_expand_key)?;
+            let mut copy = $crate::wipe::Tagged::new($crate::wipe::WipedBuffer::Xi);
+            copy.bytes = *xi;
+            let (_copy, pk, sk) = expand_checked(copy)?;
+            Ok((pk, sk))
+        }
+
+        /// Checks the strength of `rbg` against [`RBG_STRENGTH_BITS`], then
+        /// draws ξ (FIPS 204 Algorithm 1 step 1).
+        fn draw_xi<R: oxicrypt_module::Rbg>(
+            rbg: &mut R,
+        ) -> Result<$crate::wipe::Tagged<SEED_LEN>, Error> {
+            if rbg.strength_bits() < RBG_STRENGTH_BITS {
+                return Err(Error::RbgTooWeak);
+            }
+            let mut xi = $crate::wipe::Tagged::new($crate::wipe::WipedBuffer::Xi);
+            rbg.fill(&mut xi.bytes).map_err(Error::Rbg)?;
+            Ok(xi)
+        }
+
+        /// Expands the pair from the module's copy of ξ and runs the pairwise
+        /// consistency test before either half is returned; returns ξ with
+        /// the pair. The module state is checked again after the test, so a
+        /// pair is not returned once another thread has put the module in
+        /// its error state.
+        fn expand_checked(
+            xi: $crate::wipe::Tagged<SEED_LEN>,
+        ) -> Result<($crate::wipe::Tagged<SEED_LEN>, [u8; PK_LEN], [u8; SK_LEN]), Error> {
+            use $crate::wipe::{Tagged, WipedBuffer};
+
+            let mut pk = Tagged::<PK_LEN>::new(WipedBuffer::PublicKey);
+            let mut sk = Tagged::<SK_LEN>::new(WipedBuffer::SecretKey);
+            ml_dsa_keygen_into(&xi.bytes, &mut pk.bytes, &mut sk.bytes)?;
+            #[cfg(any(test, feature = "fault-injection"))]
+            if $crate::seam::take_corrupt_next_pk() {
+                pk.bytes[1] ^= 0xFF;
+            }
+            if !pairwise_consistency(&pk.bytes, &sk.bytes)? {
+                return Err(pairwise_consistency_failed(xi, pk, sk));
+            }
+            oxicrypt_module::require_operational()?;
+            Ok((xi, pk.bytes, sk.bytes))
+        }
+
+        /// Wipes ξ and both halves of a pair that failed the pairwise
+        /// consistency test, then puts the module in its error state
+        /// (FIPS 140-3 IG 10.3.A), and returns the error to report.
+        fn pairwise_consistency_failed(
+            xi: $crate::wipe::Tagged<SEED_LEN>,
+            pk: $crate::wipe::Tagged<PK_LEN>,
+            sk: $crate::wipe::Tagged<SK_LEN>,
+        ) -> Error {
+            drop(xi);
+            drop(pk);
+            drop(sk);
+            oxicrypt_module::enter_error_state(PCT_REASON);
+            Error::ConditionalTestFailed { reason: PCT_REASON }
+        }
+
+        /// The pairwise consistency test (FIPS 140-3 IG 10.3.A): signs
+        /// [`oxicrypt_module::PCT_MESSAGE`] with the empty context and the
+        /// deterministic randomizer, then verifies it under `pk`. `false`
+        /// when the signature does not verify, or when signing exhausts its
+        /// rejection loop.
+        fn pairwise_consistency(pk: &[u8; PK_LEN], sk: &[u8; SK_LEN]) -> Result<bool, Error> {
+            let prefix = $crate::build_external_prefix(&[])?;
+            let mut sig =
+                $crate::wipe::Tagged::<SIG_LEN>::new($crate::wipe::WipedBuffer::PctSignature);
+            if !ml_dsa_sign_into(
+                sk,
+                prefix.as_slice(),
+                &oxicrypt_module::PCT_MESSAGE,
+                &[0u8; 32],
+                &mut sig.bytes,
+            )? {
+                return Ok(false);
+            }
+            ml_dsa_verify(
+                pk,
+                prefix.as_slice(),
+                &oxicrypt_module::PCT_MESSAGE,
+                &sig.bytes,
+            )
         }
 
         /// Sign a message (FIPS 204 §5.2 Algorithm 2, deterministic).
@@ -1679,11 +1880,12 @@ macro_rules! ml_dsa_impl {
         #[doc(hidden)]
         pub fn keygen_internal(xi: &[u8; SEED_LEN]) -> Result<([u8; PK_LEN], [u8; SK_LEN]), Error> {
             oxicrypt_module::require_self_test_started()?;
-            ml_dsa_keygen(xi)
+            keygen_internal_guarded(xi)
         }
 
-        /// Key generation behind the `require_self_test_started` guard, for
-        /// the power-up self-tests and `keygen_internal`.
+        /// Key generation behind the `require_self_test_started` guard. Called
+        /// by the key-generation self-tests (ML-DSA-87, and ML-DSA-44 in its
+        /// rejection CAST), the crate's unit tests and `keygen_internal`.
         pub(crate) fn keygen_internal_guarded(
             xi: &[u8; SEED_LEN],
         ) -> Result<([u8; PK_LEN], [u8; SK_LEN]), Error> {
@@ -1712,11 +1914,12 @@ macro_rules! ml_dsa_impl {
             rnd: &[u8; 32],
         ) -> Result<[u8; SIG_LEN], Error> {
             oxicrypt_module::require_self_test_started()?;
-            ml_dsa_sign(sk, &[], message, rnd)?.ok_or(Error::InvalidInput)
+            sign_internal_guarded(sk, message, rnd)
         }
 
-        /// Signing behind the `require_self_test_started` guard, for the
-        /// power-up self-tests and `sign_internal`.
+        /// Signing behind the `require_self_test_started` guard. Called by the
+        /// signing self-tests (ML-DSA-87 and ML-DSA-44), the crate's unit tests
+        /// and `sign_internal`.
         pub(crate) fn sign_internal_guarded(
             sk: &[u8; SK_LEN],
             message: &[u8],
@@ -1752,17 +1955,12 @@ macro_rules! ml_dsa_impl {
             ml_dsa_verify(pk, &[], message, sig)
         }
 
-        // Compile-time sanity: the shared `SEED_LEN` constant from
-        // `crate::params` matches the variant-local re-export.
-        #[allow(dead_code)]
-        const _ASSERT_SEED_LEN_MATCHES: usize = SHARED_SEED_LEN - SEED_LEN;
-
         // The feature-gated `expand_a` must equal an always-sequential
         // reference loop, which never touches the rayon path, cell for cell
-        // for a few fixed ρ. Key-generation known-answer tests cover
-        // ML-DSA-87 byte for byte and ML-DSA-44 through a digest in its
-        // rejection CAST, and none covers ML-DSA-65, so this pins
-        // `expand_a` itself for every parameter set.
+        // for a few fixed ρ. The key-generation vectors check `expand_a`
+        // only through the whole key pair, and for ML-DSA-44 and ML-DSA-65
+        // only through a digest, so this pins `expand_a` itself for every
+        // parameter set.
         #[cfg(all(test, feature = "parallel"))]
         mod parallel_determinism {
             use super::*;
@@ -1919,12 +2117,392 @@ macro_rules! ml_dsa_impl {
         }
 
         #[cfg(test)]
+        mod rbg_services {
+            use super::*;
+            use oxicrypt_module::{Rbg, RbgError};
+
+            /// An RBG that serves `stream` from its start on every draw, at a
+            /// chosen strength, and counts its draws.
+            pub(super) struct CountingRbg {
+                pub(super) stream: [u8; SEED_LEN],
+                pub(super) strength: u32,
+                pub(super) draws: usize,
+            }
+
+            impl CountingRbg {
+                pub(super) fn new(stream: [u8; SEED_LEN], strength: u32) -> Self {
+                    Self {
+                        stream,
+                        strength,
+                        draws: 0,
+                    }
+                }
+            }
+
+            impl Rbg for CountingRbg {
+                fn fill(&mut self, out: &mut [u8]) -> Result<(), RbgError> {
+                    self.draws += 1;
+                    let Some(source) = self.stream.get(..out.len()) else {
+                        return Err(RbgError::RequestTooLong);
+                    };
+                    out.copy_from_slice(source);
+                    Ok(())
+                }
+
+                fn strength_bits(&self) -> u32 {
+                    self.strength
+                }
+            }
+
+            /// `keygen` and `keygen_with_seed` draw ξ once, as one 32-byte
+            /// request, and return what the internal core gives for that ξ.
+            #[test]
+            fn with_rbg_matches_internal_core() {
+                crate::test_support::start_module();
+                let stream = [0x3c; SEED_LEN];
+                let expected = keygen_internal_guarded(&stream).unwrap();
+
+                let mut rbg = CountingRbg::new(stream, RBG_STRENGTH_BITS);
+                assert_eq!(keygen(&mut rbg).unwrap(), expected);
+                assert_eq!(rbg.draws, 1);
+
+                let mut rbg = CountingRbg::new(stream, RBG_STRENGTH_BITS);
+                let (xi, pk, sk) = keygen_with_seed(&mut rbg).unwrap();
+                assert_eq!((*xi, pk, sk), (stream, expected.0, expected.1));
+                assert_eq!(rbg.draws, 1);
+            }
+
+            /// `keygen` and `keygen_with_seed` given an RBG of `bits`
+            /// strength, and the number of draws the two made.
+            pub(super) fn with_strength(
+                bits: u32,
+            ) -> (Result<(), Error>, Result<(), Error>, usize) {
+                crate::test_support::start_module();
+                let mut rbg = CountingRbg::new([0x3c; SEED_LEN], bits);
+                let plain = keygen(&mut rbg).map(drop);
+                let with_seed = keygen_with_seed(&mut rbg).map(drop);
+                (plain, with_seed, rbg.draws)
+            }
+
+            /// A 128-bit RBG is refused before any draw by every set, and an
+            /// uninstantiated DRBG of sufficient strength is refused by its
+            /// draw. Each set's exact floor is pinned in its own module.
+            #[test]
+            fn with_rbg_refuses_weak_or_uninstantiated() {
+                crate::test_support::start_module();
+                let mut rbg = CountingRbg::new([0x3c; SEED_LEN], 128);
+                assert_eq!(keygen(&mut rbg).map(drop), Err(Error::RbgTooWeak));
+                assert_eq!(keygen_with_seed(&mut rbg).map(drop), Err(Error::RbgTooWeak));
+                assert_eq!(rbg.draws, 0);
+
+                // Uninstantiated, so any draw would fail with
+                // `Uninstantiated`: `RbgTooWeak` shows no draw was made.
+                let mut aes128 = oxicrypt_drbg::CtrDrbgAes128::new();
+                assert_eq!(keygen(&mut aes128).map(drop), Err(Error::RbgTooWeak));
+                assert_eq!(
+                    keygen_with_seed(&mut aes128).map(drop),
+                    Err(Error::RbgTooWeak)
+                );
+
+                let mut hmac = oxicrypt_drbg::HmacDrbgSha256::new();
+                assert_eq!(
+                    keygen(&mut hmac).map(drop),
+                    Err(Error::Rbg(RbgError::Uninstantiated))
+                );
+                assert_eq!(
+                    keygen_with_seed(&mut hmac).map(drop),
+                    Err(Error::Rbg(RbgError::Uninstantiated))
+                );
+            }
+
+            /// `expand_key` reproduces the pair `keygen_with_seed` returned
+            /// from the seed it returned, and a seed with one byte changed
+            /// does not.
+            #[test]
+            fn keygen_with_seed_round_trips() {
+                crate::test_support::start_module();
+                let mut rbg = CountingRbg::new([0x96; SEED_LEN], RBG_STRENGTH_BITS);
+                let (xi, pk, sk) = keygen_with_seed(&mut rbg).unwrap();
+                let seed: [u8; SEED_LEN] = *xi;
+                assert_eq!(expand_key(&seed).unwrap(), (pk, sk));
+                assert_eq!(
+                    seed, [0x96; SEED_LEN],
+                    "expand_key modified the caller's seed"
+                );
+
+                let mut mutated = seed;
+                mutated[0] ^= 0x01;
+                let (other_pk, other_sk) = expand_key(&mutated).unwrap();
+                assert_ne!(other_pk, pk);
+                assert_ne!(other_sk, sk);
+            }
+        }
+
+        #[cfg(all(test, feature = "fault-injection"))]
+        mod wipe_on_exit {
+            extern crate std;
+
+            use super::rbg_services::CountingRbg;
+            use super::*;
+            use oxicrypt_module::{Rbg, RbgError};
+            use $crate::seam;
+            use $crate::wipe::WipedBuffer::{self, *};
+
+            /// Every buffer a key generation that reaches the pairwise
+            /// consistency test holds.
+            const KEY_GENERATION: &[WipedBuffer] = &[
+                Xi,
+                Rho,
+                RhoPrime,
+                Key,
+                Tr,
+                PublicKey,
+                SecretKey,
+                PctSignature,
+                KeygenA,
+                KeygenS1,
+                KeygenS2,
+                KeygenS1Hat,
+                KeygenT,
+                KeygenT1,
+                KeygenT0,
+                SignS1,
+                SignS2,
+                SignT0,
+                SignA,
+                SignS1Hat,
+                SignS2Hat,
+                SignT0Hat,
+                SignY,
+                SignYHat,
+                SignW,
+                SignW1,
+                SignW0,
+                SignC,
+                SignCHat,
+                SignZ,
+                SignCs2,
+                SignR0,
+                SignCt0,
+                SignA0,
+                SignHint,
+                VerifyT1,
+                VerifyZ,
+                VerifyHint,
+                VerifyA,
+                VerifyC,
+                VerifyCHat,
+                VerifyZHat,
+                VerifyWPrime,
+                VerifyT1Scaled,
+                VerifyCt1,
+                VerifyW1Prime,
+                SignKey,
+                SignMu,
+                SignRhoPrimePrime,
+            ];
+
+            /// Set in a child process to `<entry point> <token>`.
+            const CHILD: &str = "OXICRYPT_ML_DSA_WIPE_CHILD";
+
+            /// Printed by a child, as a line of its own, once every
+            /// assertion passed.
+            const DONE: &str = "wipe child done:";
+
+            /// The entry points whose pairwise consistency failure is faulted,
+            /// each in a child process of its own.
+            const FAULTED: [&str; 3] = ["keygen", "keygen_with_seed", "expand_key"];
+
+            /// The entry point this process faults, when it is a child its
+            /// parent started: [`CHILD`] holds the name and a token, and the
+            /// token is also one of the process's arguments, so an inherited
+            /// [`CHILD`] variable does not make a top-level run a child.
+            fn child_entry() -> Option<std::string::String> {
+                let value = std::env::var(CHILD).ok()?;
+                let (name, token) = value.split_once(' ')?;
+                std::env::args()
+                    .any(|arg| arg == token)
+                    .then(|| std::borrow::ToOwned::to_owned(name))
+            }
+
+            /// Runs `command` with both pipes drained, killing it after five
+            /// minutes. Returns its success, stdout and stderr.
+            fn run_child(
+                mut command: std::process::Command,
+            ) -> (bool, std::string::String, std::string::String) {
+                use std::io::Read;
+
+                let mut child = command
+                    .stdout(std::process::Stdio::piped())
+                    .stderr(std::process::Stdio::piped())
+                    .spawn()
+                    .unwrap();
+                let drain = |mut pipe: std::boxed::Box<dyn Read + Send>| {
+                    std::thread::spawn(move || {
+                        let mut bytes = std::vec::Vec::new();
+                        pipe.read_to_end(&mut bytes).unwrap();
+                        std::string::String::from_utf8_lossy(&bytes).into_owned()
+                    })
+                };
+                let stdout = drain(std::boxed::Box::new(child.stdout.take().unwrap()));
+                let stderr = drain(std::boxed::Box::new(child.stderr.take().unwrap()));
+                let start = std::time::Instant::now();
+                let status = loop {
+                    if let Some(status) = child.try_wait().unwrap() {
+                        break status;
+                    }
+                    if start.elapsed() > std::time::Duration::from_mins(5) {
+                        child.kill().unwrap();
+                        panic!("a child did not finish");
+                    }
+                    std::thread::sleep(std::time::Duration::from_millis(10));
+                };
+                (
+                    status.success(),
+                    stdout.join().unwrap(),
+                    stderr.join().unwrap(),
+                )
+            }
+
+            struct FailingRbg;
+
+            impl Rbg for FailingRbg {
+                fn fill(&mut self, out: &mut [u8]) -> Result<(), RbgError> {
+                    oxicrypt_zeroize::zeroize(out);
+                    Err(RbgError::Busy)
+                }
+
+                fn strength_bits(&self) -> u32 {
+                    256
+                }
+            }
+
+            /// Checks that, since the last reset, exactly the buffers in
+            /// `held` were constructed, each was wiped as often as it was
+            /// constructed and at least once, and every wipe left it zero.
+            fn assert_wiped(exit: &str, held: &[WipedBuffer]) {
+                for buffer in $crate::wipe::ALL {
+                    let made = seam::temporaries(buffer);
+                    let wiped = seam::wipes(buffer);
+                    if held.contains(&buffer) {
+                        assert!(wiped >= 1, "{exit}: {buffer:?} has no recorded wipe");
+                        assert_eq!(wiped, made, "{exit}: {buffer:?} wiped {wiped} of {made}");
+                    } else {
+                        assert_eq!(made, 0, "{exit}: {buffer:?} is not in the list");
+                    }
+                }
+                assert_eq!(seam::unwiped(), 0, "{exit}: a wipe left a nonzero byte");
+                seam::reset();
+            }
+
+            /// Every identity in `wipe::ALL` that an exit of the
+            /// key-generation services constructs is wiped on that exit, and
+            /// no other identity is constructed. The exits: a strength
+            /// refusal (which holds none) and a failed draw, each through
+            /// `keygen` and `keygen_with_seed`; success through each entry
+            /// point; and a failed pairwise consistency test through each
+            /// entry point, each in a child process of its own because it
+            /// puts the module in its error state.
+            ///
+            /// Limit: not observed are the bitwise copies a by-value move
+            /// leaves, the returned `Zeroizing` ξ, the `Wiped` buffers that
+            /// hold only values derived from public data (ρ, tr, c̃, packed
+            /// w₁), and the `Wiped` and `WipedWords` scratch of the samplers
+            /// and packers; not
+            /// exercised are the expansion core's error exit, which the
+            /// service's own gate excludes, signing exhausting its rejection
+            /// loop, and the error exits inside `pairwise_consistency`.
+            #[test]
+            fn seeds_wiped_on_every_exit() {
+                let refused = Err(Error::RbgTooWeak);
+                let failed = Err(Error::ConditionalTestFailed { reason: PCT_REASON });
+
+                crate::test_support::start_module();
+                if let Some(entry) = child_entry() {
+                    seam::reset();
+                    seam::corrupt_next_pk();
+                    let mut rbg = CountingRbg::new([0x11; SEED_LEN], 256);
+                    let outcome = match entry.as_str() {
+                        "keygen" => keygen(&mut rbg).map(drop),
+                        "keygen_with_seed" => keygen_with_seed(&mut rbg).map(drop),
+                        "expand_key" => expand_key(&[0x22; SEED_LEN]).map(drop),
+                        other => panic!("no entry point named {other}"),
+                    };
+                    assert_eq!(outcome, failed);
+                    assert!(!oxicrypt_module::is_operational());
+                    assert_wiped(&entry, KEY_GENERATION);
+                    std::eprintln!("{DONE} {entry}");
+                    return;
+                }
+
+                seam::reset();
+                let mut weak = CountingRbg::new([0x11; SEED_LEN], 128);
+                assert_eq!(keygen(&mut weak).map(drop), refused);
+                assert_wiped("keygen strength refusal", &[]);
+                assert_eq!(keygen_with_seed(&mut weak).map(drop), refused);
+                assert_wiped("keygen_with_seed strength refusal", &[]);
+
+                let busy = Err(Error::Rbg(RbgError::Busy));
+                assert_eq!(keygen(&mut FailingRbg).map(drop), busy);
+                assert_wiped("keygen draw failure", &[Xi]);
+                assert_eq!(keygen_with_seed(&mut FailingRbg).map(drop), busy);
+                assert_wiped("keygen_with_seed draw failure", &[Xi]);
+
+                let mut rbg = CountingRbg::new([0x11; SEED_LEN], 256);
+                keygen(&mut rbg).unwrap();
+                assert_wiped("keygen", KEY_GENERATION);
+                let (xi, _, _) = keygen_with_seed(&mut rbg).unwrap();
+                assert_wiped("keygen_with_seed", KEY_GENERATION);
+                drop(xi);
+                let seed = [0x22; SEED_LEN];
+                expand_key(&seed).unwrap();
+                assert_eq!(seed, [0x22; SEED_LEN]);
+                assert_wiped("expand_key", KEY_GENERATION);
+
+                let name = module_path!()
+                    .split_once("::")
+                    .map(|(_, path)| std::format!("{path}::seeds_wiped_on_every_exit"))
+                    .unwrap();
+                let token = std::format!(
+                    "wipe-token-{:016x}",
+                    std::hash::BuildHasher::hash_one(
+                        &std::collections::hash_map::RandomState::new(),
+                        std::process::id()
+                    )
+                );
+                for entry in FAULTED {
+                    let mut command = std::process::Command::new(std::env::current_exe().unwrap());
+                    command
+                        .args([
+                            name.as_str(),
+                            token.as_str(),
+                            "--exact",
+                            "--nocapture",
+                            "--test-threads=1",
+                        ])
+                        .env(CHILD, std::format!("{entry} {token}"));
+                    let (success, stdout, stderr) = run_child(command);
+                    let done = std::format!("{DONE} {entry}");
+                    assert!(
+                        success
+                            && stdout
+                                .lines()
+                                .any(|line| line.starts_with("test result: ok. 1 passed;"))
+                            && stderr.lines().any(|line| line == done),
+                        "the {entry} child failed:\n{stdout}{stderr}"
+                    );
+                }
+            }
+        }
+
+        #[cfg(test)]
         mod randomizer {
             use super::*;
 
             /// FIPS 204 Algorithm 7 absorbs `rnd` into ρ″, so a non-zero `rnd`
             /// gives a signature other than the deterministic one, and both
-            /// verify.
+            /// verify. Checked on the core and through `sign_internal_guarded`,
+            /// so a guarded path that dropped `rnd` fails.
             #[test]
             fn a_nonzero_rnd_changes_the_signature_and_it_verifies() {
                 crate::test_support::start_module();
@@ -1935,6 +2513,10 @@ macro_rules! ml_dsa_impl {
                 assert_ne!(hedged, zero, "rnd did not reach the signature");
                 assert!(ml_dsa_verify(&pk, &[], msg, &hedged).unwrap());
                 assert!(ml_dsa_verify(&pk, &[], msg, &zero).unwrap());
+                let guarded_zero = sign_internal_guarded(&sk, msg, &[0u8; 32]).unwrap();
+                let guarded_hedged = sign_internal_guarded(&sk, msg, &[0xA5u8; 32]).unwrap();
+                assert_eq!(guarded_zero, zero);
+                assert_eq!(guarded_hedged, hedged, "the guarded path dropped rnd");
             }
         }
     };

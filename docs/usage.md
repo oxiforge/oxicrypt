@@ -189,20 +189,17 @@ kw_wrap(&kek, &key_to_wrap, &mut wrapped)?;
 ```rust
 use oxicrypt_drbg::CtrDrbgAes256;
 
-let mut drbg = CtrDrbgAes256::new();
+// The module seeds the instance from its own entropy source; the
+// argument is an optional personalization string.
+let mut drbg = CtrDrbgAes256::instantiate_from_module(b"my-application")?;
 
-// Instantiate with entropy, nonce, and optional personalization
-drbg.instantiate_df(&entropy, &nonce, b"my-application")?;
-
-// Generate random bytes
+// Generate random bytes (optional additional input, then the output).
 let mut random_bytes = [0u8; 32];
-drbg.generate_df(&mut random_bytes, &[])?;
+drbg.generate_df(None, &mut random_bytes)?;
 
-// Reseed when needed
-drbg.reseed_df(&fresh_entropy, &[])?;
-
-// Generate with prediction resistance (fresh entropy per call)
-drbg.generate_df_pr(&fresh_entropy, &mut random_bytes, &[])?;
+// Reseed from the module on demand; the instance also reseeds itself when
+// its reseed counter reaches the SP 800-90A interval.
+drbg.reseed_from_module(&[])?;
 ```
 
 Three DRBG families are available: `CtrDrbgAes128` / `CtrDrbgAes192` /
@@ -243,8 +240,7 @@ let signature = key.sign_pss_sha256(&mut drbg, b"message")?;
 use oxicrypt_rsa::RsaPrivateKey2048;
 use oxicrypt_drbg::HmacDrbgSha256;
 
-let mut drbg = HmacDrbgSha256::new();
-drbg.instantiate_no_df(&seed)?;
+let mut drbg = HmacDrbgSha256::instantiate_from_module(b"")?;
 let key = RsaPrivateKey2048::generate(&mut drbg)?;
 ```
 
@@ -256,8 +252,7 @@ let key = RsaPrivateKey2048::generate(&mut drbg)?;
 use oxicrypt_ecdsa::EcdsaP256PrivateKey;
 use oxicrypt_drbg::HmacDrbgSha256;
 
-let mut drbg = HmacDrbgSha256::new();
-drbg.instantiate_no_df(&seed)?;
+let mut drbg = HmacDrbgSha256::instantiate_from_module(b"")?;
 
 // Generate a key (includes pairwise consistency test)
 let key = EcdsaP256PrivateKey::generate(&mut drbg)?;
@@ -283,8 +278,7 @@ let valid = verify(&public_key, b"message", &signature)?;
 use oxicrypt_eddsa::Ed25519PrivateKey;
 use oxicrypt_drbg::HmacDrbgSha256;
 
-let mut drbg = HmacDrbgSha256::new();
-drbg.instantiate_no_df(&seed)?;
+let mut drbg = HmacDrbgSha256::instantiate_from_module(b"")?;
 
 // Generate a key (includes pairwise consistency test)
 let key = Ed25519PrivateKey::generate(&mut drbg)?;
@@ -315,8 +309,7 @@ for input to a KDF (SP 800-56Cr2 two-step or HKDF).
 use oxicrypt_dh::{generate_keypair_3072, compute_shared_secret_3072};
 use oxicrypt_drbg::hmac::HmacDrbgSha256;
 
-let mut drbg = HmacDrbgSha256::new();
-drbg.instantiate(&entropy, &nonce, b"dh-keygen")?;
+let mut drbg = HmacDrbgSha256::instantiate_from_module(b"dh-keygen")?;
 
 // Each party generates a key pair: (private x, public y), 384 bytes each.
 let (alice_x, alice_y) = generate_keypair_3072(&mut drbg)?;
@@ -354,10 +347,19 @@ the same API.
 ## ML-DSA (post-quantum signatures, FIPS 204)
 
 ```rust
-use oxicrypt_ml_dsa::ml_dsa_87::{keygen, sign, verify};
+use oxicrypt_drbg::HmacDrbgSha256;
+use oxicrypt_ml_dsa::ml_dsa_87::{expand_key, keygen, keygen_with_seed, sign, verify};
 
-// keygen from a 32-byte seed; returns (public key, secret key).
-let (pk, sk) = keygen(&xi)?;
+// The module draws the 32-byte seed ξ from a DRBG of at least 256-bit
+// strength and runs the pairwise consistency test; returns
+// (public key, secret key).
+let mut drbg = HmacDrbgSha256::instantiate_from_module(b"")?;
+let (pk, sk) = keygen(&mut drbg)?;
+
+// To store the key as its seed, take ξ too (it needs the same protection
+// as the secret key), and expand it again later.
+let (xi, pk, sk) = keygen_with_seed(&mut drbg)?;
+let (pk, sk) = expand_key(&xi)?;
 
 // Sign with an empty context (the X.509 / CMS / OpenSSL 3.5 default).
 let sig = sign(&sk, b"message to sign", b"")?;
@@ -367,7 +369,8 @@ verify(&pk, b"message to sign", b"", &sig)?;
 ```
 
 ML-DSA-44 and ML-DSA-65 are available via the `ml_dsa_44` / `ml_dsa_65`
-modules with the same API.
+modules with the same API; their key generation requires a DRBG of at
+least 192-bit strength.
 
 ## SLH-DSA (post-quantum stateless hash-based signatures, FIPS 205)
 

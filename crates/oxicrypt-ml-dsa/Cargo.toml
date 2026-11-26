@@ -31,6 +31,10 @@ accel-keccak = ["oxicrypt-sha/accel-keccak"]
 # set, which FIPS 204 §6 restricts to CAVP testing. Default OFF, and enabled
 # by no shipped build.
 testing-interfaces = []
+# The test seam `oxicrypt_ml_dsa::seam`, which corrupts the next generated
+# public key before its pairwise consistency test. Default OFF, and enabled
+# by no shipped build.
+fault-injection = []
 
 [dependencies]
 oxicrypt-module = { workspace = true }
@@ -38,6 +42,26 @@ oxicrypt-sha = { workspace = true }
 oxicrypt-xof = { workspace = true }
 oxicrypt-zeroize = { workspace = true }
 rayon = { version = "1", optional = true }
+
+# The DRBG types whose strength and instantiation the key-generation tests
+# check.
+[dev-dependencies]
+oxicrypt-drbg = { path = "../oxicrypt-drbg" }
+
+[[test]]
+name = "pct_fault_ml_dsa_44"
+path = "tests/pct_fault_ml_dsa_44.rs"
+required-features = ["fault-injection"]
+
+[[test]]
+name = "pct_fault_ml_dsa_65"
+path = "tests/pct_fault_ml_dsa_65.rs"
+required-features = ["fault-injection"]
+
+[[test]]
+name = "pct_fault_ml_dsa_87"
+path = "tests/pct_fault_ml_dsa_87.rs"
+required-features = ["fault-injection"]
 
 [package.metadata.lama]
 # Registry discovery (LAMA SPEC.md, "Package registry discovery"). Must be a

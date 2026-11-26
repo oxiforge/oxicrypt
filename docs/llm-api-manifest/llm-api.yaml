@@ -8432,30 +8432,34 @@ functions:
   - name: keygen
     module: oxicrypt-ml-dsa
     family: ml-dsa-keygen
-    signature: "pub fn keygen(xi: &[u8; 32]) -> Result<([u8; 2592], [u8; 4896]), Error>"
-    description: Generate an ML-DSA-87 key pair; xi must be 32 bytes of fresh randomness from an approved DRBG (SP 800-90A).
+    signature: >-
+      pub fn keygen<R: oxicrypt_module::Rbg>(rbg: &mut R)
+      -> Result<([u8; 2592], [u8; 4896]), Error>
+    description: ML-DSA.KeyGen for ML-DSA-87 (FIPS 204 Algorithm 1); checks that rbg has at least 256-bit strength, draws the 32-byte seed ξ from it inside the module, expands the pair and runs a sign-then-verify pairwise consistency test (FIPS 140-3 IG 10.3.A) before returning it; ξ is wiped and never returned; the crate root re-exports ml_dsa_87::keygen under this name.
     parameters:
-      - name: xi
-        type: "&[u8; 32]"
-        constraints:
-          size: 32
-        direction: in
-        description: "32-byte randomness for key generation (FIPS 204 keygen seed)."
+      - name: rbg
+        type: "&mut R where R: oxicrypt_module::Rbg"
+        direction: inout
+        description: An instantiated oxicrypt-drbg DRBG of at least 256-bit strength, whose one 32-byte fill produces ξ.
     returns:
       type: "Result<([u8; 2592], [u8; 4896]), Error>"
       description: "(public_key, secret_key)"
       error_variants:
         - name: NotOperational
-          condition: Module not initialized.
+          condition: Module not operational, including after a failed pairwise consistency test.
         - name: AlgorithmRestricted
-          condition: ML-DSA-87 blocked by active profile.
-        - name: InvalidInput
-          condition: Invalid or insufficient randomness.
+          condition: ML-DSA-87 key generation blocked by active profile.
+        - name: RbgTooWeak
+          condition: rbg.strength_bits() is below 256; returned before any draw.
+        - name: Rbg
+          condition: The draw failed; carries its RbgError unchanged, for example Uninstantiated.
+        - name: ConditionalTestFailed
+          condition: 'The pairwise consistency test failed, reason "ML-DSA-87 pairwise consistency"; the pair is wiped and the module has entered its error state.'
     preconditions:
       - description: Module must be Operational.
-      - description: xi must be 32 bytes of fresh random data from an approved DRBG.
+      - description: rbg is instantiated and reports at least 256-bit strength.
     postconditions:
-      - description: Returns a valid ML-DSA-87 key pair (2592-byte public key, 4896-byte secret key) for use with sign and verify.
+      - description: Returns a key pair that has passed the pairwise consistency test; every module-owned copy of ξ, the intermediates and the pair is wiped on every exit.
     thread_safety: thread-safe
     security:
       constant_time: true
@@ -8466,6 +8470,98 @@ functions:
       - Unrestricted
       - Cnsa2
       - Migration
+
+  - name: "ml_dsa_87::keygen_with_seed"
+    module: oxicrypt-ml-dsa
+    family: ml-dsa-keygen
+    signature: >-
+      pub fn keygen_with_seed<R: oxicrypt_module::Rbg>(rbg: &mut R)
+      -> Result<(oxicrypt_zeroize::Zeroizing<[u8; 32]>, [u8; 2592], [u8; 4896]), Error>
+    description: As keygen for ML-DSA-87, and also returns ξ so the caller can store it for later expansion with expand_key (FIPS 204 §3.6.3); ξ computes the private key and needs the same safeguards.
+    parameters:
+      - name: rbg
+        type: "&mut R where R: oxicrypt_module::Rbg"
+        direction: inout
+        description: An instantiated oxicrypt-drbg DRBG of at least 256-bit strength, whose one 32-byte fill produces ξ.
+    returns:
+      type: "Result<(oxicrypt_zeroize::Zeroizing<[u8; 32]>, [u8; 2592], [u8; 4896]), Error>"
+      description: "(xi, public_key, secret_key); xi is wiped when the Zeroizing is dropped."
+      error_variants:
+        - name: NotOperational
+          condition: Module not operational, including after a failed pairwise consistency test.
+        - name: AlgorithmRestricted
+          condition: ML-DSA-87 key generation blocked by active profile.
+        - name: RbgTooWeak
+          condition: rbg.strength_bits() is below 256; returned before any draw.
+        - name: Rbg
+          condition: The draw failed; carries its RbgError unchanged, for example Uninstantiated.
+        - name: ConditionalTestFailed
+          condition: 'The pairwise consistency test failed, reason "ML-DSA-87 pairwise consistency"; the pair is wiped and the module has entered its error state.'
+    preconditions:
+      - description: Module must be Operational.
+      - description: rbg is instantiated and reports at least 256-bit strength.
+    postconditions:
+      - description: expand_key on the returned ξ reproduces the returned pair.
+    thread_safety: thread-safe
+    security:
+      constant_time: true
+      handles_secrets: true
+      fips_approved: true
+      fips_gate: Operational
+    profiles:
+      - Unrestricted
+      - Cnsa2
+      - Migration
+
+  - name: "ml_dsa_87::expand_key"
+    module: oxicrypt-ml-dsa
+    family: ml-dsa-keygen
+    signature: "pub fn expand_key(xi: &[u8; 32]) -> Result<([u8; 2592], [u8; 4896]), Error>"
+    description: Expands the ML-DSA-87 key pair from a stored seed ξ (FIPS 204 §3.6.3) and runs the pairwise consistency test on every call (FIPS 140-3 IG 10.3.A); a seed that did not come from keygen_with_seed is a private key imported from outside the boundary.
+    parameters:
+      - name: xi
+        type: "&[u8; 32]"
+        constraints:
+          size: 32
+        direction: in
+        description: The stored seed; the caller's, not modified, and the caller's to wipe.
+    returns:
+      type: "Result<([u8; 2592], [u8; 4896]), Error>"
+      description: "(public_key, secret_key)"
+      error_variants:
+        - name: NotOperational
+          condition: Module not operational, including after a failed pairwise consistency test.
+        - name: AlgorithmRestricted
+          condition: ML-DSA-87 key expansion blocked by active profile.
+        - name: ConditionalTestFailed
+          condition: 'The pairwise consistency test failed, reason "ML-DSA-87 pairwise consistency"; the pair is wiped and the module has entered its error state.'
+    preconditions:
+      - description: Module must be Operational.
+    postconditions:
+      - description: The same ξ always gives the same pair; every module-owned copy of the intermediates and the pair is wiped on every exit.
+    thread_safety: thread-safe
+    security:
+      constant_time: true
+      handles_secrets: true
+      fips_approved: true
+      fips_gate: Operational
+    profiles:
+      - Unrestricted
+      - Cnsa2
+      - Migration
+
+  - name: "seam::corrupt_next_pk"
+    module: oxicrypt-ml-dsa
+    description: "Arms the next ML-DSA key generation in the process, of any parameter set and through keygen, keygen_with_seed or expand_key, to flip byte 1 of the encoded public key before its pairwise consistency test, which then fails and puts the module in its error state; available with the fault-injection feature or in the crate's own tests."
+    signature: "pub fn corrupt_next_pk()"
+    returns:
+      type: "()"
+      description: "Nothing."
+    thread_safety: thread-safe
+    security:
+      constant_time: false
+      handles_secrets: false
+      fips_approved: false
 
   - name: sign
     module: oxicrypt-ml-dsa
@@ -8574,25 +8670,93 @@ functions:
   - name: "ml_dsa_44::keygen"
     module: oxicrypt-ml-dsa
     family: ml-dsa-keygen
-    signature: "pub fn keygen(xi: &[u8; 32]) -> Result<([u8; 1312], [u8; 2560]), Error>"
-    description: Generate an ML-DSA-44 key pair (FIPS 204 §6.1); xi is a 32-byte caller-supplied DRBG seed.
+    signature: >-
+      pub fn keygen<R: oxicrypt_module::Rbg>(rbg: &mut R)
+      -> Result<([u8; 1312], [u8; 2560]), Error>
+    description: ML-DSA.KeyGen for ML-DSA-44 (FIPS 204 Algorithm 1); checks that rbg has at least 192-bit strength (FIPS 204 §3.6.1 recommends 192 and requires 128; the module requires 192 so the category 2 claim holds), draws ξ inside the module, expands the pair and runs a sign-then-verify pairwise consistency test (FIPS 140-3 IG 10.3.A) before returning it; ξ is wiped and never returned.
+    parameters:
+      - name: rbg
+        type: "&mut R where R: oxicrypt_module::Rbg"
+        direction: inout
+        description: An instantiated oxicrypt-drbg DRBG of at least 192-bit strength, whose one 32-byte fill produces ξ.
+    returns:
+      type: "Result<([u8; 1312], [u8; 2560]), Error>"
+      description: "(public_key, secret_key)"
+      error_variants:
+        - name: NotOperational
+          condition: Module not operational, including after a failed pairwise consistency test.
+        - name: AlgorithmRestricted
+          condition: ML-DSA-44 blocked by active profile (not in CNSA 1.0 or CNSA 2.0).
+        - name: RbgTooWeak
+          condition: rbg.strength_bits() is below 192; returned before any draw.
+        - name: Rbg
+          condition: The draw failed; carries its RbgError unchanged, for example Uninstantiated.
+        - name: ConditionalTestFailed
+          condition: 'The pairwise consistency test failed, reason "ML-DSA-44 pairwise consistency"; the pair is wiped and the module has entered its error state.'
+    thread_safety: thread-safe
+    security:
+      constant_time: true
+      handles_secrets: true
+      fips_approved: true
+      fips_gate: Operational
+    profiles: [Unrestricted]
+
+  - name: "ml_dsa_44::keygen_with_seed"
+    module: oxicrypt-ml-dsa
+    family: ml-dsa-keygen
+    signature: >-
+      pub fn keygen_with_seed<R: oxicrypt_module::Rbg>(rbg: &mut R)
+      -> Result<(oxicrypt_zeroize::Zeroizing<[u8; 32]>, [u8; 1312], [u8; 2560]), Error>
+    description: As ml_dsa_44::keygen, and also returns ξ so the caller can store it for later expansion with ml_dsa_44::expand_key (FIPS 204 §3.6.3); ξ computes the private key and needs the same safeguards.
+    parameters:
+      - name: rbg
+        type: "&mut R where R: oxicrypt_module::Rbg"
+        direction: inout
+        description: An instantiated oxicrypt-drbg DRBG of at least 192-bit strength, whose one 32-byte fill produces ξ.
+    returns:
+      type: "Result<(oxicrypt_zeroize::Zeroizing<[u8; 32]>, [u8; 1312], [u8; 2560]), Error>"
+      description: "(xi, public_key, secret_key); xi is wiped when the Zeroizing is dropped."
+      error_variants:
+        - name: NotOperational
+          condition: Module not operational, including after a failed pairwise consistency test.
+        - name: AlgorithmRestricted
+          condition: ML-DSA-44 blocked by active profile (not in CNSA 1.0 or CNSA 2.0).
+        - name: RbgTooWeak
+          condition: rbg.strength_bits() is below 192; returned before any draw.
+        - name: Rbg
+          condition: The draw failed; carries its RbgError unchanged, for example Uninstantiated.
+        - name: ConditionalTestFailed
+          condition: 'The pairwise consistency test failed, reason "ML-DSA-44 pairwise consistency"; the pair is wiped and the module has entered its error state.'
+    thread_safety: thread-safe
+    security:
+      constant_time: true
+      handles_secrets: true
+      fips_approved: true
+      fips_gate: Operational
+    profiles: [Unrestricted]
+
+  - name: "ml_dsa_44::expand_key"
+    module: oxicrypt-ml-dsa
+    family: ml-dsa-keygen
+    signature: "pub fn expand_key(xi: &[u8; 32]) -> Result<([u8; 1312], [u8; 2560]), Error>"
+    description: Expands the ML-DSA-44 key pair from a stored seed ξ (FIPS 204 §3.6.3) and runs the pairwise consistency test on every call (FIPS 140-3 IG 10.3.A); a seed that did not come from keygen_with_seed is a private key imported from outside the boundary.
     parameters:
       - name: xi
         type: "&[u8; 32]"
         constraints:
           size: 32
         direction: in
-        description: 32-byte keygen seed.
+        description: The stored seed; the caller's, not modified, and the caller's to wipe.
     returns:
       type: "Result<([u8; 1312], [u8; 2560]), Error>"
       description: "(public_key, secret_key)"
       error_variants:
         - name: NotOperational
-          condition: Module not initialized.
+          condition: Module not operational, including after a failed pairwise consistency test.
         - name: AlgorithmRestricted
-          condition: ML-DSA-44 blocked by active profile (not in CNSA 1.0 or CNSA 2.0).
-        - name: InvalidInput
-          condition: Invalid or insufficient randomness.
+          condition: ML-DSA-44 key expansion blocked by active profile (not in CNSA 1.0 or CNSA 2.0).
+        - name: ConditionalTestFailed
+          condition: 'The pairwise consistency test failed, reason "ML-DSA-44 pairwise consistency"; the pair is wiped and the module has entered its error state.'
     thread_safety: thread-safe
     security:
       constant_time: true
@@ -8688,25 +8852,93 @@ functions:
   - name: "ml_dsa_65::keygen"
     module: oxicrypt-ml-dsa
     family: ml-dsa-keygen
-    signature: "pub fn keygen(xi: &[u8; 32]) -> Result<([u8; 1952], [u8; 4032]), Error>"
-    description: Generate an ML-DSA-65 key pair (FIPS 204 §6.1); xi is a 32-byte caller-supplied DRBG seed.
+    signature: >-
+      pub fn keygen<R: oxicrypt_module::Rbg>(rbg: &mut R)
+      -> Result<([u8; 1952], [u8; 4032]), Error>
+    description: ML-DSA.KeyGen for ML-DSA-65 (FIPS 204 Algorithm 1); checks that rbg has at least 192-bit strength (FIPS 204 §3.6.1), draws ξ inside the module, expands the pair and runs a sign-then-verify pairwise consistency test (FIPS 140-3 IG 10.3.A) before returning it; ξ is wiped and never returned.
+    parameters:
+      - name: rbg
+        type: "&mut R where R: oxicrypt_module::Rbg"
+        direction: inout
+        description: An instantiated oxicrypt-drbg DRBG of at least 192-bit strength, whose one 32-byte fill produces ξ.
+    returns:
+      type: "Result<([u8; 1952], [u8; 4032]), Error>"
+      description: "(public_key, secret_key)"
+      error_variants:
+        - name: NotOperational
+          condition: Module not operational, including after a failed pairwise consistency test.
+        - name: AlgorithmRestricted
+          condition: ML-DSA-65 blocked by active profile (not in CNSA 1.0 or CNSA 2.0).
+        - name: RbgTooWeak
+          condition: rbg.strength_bits() is below 192; returned before any draw.
+        - name: Rbg
+          condition: The draw failed; carries its RbgError unchanged, for example Uninstantiated.
+        - name: ConditionalTestFailed
+          condition: 'The pairwise consistency test failed, reason "ML-DSA-65 pairwise consistency"; the pair is wiped and the module has entered its error state.'
+    thread_safety: thread-safe
+    security:
+      constant_time: true
+      handles_secrets: true
+      fips_approved: true
+      fips_gate: Operational
+    profiles: [Unrestricted]
+
+  - name: "ml_dsa_65::keygen_with_seed"
+    module: oxicrypt-ml-dsa
+    family: ml-dsa-keygen
+    signature: >-
+      pub fn keygen_with_seed<R: oxicrypt_module::Rbg>(rbg: &mut R)
+      -> Result<(oxicrypt_zeroize::Zeroizing<[u8; 32]>, [u8; 1952], [u8; 4032]), Error>
+    description: As ml_dsa_65::keygen, and also returns ξ so the caller can store it for later expansion with ml_dsa_65::expand_key (FIPS 204 §3.6.3); ξ computes the private key and needs the same safeguards.
+    parameters:
+      - name: rbg
+        type: "&mut R where R: oxicrypt_module::Rbg"
+        direction: inout
+        description: An instantiated oxicrypt-drbg DRBG of at least 192-bit strength, whose one 32-byte fill produces ξ.
+    returns:
+      type: "Result<(oxicrypt_zeroize::Zeroizing<[u8; 32]>, [u8; 1952], [u8; 4032]), Error>"
+      description: "(xi, public_key, secret_key); xi is wiped when the Zeroizing is dropped."
+      error_variants:
+        - name: NotOperational
+          condition: Module not operational, including after a failed pairwise consistency test.
+        - name: AlgorithmRestricted
+          condition: ML-DSA-65 blocked by active profile (not in CNSA 1.0 or CNSA 2.0).
+        - name: RbgTooWeak
+          condition: rbg.strength_bits() is below 192; returned before any draw.
+        - name: Rbg
+          condition: The draw failed; carries its RbgError unchanged, for example Uninstantiated.
+        - name: ConditionalTestFailed
+          condition: 'The pairwise consistency test failed, reason "ML-DSA-65 pairwise consistency"; the pair is wiped and the module has entered its error state.'
+    thread_safety: thread-safe
+    security:
+      constant_time: true
+      handles_secrets: true
+      fips_approved: true
+      fips_gate: Operational
+    profiles: [Unrestricted]
+
+  - name: "ml_dsa_65::expand_key"
+    module: oxicrypt-ml-dsa
+    family: ml-dsa-keygen
+    signature: "pub fn expand_key(xi: &[u8; 32]) -> Result<([u8; 1952], [u8; 4032]), Error>"
+    description: Expands the ML-DSA-65 key pair from a stored seed ξ (FIPS 204 §3.6.3) and runs the pairwise consistency test on every call (FIPS 140-3 IG 10.3.A); a seed that did not come from keygen_with_seed is a private key imported from outside the boundary.
     parameters:
       - name: xi
         type: "&[u8; 32]"
         constraints:
           size: 32
         direction: in
-        description: 32-byte keygen seed.
+        description: The stored seed; the caller's, not modified, and the caller's to wipe.
     returns:
       type: "Result<([u8; 1952], [u8; 4032]), Error>"
       description: "(public_key, secret_key)"
       error_variants:
         - name: NotOperational
-          condition: Module not initialized.
+          condition: Module not operational, including after a failed pairwise consistency test.
         - name: AlgorithmRestricted
-          condition: ML-DSA-65 blocked by active profile (not in CNSA 1.0 or CNSA 2.0).
-        - name: InvalidInput
-          condition: Invalid or insufficient randomness.
+          condition: ML-DSA-65 key expansion blocked by active profile (not in CNSA 1.0 or CNSA 2.0).
+        - name: ConditionalTestFailed
+          condition: 'The pairwise consistency test failed, reason "ML-DSA-65 pairwise consistency"; the pair is wiped and the module has entered its error state.'
     thread_safety: thread-safe
     security:
       constant_time: true

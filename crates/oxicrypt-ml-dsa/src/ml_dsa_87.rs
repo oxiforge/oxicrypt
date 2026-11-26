@@ -8,7 +8,7 @@
 //! # CNSA gating
 //!
 //! ML-DSA-87 is the CNSA 2.0 digital-signature mandate (CNSSP 15).
-//! The `Service::MlDsa87Sign` / `Verify` / `Keygen` variants are
+//! The `Service::MlDsa87Sign` / `Verify` / `Keygen` / `ExpandKey` variants are
 //! permitted under [`oxicrypt_module::AlgorithmProfile::Unrestricted`],
 //! `Cnsa2` and `Migration`, and refused under `Cnsa1`.
 
@@ -38,8 +38,11 @@ crate::ml_dsa_impl::ml_dsa_impl! {
     beta = 120;
     omega = 75;
     svc_keygen = Service::MlDsa87Keygen;
+    svc_expand_key = Service::MlDsa87ExpandKey;
     svc_sign = Service::MlDsa87Sign;
     svc_verify = Service::MlDsa87Verify;
+    rbg_strength_bits = 256;
+    pct_reason = "ML-DSA-87 pairwise consistency";
 }
 
 #[cfg(test)]
@@ -51,6 +54,34 @@ crate::ml_dsa_impl::ml_dsa_impl! {
 )]
 mod tests {
     use super::*;
+
+    /// FIPS 204 §3.6.1: at least 256 bits for ML-DSA-87, so CTR_DRBG with
+    /// AES-192 is refused, before its draw would report it uninstantiated.
+    #[test]
+    fn strength_floor_is_256() {
+        let refused = Err(Error::RbgTooWeak);
+        assert_eq!(rbg_services::with_strength(255), (refused, refused, 0));
+        assert_eq!(rbg_services::with_strength(256), (Ok(()), Ok(()), 2));
+        let mut aes192 = oxicrypt_drbg::CtrDrbgAes192::new();
+        assert_eq!(keygen(&mut aes192).map(drop), Err(Error::RbgTooWeak));
+        assert_eq!(
+            keygen_with_seed(&mut aes192).map(drop),
+            Err(Error::RbgTooWeak)
+        );
+    }
+
+    /// ACVP ML-DSA-87 keyGen, tgId 3, tcId 51.
+    #[test]
+    fn expand_key_reproduces_acvp_vector() {
+        use crate::cast_vectors::ml_dsa_87 as v;
+        crate::test_support::start_module();
+        let (pk, sk) = expand_key(&v::KEYGEN_XI).unwrap();
+        assert_eq!(
+            &pk[..],
+            include_bytes!("../tests/data/mldsa87_nist_keygen_pk.bin")
+        );
+        assert_eq!(sk, v::KEYGEN_SK);
+    }
 
     #[test]
     fn key_sizes_match_spec() {
