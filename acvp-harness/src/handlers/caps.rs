@@ -1180,13 +1180,11 @@ pub fn ml_kem_keygen_capability() -> JsonValue {
 /// Build an ACVP registration block for ML-KEM / encapDecap / FIPS203.
 ///
 /// Cap shape mirrors `draft-celi-acvp-ml-kem §7.3.2`. Advertises all
-/// three FIPS 203 parameter sets. The catalog uses a single
-/// `encapDecap` mode for both encapsulation and decapsulation; the
-/// `functions` array selects which the IUT supports. Key-check VAL
-/// functions (`encapsulationKeyCheck`/`decapsulationKeyCheck`) are
-/// not advertised — handler rejects non-AFT/VAL testTypes, and the
-/// FIPS 203 §7.2/§7.3 key-validation routines are not exposed via the
-/// public API.
+/// three FIPS 203 parameter sets. One `encapDecap` mode covers four
+/// `functions`: `encapsulation` and `decapsulation`, and the two input
+/// checks, `encapsulationKeyCheck` (the FIPS 203 §7.2 modulus check on
+/// `ek`) and `decapsulationKeyCheck` (the FIPS 203 §7.3 hash check on
+/// `dk`).
 pub fn ml_kem_encapdecap_capability() -> JsonValue {
     obj(vec![
         ("algorithm", str_val("ML-KEM")),
@@ -1196,7 +1194,15 @@ pub fn ml_kem_encapdecap_capability() -> JsonValue {
             "parameterSets",
             str_array(&["ML-KEM-512", "ML-KEM-768", "ML-KEM-1024"]),
         ),
-        ("functions", str_array(&["encapsulation", "decapsulation"])),
+        (
+            "functions",
+            str_array(&[
+                "encapsulation",
+                "decapsulation",
+                "encapsulationKeyCheck",
+                "decapsulationKeyCheck",
+            ]),
+        ),
     ])
 }
 
@@ -1221,31 +1227,31 @@ pub fn ml_dsa_keygen_capability() -> JsonValue {
 
 /// Build an ACVP registration block for ML-DSA / sigGen / FIPS204.
 ///
-/// Cap shape mirrors `draft-celi-acvp-ml-dsa §7.4.1`, constrained
-/// to oxicrypt-ml-dsa's actual handler subset:
-/// - `deterministic: [true]` — only deterministic-mode signing is
-///   exposed (FIPS 204 §6.2 Algorithm 7 with rho_prime derived
-///   from sk only); the randomized variant is intentionally not
-///   built.
-/// - `signatureInterfaces: ["internal"]` — the harness invokes
-///   `sign_internal`, which does not consume context bytes; the
-///   external interface (`Sign(SK, M, ctx)`) is not advertised.
-/// - `externalMu: [false]` — `sign_internal(sk, message)` computes
-///   mu internally per FIPS 204 §6.2 step 6; the externalMu=true
-///   variant (caller pre-computes mu) is not exposed.
-/// - `capabilities[].messageLength: 8..=65536 step 8` — full byte-
-///   aligned arbitrary-length message range matching the spec
-///   example; oxicrypt-ml-dsa accepts arbitrary message lengths.
-/// - `preHash`, `hashAlgs`, `contextLength` deliberately omitted —
-///   they apply only to the external interface (which accepts a
-///   pre-hashed payload, a hash algorithm tag, and context bytes
-///   respectively). Per ACVP server validation, advertising
-///   `signatureInterfaces: ["internal"]` AND `preHash: [...]` is
-///   a registration error: *"Expected no pre-hash options with
-///   only internal interface"* (HTTP 400). The internal interface
-///   (FIPS 204 §6.2 `Sign_internal`) operates on raw messages;
-///   pre-hash modes are an external-interface concept by
-///   construction.
+/// Fields follow `draft-celi-acvp-ml-dsa` §7.4, Tables 6 and 7, which
+/// describe revision `FIPS204-tr1`. This block is revision `FIPS204`
+/// and applies those tables without `keyFormats`: `FIPS204-tr1` adds
+/// the `seed` key format, in which a test case supplies the seed in
+/// place of the expanded `sk` (Table 14), and the handler signs with
+/// an expanded `sk` only. A group with `keyFormat: "seed"` is refused.
+///
+/// The registered fields:
+/// - `deterministic: [true]`: both interfaces sign with the
+///   deterministic variant, `rnd` set to 32 zero bytes (FIPS 204
+///   §3.4).
+/// - `signatureInterfaces: ["internal", "external"]`: an `internal`
+///   group drives `sign_internal`, FIPS 204 §6.2 Algorithm 7, with
+///   `M'` equal to the vector's message; an `external` group drives
+///   the public `sign`, FIPS 204 §5.2 Algorithm 2, with the vector's
+///   message and context.
+/// - `preHash: ["pure"]`: the external interface is ML-DSA only.
+///   HashML-DSA (FIPS 204 §5.4) is not implemented, so `hashAlgs` is
+///   not registered.
+/// - `externalMu: [false]`: an internal group supplies the message,
+///   and the module computes mu (FIPS 204 Algorithm 7 line 6).
+/// - `messageLength`: 8 to 65536 bits in steps of 8.
+/// - `contextLength`: 0 to 2040 bits in steps of 8, which is 0 to 255
+///   bytes, the FIPS 204 §5.2 bound on `ctx`. Table 7 states the
+///   domain in bits, as it does `messageLength`.
 pub fn ml_dsa_siggen_capability() -> JsonValue {
     obj(vec![
         ("algorithm", str_val("ML-DSA")),
@@ -1255,48 +1261,44 @@ pub fn ml_dsa_siggen_capability() -> JsonValue {
             "deterministic",
             JsonValue::Array(vec![JsonValue::Bool(true)]),
         ),
-        ("signatureInterfaces", str_array(&["internal"])),
+        ("signatureInterfaces", str_array(&["internal", "external"])),
+        ("preHash", str_array(&["pure"])),
         ("externalMu", JsonValue::Array(vec![JsonValue::Bool(false)])),
-        (
-            "capabilities",
-            JsonValue::Array(vec![obj(vec![
-                (
-                    "parameterSets",
-                    str_array(&["ML-DSA-44", "ML-DSA-65", "ML-DSA-87"]),
-                ),
-                ("messageLength", range_domain(8, 65536, 8)),
-            ])]),
-        ),
+        ("capabilities", ml_dsa_signature_capabilities()),
     ])
 }
 
 /// Build an ACVP registration block for ML-DSA / sigVer / FIPS204.
 ///
-/// Cap shape mirrors `draft-celi-acvp-ml-dsa §7.5.1`, constrained
-/// to the same subset rationale as [`ml_dsa_siggen_capability`]
-/// above (internal-interface only,
-/// `externalMu: [false]`, no pre-hash options per the
-/// internal-interface server-side constraint documented there).
-/// `deterministic` is not advertised on sigVer because verification
-/// is independent of the signer's randomness mode.
+/// Fields follow `draft-celi-acvp-ml-dsa` §7.5, Tables 8 and 9, with
+/// the values and reasons of [`ml_dsa_siggen_capability`]: an
+/// `external` group drives the public `verify`, FIPS 204 §5.3
+/// Algorithm 3, and an `internal` group drives `verify_internal`,
+/// FIPS 204 §6.3 Algorithm 8. Table 8 has no `deterministic` property.
 pub fn ml_dsa_sigver_capability() -> JsonValue {
     obj(vec![
         ("algorithm", str_val("ML-DSA")),
         ("mode", str_val("sigVer")),
         ("revision", str_val("FIPS204")),
-        ("signatureInterfaces", str_array(&["internal"])),
+        ("signatureInterfaces", str_array(&["internal", "external"])),
+        ("preHash", str_array(&["pure"])),
         ("externalMu", JsonValue::Array(vec![JsonValue::Bool(false)])),
-        (
-            "capabilities",
-            JsonValue::Array(vec![obj(vec![
-                (
-                    "parameterSets",
-                    str_array(&["ML-DSA-44", "ML-DSA-65", "ML-DSA-87"]),
-                ),
-                ("messageLength", range_domain(8, 65536, 8)),
-            ])]),
-        ),
+        ("capabilities", ml_dsa_signature_capabilities()),
     ])
+}
+
+/// The `capabilities` array of the ML-DSA sigGen and sigVer blocks
+/// (`draft-celi-acvp-ml-dsa` Tables 7 and 9). Both length domains are
+/// in bits.
+fn ml_dsa_signature_capabilities() -> JsonValue {
+    JsonValue::Array(vec![obj(vec![
+        (
+            "parameterSets",
+            str_array(&["ML-DSA-44", "ML-DSA-65", "ML-DSA-87"]),
+        ),
+        ("messageLength", range_domain(8, 65536, 8)),
+        ("contextLength", range_domain(0, 2040, 8)),
+    ])])
 }
 
 /// FIPS 205 §11 Table 2 — canonical names for the 12 SLH-DSA parameter
@@ -2054,7 +2056,6 @@ mod tests {
 
     #[test]
     fn lms_caps_unfiltered_advertises_the_full_80_grid() {
-        // No filter == the full grid.
         assert_eq!(
             lms_pairs(&lms_sigver_capability(None)).len(),
             80,
@@ -2101,7 +2102,6 @@ mod tests {
             "specificCapabilities and capabilities are mutually exclusive"
         );
 
-        // The matching revision-1.0 block must NOT sprout a messageLength.
         let JsonValue::Object(v1_fields) = lms_sigver_capability(None) else {
             panic!("capability is a JSON object");
         };
@@ -2113,7 +2113,6 @@ mod tests {
 
     #[test]
     fn lms_caps_filter_scopes_to_the_tall_tree_subset() {
-        // Tall-tree H{20,25} × W{4,8} across the four hash/length families.
         let cap = lms_sigver_capability(Some("H20+W4,H20+W8,H25+W4,H25+W8"));
         let pairs = lms_pairs(&cap);
         assert_eq!(pairs.len(), 16, "2 heights × 2 widths × 4 families");
@@ -2208,6 +2207,111 @@ mod tests {
         assert!(
             der_func.iter().all(|v| v.as_bool() == Some(true)),
             "no CTR_DRBG capability registers derFuncEnabled false"
+        );
+    }
+
+    /// The capability as the server receives it: serialized, then
+    /// parsed back.
+    fn reparsed(cap: &JsonValue) -> JsonValue {
+        crate::json::parse(&crate::json::to_compact_string(cap)).unwrap()
+    }
+
+    fn strings<'a>(v: &'a JsonValue, key: &str) -> Vec<&'a str> {
+        v.get(key)
+            .and_then(JsonValue::as_array)
+            .unwrap_or_else(|| panic!("{key} is an array"))
+            .iter()
+            .map(|e| e.as_str().unwrap())
+            .collect()
+    }
+
+    fn bools(v: &JsonValue, key: &str) -> Vec<bool> {
+        v.get(key)
+            .and_then(JsonValue::as_array)
+            .unwrap_or_else(|| panic!("{key} is an array"))
+            .iter()
+            .map(|e| e.as_bool().unwrap())
+            .collect()
+    }
+
+    fn domain(v: &JsonValue, key: &str) -> Vec<(i64, i64, i64)> {
+        v.get(key)
+            .and_then(JsonValue::as_array)
+            .unwrap_or_else(|| panic!("{key} is an array"))
+            .iter()
+            .map(|d| {
+                let n = |k: &str| d.get(k).and_then(JsonValue::as_i64).unwrap();
+                (n("min"), n("max"), n("increment"))
+            })
+            .collect()
+    }
+
+    #[test]
+    fn caps_ml_dsa_registers_external_interface() {
+        for (cap, mode) in [
+            (ml_dsa_siggen_capability(), "sigGen"),
+            (ml_dsa_sigver_capability(), "sigVer"),
+        ] {
+            let cap = reparsed(&cap);
+            assert_eq!(cap.get("mode").and_then(JsonValue::as_str), Some(mode));
+            assert_eq!(
+                cap.get("revision").and_then(JsonValue::as_str),
+                Some("FIPS204"),
+                "{mode}"
+            );
+            assert!(cap.get("keyFormats").is_none(), "{mode}");
+            assert_eq!(
+                strings(&cap, "signatureInterfaces"),
+                ["internal", "external"],
+                "{mode}"
+            );
+            assert_eq!(strings(&cap, "preHash"), ["pure"], "{mode}");
+            assert_eq!(bools(&cap, "externalMu"), [false], "{mode}");
+            assert!(cap.get("hashAlgs").is_none(), "{mode}");
+            assert!(cap.get("contextLength").is_none(), "{mode}");
+
+            let entries = cap
+                .get("capabilities")
+                .and_then(JsonValue::as_array)
+                .unwrap();
+            assert_eq!(entries.len(), 1, "{mode}");
+            let entry = &entries[0];
+            assert_eq!(
+                strings(entry, "parameterSets"),
+                ["ML-DSA-44", "ML-DSA-65", "ML-DSA-87"],
+                "{mode}"
+            );
+            assert_eq!(domain(entry, "messageLength"), [(8, 65536, 8)], "{mode}");
+            assert_eq!(domain(entry, "contextLength"), [(0, 2040, 8)], "{mode}");
+            assert!(entry.get("hashAlgs").is_none(), "{mode}");
+
+            if mode == "sigGen" {
+                assert_eq!(bools(&cap, "deterministic"), [true]);
+            } else {
+                assert!(cap.get("deterministic").is_none());
+            }
+        }
+    }
+
+    #[test]
+    fn caps_ml_kem_registers_key_checks() {
+        let cap = reparsed(&ml_kem_encapdecap_capability());
+        assert_eq!(
+            cap.get("mode").and_then(JsonValue::as_str),
+            Some("encapDecap")
+        );
+        assert_eq!(
+            strings(&cap, "parameterSets"),
+            ["ML-KEM-512", "ML-KEM-768", "ML-KEM-1024"]
+        );
+        assert_eq!(
+            strings(&cap, "functions"),
+            [
+                "encapsulation",
+                "decapsulation",
+                "encapsulationKeyCheck",
+                "decapsulationKeyCheck"
+            ]
         );
     }
 }
