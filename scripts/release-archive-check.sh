@@ -7,6 +7,7 @@
 #   release-archive-check.sh library <archive.tar.gz>
 #   release-archive-check.sh imports <archive.tar.gz> <allow-list-dir>
 #   release-archive-check.sh examples <archive.tar.gz>
+#   release-archive-check.sh crosscheck <cli-archive.tar.gz> <archive.tar.gz>
 #
 # Each archive must hold exactly one top-level directory, the bundle. Every
 # symbolic link in the bundle must resolve to a file or directory inside it;
@@ -94,6 +95,24 @@
 #          that must run: one that would be skipped, or that has no
 #          examples/<language>/run.sh, fails as
 #          `FAILED: examples/<language> is required here and <reason>`.
+# crosscheck  Each example the examples mode would run, chosen and required
+#          the same way, runs as there with a new output directory, and then
+#          in that directory, with the `oxi` or `oxi.exe` of the CLI
+#          archive, the checks of its how-to's sixth section:
+#              oxi ml-dsa verify 87 --pk pk.bin --sig sig.bin message.txt
+#                  exits 0
+#              oxi ml-kem decaps 1024 --dk dk.bin --ct ct.bin
+#                  prints the secret the example printed
+#              oxi ml-kem encaps 1024 --ek ek.bin --ct oxi-ct.bin
+#                  prints a secret, and `run.sh <bundle-dir> decaps dk.bin
+#                  oxi-ct.bin` prints `ml-kem-1024 ss <that secret>`
+#              oxi ml-dsa keygen 87 --seed <seed> --pk nist.pk --sk nist.sk
+#              oxi hash sha256 nist.pk
+#                  exits 0 and prints the digest first
+#          with the seed and the digest the two ```text blocks of the
+#          `## A known answer from NIST` section of examples/README.md
+#          hold. The first check that does not hold fails the example as
+#          `FAILED: crosscheck/<language>: <check>`.
 #
 # Each check requires the program's exit status AND its verdict lines, each
 # matched as a whole line exactly once, so neither a lost status nor a stray
@@ -138,16 +157,17 @@ run_program() {
     printf '%s (exit %s):\n%s\n' "$what" "$rc" "$out"
 }
 
-# run_example <what> <run.sh> <bundle-dir> <fixed lines>: runs the example
-# against the bundle and prints its standard output and error. Returns 0 when
-# it exited 0 and its standard output, carriage returns removed, is exactly
-# the fixed lines followed by `ml-kem-1024 ss ` and 64 lowercase hex digits;
-# otherwise prints `FAILED: <what> <reason>`, naming the first difference,
-# and returns 1.
+# run_example <what> <run.sh> <bundle-dir> <fixed lines> [<out-dir>]: runs
+# the example against the bundle, writing its files to <out-dir> when one is
+# given, and prints its standard output and error. Returns 0 when it exited
+# 0 and its standard output, carriage returns removed, is exactly the fixed
+# lines followed by `ml-kem-1024 ss ` and 64 lowercase hex digits; otherwise
+# prints `FAILED: <what> <reason>`, naming the first difference, and returns
+# 1. The standard output stays in $tmp/stdout.
 run_example() {
     local what="$1" script="$2" bundle_dir="$3" status reason
     printf '%s\n' "$4" > "$tmp/fixed" || return 1
-    bash "$script" "$bundle_dir" > "$tmp/stdout" 2> "$tmp/stderr"
+    bash "$script" "$bundle_dir" ${5:+"$5"} > "$tmp/stdout" 2> "$tmp/stderr"
     status=$?
     printf '%s (exit %s):\n' "$what" "$status"
     tr -d '\r' < "$tmp/stdout"
@@ -172,6 +192,52 @@ run_example() {
     ' "$tmp/fixed" -)" || { echo "FAILED: $what could not be compared with examples/README.md" >&2; return 1; }
     if [ -n "$reason" ]; then
         echo "FAILED: $what $reason" >&2
+        return 1
+    fi
+}
+
+# in_work <command...>: runs the command in $work and prints it, its exit
+# status and its output. Leaves its standard output, carriage returns
+# removed, in $xout and its status in $xrc.
+in_work() {
+    xout="$(cd "$work" && "$@" 2> "$tmp/xerr" | tr -d '\r'; exit "${PIPESTATUS[0]}")"
+    xrc=$?
+    printf '%s (exit %s):\n%s\n' "$*" "$xrc" "$xout"
+    tr -d '\r' < "$tmp/xerr"
+}
+
+# crosscheck_one <language> <run.sh> <bundle-dir> <fixed lines>: runs the
+# example into a new directory and then each check of its how-to's sixth
+# section with $oxi in that directory. Returns 1, printing
+# `FAILED: crosscheck/<language>: <check>`, at the first that does not hold.
+crosscheck_one() {
+    local what="crosscheck/$1:" script="$2" bundle_dir="$3" ss oxi_ss
+    work="$(mktemp -d "$tmp/crosscheck.XXXXXX")" || return 1
+    run_example "$what" "$script" "$bundle_dir" "$4" "$(native "$work")" || return 1
+    ss="$(tr -d '\r' < "$tmp/stdout" | sed -n '9s/^ml-kem-1024 ss //p')"
+    in_work "$oxi" ml-dsa verify 87 --pk pk.bin --sig sig.bin message.txt
+    [ "$xrc" -eq 0 ] || { echo "FAILED: $what oxi ml-dsa verify exited $xrc on the program's signature" >&2; return 1; }
+    in_work "$oxi" ml-kem decaps 1024 --dk dk.bin --ct ct.bin
+    if [ "$xrc" -ne 0 ] || [ "$xout" != "$ss" ]; then
+        echo "FAILED: $what oxi ml-kem decaps exited $xrc printing \"$xout\", not the program's secret $ss" >&2
+        return 1
+    fi
+    in_work "$oxi" ml-kem encaps 1024 --ek ek.bin --ct oxi-ct.bin
+    oxi_ss="$xout"
+    if [ "$xrc" -ne 0 ] || [ "${#oxi_ss}" -ne 64 ]; then
+        echo "FAILED: $what oxi ml-kem encaps exited $xrc printing \"$xout\"" >&2
+        return 1
+    fi
+    in_work bash "$script" "$bundle_dir" decaps "$(native "$work/dk.bin")" "$(native "$work/oxi-ct.bin")"
+    if [ "$xrc" -ne 0 ] || [ "$xout" != "ml-kem-1024 ss $oxi_ss" ]; then
+        echo "FAILED: $what the program's decaps mode exited $xrc printing \"$xout\", not oxi's secret $oxi_ss" >&2
+        return 1
+    fi
+    in_work "$oxi" ml-dsa keygen 87 --seed "$nist_seed" --pk nist.pk --sk nist.sk
+    [ "$xrc" -eq 0 ] || { echo "FAILED: $what oxi ml-dsa keygen with the known-answer seed exited $xrc" >&2; return 1; }
+    in_work "$oxi" hash sha256 nist.pk
+    if [ "$xrc" -ne 0 ] || [ "${xout%% *}" != "$nist_digest" ]; then
+        echo "FAILED: $what oxi hash sha256 nist.pk exited $xrc printing \"$xout\", not the digest $nist_digest" >&2
         return 1
     fi
 }
@@ -555,9 +621,35 @@ case "$mode" in
         fi
         exit "$failed"
         ;;
-    examples)
-        [ $# -eq 2 ] || { echo "usage: release-archive-check.sh examples <archive.tar.gz>" >&2; exit 1; }
-        dir="$(bundle "$2")" || exit 1
+    examples | crosscheck)
+        if [ "$mode" = examples ]; then
+            [ $# -eq 2 ] || { echo "usage: release-archive-check.sh examples <archive.tar.gz>" >&2; exit 1; }
+            dir="$(bundle "$2")" || exit 1
+        else
+            [ $# -eq 3 ] || { echo "usage: release-archive-check.sh crosscheck <cli-archive.tar.gz> <archive.tar.gz>" >&2; exit 1; }
+            cli_dir="$(bundle "$2")" || exit 1
+            links_inside "$cli_dir" || exit 1
+            names="$(find "$cli_dir" -mindepth 1 -maxdepth 1 \( -name oxi -o -name oxi.exe \) -exec basename {} \;)"
+            [ "$(printf '%s' "$names" | grep -c .)" -eq 1 ] \
+                || { echo "FAILED: $(basename "$cli_dir") holds not exactly one of oxi and oxi.exe" >&2; exit 1; }
+            oxi="$cli_dir/$names"
+            nist="$(awk '
+                { sub(/\r$/, "") }
+                $0 == "## A known answer from NIST" { section = 1; next }
+                section && /^## / { exit }
+                section && !inside && $0 == "```text" { inside = 1; next }
+                section && inside && $0 == "```" { inside = 0; next }
+                section && inside { print }
+            ' "$root/examples/README.md")"
+            nist_seed="$(printf '%s\n' "$nist" | sed -n 1p)"
+            nist_digest="$(printf '%s\n' "$nist" | sed -n 2p)"
+            if [ "$(printf '%s\n' "$nist" | grep -c '')" -ne 2 ] \
+                || ! printf '%s\n%s\n' "$nist_seed" "$nist_digest" | awk 'length($0) != 64 || $0 !~ /^[0-9a-f]+$/ { bad = 1 } END { exit bad }'; then
+                echo "FAILED: examples/README.md has no known-answer section holding a 64-hex-digit seed and digest" >&2
+                exit 1
+            fi
+            dir="$(bundle "$3")" || exit 1
+        fi
         lib="$(shared_library "$dir")" || exit 1
         expected="$(awk '
             { sub(/\r$/, "") }
@@ -640,7 +732,11 @@ case "$mode" in
                 continue
             fi
             ran="$ran $language"
-            run_example "examples/$language" "$example/run.sh" "$dir" "$fixed" || failed=1
+            if [ "$mode" = examples ]; then
+                run_example "examples/$language" "$example/run.sh" "$dir" "$fixed" || failed=1
+            else
+                crosscheck_one "$language" "$example/run.sh" "$dir" "$fixed" || failed=1
+            fi
         done
         for language in $required; do
             if [ "${seen#* "$language" }" = "$seen" ]; then
@@ -649,13 +745,15 @@ case "$mode" in
             fi
         done
         [ -n "$ran" ] || { echo "FAILED: no example toolchain on PATH" >&2; exit 1; }
-        if [ "$failed" -eq 0 ]; then
+        if [ "$failed" -eq 0 ] && [ "$mode" = examples ]; then
             echo "ok: the examples for${ran} run against $lib from the extracted archive"
+        elif [ "$failed" -eq 0 ]; then
+            echo "ok: the examples for${ran} agree with $names on every object, against $lib from the extracted archives"
         fi
         exit "$failed"
         ;;
     *)
-        echo "usage: release-archive-check.sh cli|library|imports|examples ..." >&2
+        echo "usage: release-archive-check.sh cli|library|imports|examples|crosscheck ..." >&2
         exit 1
         ;;
 esac

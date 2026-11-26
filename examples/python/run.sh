@@ -2,20 +2,35 @@
 # run.sh <bundle-dir> [out-dir]: runs the example against the extracted
 # bundle, writing its output files to <out-dir>, or to a temporary directory
 # removed afterwards.
+# run.sh <bundle-dir> decaps <dk-file> <ct-file>: runs its decaps mode.
 set -euo pipefail
-[ $# -eq 1 ] || [ $# -eq 2 ] || { echo "usage: run.sh <bundle-dir> [out-dir]" >&2; exit 2; }
+usage() { printf 'usage: run.sh <bundle-dir> [out-dir]\n       run.sh <bundle-dir> decaps <dk-file> <ct-file>\n' >&2; exit 2; }
+case $# in
+    1 | 2) ;;
+    4) [ "$2" = decaps ] || usage ;;
+    *) usage ;;
+esac
+abs() {
+    local d
+    d="$(cd "$(dirname "$1")" && pwd)" || { echo "run.sh: no directory $(dirname "$1")" >&2; exit 2; }
+    printf '%s/%s' "$d" "$(basename "$1")"
+}
 dir="$(cd "$1" && pwd)"
-if [ $# -eq 2 ]; then
-    out="$(cd "$2" && pwd)"
+if [ $# -eq 4 ]; then
+    dk="$(abs "$3")"
+    ct="$(abs "$4")"
+    args=(decaps "$dk" "$ct")
+elif [ $# -eq 2 ]; then
+    args=("$(cd "$2" && pwd)")
 else
     out="$(mktemp -d)"
+    args=("$out")
     trap 'rm -rf "$out"' EXIT
 fi
-native_out="$out"
 if command -v cygpath >/dev/null 2>&1; then
     dir="$(cygpath -w "$dir")"
-    native_out="$(cygpath -w "$out")"
+    for i in "${!args[@]}"; do [ "${args[$i]}" = decaps ] || args[i]="$(cygpath -w "${args[$i]}")"; done
 fi
 cd "$(dirname "$0")"
 py="$(command -v python3 || command -v python)"
-"$py" -I example.py "$dir" "$native_out"
+"$py" -I example.py "$dir" "${args[@]}"

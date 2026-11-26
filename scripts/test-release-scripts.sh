@@ -41,7 +41,10 @@
 # against the signed library, exit 1 printing integrity status 2 against a
 # copy with one signed byte flipped as release-load-check.sh flips it, and
 # exit 1 printing code 33 from oxi_drbg_instantiate against the
-# fault-injection library with OXI_FAULT=poison-entropy.
+# fault-injection library with OXI_FAULT=poison-entropy. When
+# OXICRYPT_TEST_CLI also names a CLI archive signed the same way, the
+# crosscheck mode must pass against it, and must fail for every example when
+# the archive's `oxi` flips byte 0 of the signature before verifying it.
 # check-example-inputs.sh runs against a copy of examples/ completed with
 # how-to stand-ins that state the fixed inputs as examples/README.md does.
 # Its imports mode runs against a bundle holding a shared library compiled
@@ -729,7 +732,7 @@ each_prints() {
 }
 
 examples_ran=""
-built_library="not run (set OXICRYPT_TEST_EXAMPLES=1, OXICRYPT_TEST_BUNDLE, OXICRYPT_TEST_FAULT_BUNDLE and OXICRYPT_TEST_SIGNER)"
+built_library="not run (set OXICRYPT_TEST_EXAMPLES=1, OXICRYPT_TEST_BUNDLE, OXICRYPT_TEST_FAULT_BUNDLE and OXICRYPT_TEST_SIGNER, and OXICRYPT_TEST_CLI for crosscheck)"
 if [ "${OXICRYPT_TEST_EXAMPLES:-}" = 1 ]; then
     # The examples' stand-in: the shipped header, and functions with the
     # ML-DSA and ML-KEM contracts the examples check, over an FNV-1a digest
@@ -888,6 +891,35 @@ C
             && status=0 || status=$?
         check "examples: drbg instantiate failure exits 1" [ "$status" = 1 ]
         each_prints "examples: drbg instantiate failure exits 1" "$out_examples" "oxi_drbg_instantiate returned 33"
+
+        if [ -n "${OXICRYPT_TEST_CLI:-}" ]; then
+            expect "crosscheck: every example agrees with oxi" 0 "agree with oxi on every object" \
+                env OXICRYPT_EXAMPLES_REQUIRED="$examples_ran" "$HERE/release-archive-check.sh" crosscheck \
+                "$OXICRYPT_TEST_CLI" "$OXICRYPT_TEST_BUNDLE"
+            # The same CLI archive, with `oxi` a wrapper that flips byte 0
+            # of the signature file before the real oxi verifies it.
+            mkdir -p "$T/flipcli"
+            tar -xzf "$OXICRYPT_TEST_CLI" -C "$T/flipcli"
+            cdir="$(find "$T/flipcli" -mindepth 1 -maxdepth 1 -type d)"
+            mv "$cdir/oxi" "$cdir/oxi-real"
+            {
+                echo '#!/usr/bin/env bash'
+                echo 'if [ "$1 $2" = "ml-dsa verify" ]; then'
+                printf '    python3 %q sig.bin 0 || exit 99\n' "$HERE/../.github/probes/flip-byte.py"
+                echo 'fi'
+                echo 'exec "$(dirname "$0")/oxi-real" "$@"'
+            } > "$cdir/oxi"
+            chmod +x "$cdir/oxi"
+            tar -czf "$T/flipcli.tar.gz" -C "$T/flipcli" "$(basename "$cdir")"
+            out_examples="$("$HERE/release-archive-check.sh" crosscheck "$T/flipcli.tar.gz" "$OXICRYPT_TEST_BUNDLE" 2>&1)" \
+                && status=0 || status=$?
+            check "crosscheck: a flipped signature byte fails" [ "$status" = 1 ]
+            for language in $examples_ran; do
+                check "crosscheck: a flipped signature byte fails crosscheck/$language" \
+                    grep -q "^FAILED: crosscheck/$language: oxi ml-dsa verify exited [1-9][0-9]* on the program's signature$" \
+                    <<<"$out_examples"
+            done
+        fi
     fi
 else
     echo "examples cases: toolchains not exercised (set OXICRYPT_TEST_EXAMPLES=1)"
@@ -895,6 +927,13 @@ fi
 echo "examples cases against a built library: $built_library"
 expect "archive examples: a wrong argument count is a usage error" 1 "usage: release-archive-check.sh examples" \
     archive_check examples
+expect "crosscheck: a wrong argument count is a usage error" 1 "usage: release-archive-check.sh crosscheck" \
+    archive_check crosscheck "$T/archives/good.tar.gz"
+examples_tree no-nist
+sed -i.orig '/^## A known answer from NIST$/d' "$T/trees/no-nist/examples/README.md"
+expect "crosscheck: a README without the known answer fails" 1 \
+    "FAILED: examples/README.md has no known-answer section holding a 64-hex-digit seed and digest" \
+    "$T/trees/no-nist/scripts/release-archive-check.sh" crosscheck "$T/archives/good.tar.gz" "$FFI_ONE"
 
 IMP="$T/imports/oxicrypt-ffi-v9.9.9-linux-x86_64"
 mkdir -p "$IMP" "$T/allow/exact" "$T/allow/missing" "$T/allow/extra" "$T/allow/none"
@@ -1356,8 +1395,10 @@ printf '\nconst SIG_FLIP_BYTE_TOO = 0;\nconst SIG_FLIP_BYTE = 3;\n' >> "$T/input
 expect "example inputs: a value stated twice differently exits 1" 1 \
     "FAILED: node/example.js states SIG_FLIP_BYTE more than once, with different values" \
     "$HERE/check-example-inputs.sh" "$T/inputs/twice"
-mkdir -p "$T/inputs/missing"
-cp -R "$HERE/../examples/." "$T/inputs/missing/"
+expect "example inputs: the repository's examples and how-tos agree" 0 \
+    "ok: the message and both flipped bytes agree across 13 files" "$HERE/check-example-inputs.sh"
+inputs_tree missing
+rm "$T/inputs/missing/c/README.md"
 expect "example inputs: a missing how-to exits 1" 1 "FAILED: c/README.md is missing" \
     "$HERE/check-example-inputs.sh" "$T/inputs/missing"
 
