@@ -825,12 +825,25 @@ fn ml_dsa_expand_key_pct_failure(arm: Arm) {
 fn ml_kem_keygen_pct_failure(arm: Arm) {
     init(AlgorithmProfile::Unrestricted);
     let h = instantiated(oxi_hmac_drbg_sha512_new_rbg);
-    assert_eq!(ml_kem_keygen(h).0, 0, "control");
+    let kem = &KEMS[2];
+    let (rc, public, private, _) = ml_kem_keygen(h);
+    assert_eq!(rc, 0, "control");
+    let (rc, _, sealed) = encaps(kem, &public, h);
+    assert_eq!(rc, 0, "control");
     arm();
     let (rc, ek, dk, seed) = ml_kem_keygen(h);
     assert_eq!(rc, 3);
     assert!(untouched(&[&ek, &dk, &seed]));
     assert_eq!(ml_kem_keygen(h).0, 1);
+    let (rc, ss, ct) = encaps(kem, &public, h);
+    assert_eq!(rc, 1, "encapsulate_rbg in the error state");
+    assert!(untouched(&[&ss, &ct]));
+    let mut ss = vec![SENTINEL; 32];
+    // SAFETY: `private` and `sealed` hold `kem.dk` and `kem.ct` bytes and
+    // `ss` is a local of 32.
+    let rc = unsafe { (kem.decaps)(private.as_ptr(), sealed.as_ptr(), ss.as_mut_ptr()) };
+    assert_eq!(rc, 1, "decapsulate in the error state");
+    assert!(untouched(&[&ss]));
     free(h);
 }
 
@@ -956,12 +969,14 @@ fn rsa_generate(h: *mut OxiHmacDrbgSha256) -> c_int {
     }
 }
 
-/// Arms through `arm`, then expects 3 from `generate` and 1 from the call
-/// after it, on one typed handle made before the fault.
+/// Expects 0 from `generate`, then arms through `arm` and expects 3 from
+/// `generate` and 1 from the call after it, on one typed handle made before
+/// the fault.
 #[cfg(feature = "fault-injection")]
 fn classical_pct_failure(arm: Arm, generate: fn(*mut OxiHmacDrbgSha256) -> c_int) {
     init(AlgorithmProfile::Unrestricted);
     let h = typed_drbg();
+    assert_eq!(generate(h), 0, "control");
     arm();
     assert_eq!(generate(h), 3);
     assert_eq!(generate(h), 1);
@@ -978,7 +993,7 @@ fn ecdsa_pct_failure(arm: Arm) {
 fn ecdh_pct_failure(arm: Arm) {
     classical_pct_failure(arm, |h| {
         let (rc, untouched) = ecdh_generate(h);
-        assert!(untouched, "nothing is written on a failure");
+        assert!(rc == 0 || untouched, "nothing is written on a failure");
         rc
     });
 }

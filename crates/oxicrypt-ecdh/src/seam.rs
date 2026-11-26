@@ -24,7 +24,7 @@ pub fn corrupt_next_pk() {
 }
 
 /// Disarms [`corrupt_next_pk`].
-pub fn reset() {
+pub fn disarm() {
     CORRUPT_NEXT_PK.store(false, Ordering::SeqCst);
 }
 

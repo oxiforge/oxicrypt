@@ -70,7 +70,7 @@ function fail() {
 
 // Prints a line to stdout and fails when it cannot. console.log reports a
 // failed write only as an event, after which the program would still exit
-// 0 with fewer than nine lines.
+// 0 having lost a line.
 function say(line) {
     try {
         fs.writeSync(1, `${line}\n`);

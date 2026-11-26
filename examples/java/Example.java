@@ -284,7 +284,7 @@ public class Example {
             }
         }
         // System.out records a failed write instead of throwing it, and a
-        // program that printed fewer than nine lines must not exit 0.
+        // program that lost a line must not exit 0.
         if (System.out.checkError()) {
             System.err.println("stdout: a write failed");
             failed = true;

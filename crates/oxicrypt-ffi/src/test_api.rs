@@ -80,9 +80,9 @@ pub extern "C" fn oxi_test_corrupt_next_key(on: c_int) {
     } else {
         oxicrypt_ml_dsa::seam::disarm();
         oxicrypt_ml_kem::seam::disarm();
-        oxicrypt_ecdsa::seam::reset();
-        oxicrypt_ecdh::seam::reset();
-        oxicrypt_rsa::seam::reset();
+        oxicrypt_ecdsa::seam::disarm();
+        oxicrypt_ecdh::seam::disarm();
+        oxicrypt_rsa::seam::disarm();
     }
 }
 

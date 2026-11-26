@@ -171,7 +171,8 @@ fn usage() -> ExitCode {
     eprintln!("     also a self-test that failed or was not run after the image check passed;");
     eprintln!("     for ml-dsa and ml-kem, also a module error during the operation, an");
     eprintln!("     unavailable entropy source, or an output that could not be written");
-    eprintln!("  2  usage error");
+    eprintln!("  2  usage error; for ml-dsa and ml-kem, also a missing or wrong-length input,");
+    eprintln!("     an output that already exists, or a key failing the FIPS 203 check");
     eprintln!("  3  the integrity test was not performed or could not decide: a CAST it");
     eprintln!("     depends on failed, the image could not be read, or the binary carries no");
     eprintln!("     verifying key; the image's state is unknown");

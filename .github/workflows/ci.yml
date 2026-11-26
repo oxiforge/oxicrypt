@@ -668,6 +668,26 @@ jobs:
       - name: cargo clippy -p oxicrypt-rsa --features fault-injection
         if: ${{ !cancelled() && steps.build.outcome == 'success' }}
         run: cargo clippy -p oxicrypt-rsa --features fault-injection --all-targets -- -D warnings
+      # The `oxi` tests that arm a seam through `OXI_FAULT`: verdicts for a
+      # failed pairwise consistency test and for unavailable entropy, and the
+      # output-installation failures, which compile only with the feature.
+      - name: cargo nextest run -p oxicrypt-cli --features fault-injection
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        run: |
+          set -o pipefail
+          log="$RUNNER_TEMP/nextest-cli-fault.log"
+          cargo nextest run -p oxicrypt-cli --features fault-injection --color never 2>&1 | tee "$log"
+          grep -Eq "[1-9][0-9]* tests? run: [1-9][0-9]* passed" "$log" \
+            || { echo "the oxicrypt-cli fault-injection run passed no tests" >&2; exit 1; }
+          for t in module_verdicts_mapped_pct_failure module_verdicts_mapped_entropy_unavailable \
+                   output_never_replaced_in_the_gap kill_during_write \
+                   seed_out_and_output_failures_second_output; do
+            grep -Eq "PASS \[.*\] .*oxicrypt-cli.* ${t}\$" "$log" \
+              || { echo "the oxicrypt-cli fault-injection run did not pass $t" >&2; exit 1; }
+          done
+      - name: cargo clippy -p oxicrypt-cli --features fault-injection
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        run: cargo clippy -p oxicrypt-cli --features fault-injection --all-targets -- -D warnings
       # Requires the unsigned copy refused (integrity status 3), the signed copy operational (1), and a copy with one byte flipped inside the signed region refused (2).
       - name: Unsigned, signed and tampered library through oxi_init
         if: ${{ !cancelled() && steps.build.outcome == 'success' }}
@@ -964,10 +984,16 @@ jobs:
           # `internal_state_guard` tests re-execute themselves one per
           # process, so plain `cargo test` isolates them as nextest does.
           # `kat` rows must run a non-empty `tests/nist_kat.rs`, so a binary
-          # left empty by its `#![cfg]` fails the row.
+          # left empty by its `#![cfg]` fails the row. One row per crate
+          # leaves `testing-interfaces` off, the shipped configuration, and
+          # runs the doctests on it.
+          - crate: oxicrypt-ml-kem
+            flags: --features parallel
           - crate: oxicrypt-ml-kem
             flags: --features parallel,testing-interfaces --tests
             kat: true
+          - crate: oxicrypt-ml-dsa
+            flags: --features accel-keccak,parallel
           - crate: oxicrypt-ml-dsa
             flags: --features parallel,testing-interfaces --tests
             kat: true

@@ -16,8 +16,8 @@
 //!
 //! # Canonicalization and signature verification
 //!
-//! RFC 8032 §5.1.7 step 2 requires that signature verifiers reject
-//! any signature whose `s` component, decoded from the low 32 bytes
+//! RFC 8032 §5.1.7 step 1 requires that signature verifiers reject
+//! any signature whose `s` component, decoded from the last 32 bytes
 //! of the signature, is not strictly less than `L`. Accepting
 //! non-canonical `s` values opens the door to signature malleability
 //! and, in some integrations, to replay. The
@@ -100,7 +100,7 @@ impl Scalar {
     ///
     /// Use this when you need the raw 256-bit value — for example
     /// when decoding the `s` component of a signature before running
-    /// the canonical-form check (RFC 8032 §5.1.7 step 2). Callers
+    /// the canonical-form check (RFC 8032 §5.1.7 step 1). Callers
     /// that want a reduced scalar use [`reduce_wide`].
     pub fn from_bytes(bytes: &[u8; 32]) -> Scalar {
         let mut limbs = [0u32; 8];
@@ -175,7 +175,7 @@ impl Scalar {
 /// Test whether `bytes` is a canonical little-endian encoding of a
 /// scalar in `[0, L)`.
 ///
-/// This is the RFC 8032 §5.1.7 step 2 check for the `s` component of
+/// This is the RFC 8032 §5.1.7 step 1 check for the `s` component of
 /// an Ed25519 signature: verifiers MUST reject any signature whose
 /// `s` decodes to a value greater than or equal to `L`.
 ///

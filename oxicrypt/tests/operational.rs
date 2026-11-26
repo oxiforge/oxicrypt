@@ -1001,6 +1001,21 @@ fn ml_dsa_87_keygen_refuses_an_uninstantiated_drbg() {
 }
 
 #[test]
+fn ml_kem_1024_keygen_and_encapsulate_refuse_an_uninstantiated_drbg() {
+    let m = module();
+    let mut rbg = m.drbg(DrbgKind::HmacSha384).unwrap();
+    assert_eq!(
+        m.ml_kem_1024_keygen(&mut rbg).unwrap_err(),
+        Error::Uninstantiated
+    );
+    let ek: [u8; 1568] = array(&acvp(KEM_ENCAP.0, KEM_ENCAP.1, 51, "ek"));
+    assert_eq!(
+        m.ml_kem_1024_encapsulate(&ek, &mut rbg).unwrap_err(),
+        Error::Uninstantiated
+    );
+}
+
+#[test]
 fn ml_dsa_87_sign_known_answer() {
     let m = module();
     // ACVP ML-DSA-sigGen-FIPS204, ML-DSA-87, tgId 5 (external interface,

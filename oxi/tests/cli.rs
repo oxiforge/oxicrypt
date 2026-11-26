@@ -1533,6 +1533,61 @@ fn seed_flags_warning() {
     assert_eq!((code, stderr.as_str()), (0, SEED_WARNING));
 }
 
+/// A seed flag prints its warning before the output files are checked, so
+/// a refused output still warns that the seed was on the command line.
+#[test]
+fn seed_warning_precedes_output_refusal() {
+    let oxi = signed("seed-warning-refusal");
+    std::fs::write(dir(&oxi).join("taken"), b"kept").expect("write existing output");
+    let refused = "oxi will not overwrite taken: it already exists\n";
+    let (code, _, stderr) = run_pq(
+        &oxi,
+        &[
+            "ml-dsa",
+            "keygen",
+            "44",
+            "--seed",
+            &"ab".repeat(32),
+            "--pk",
+            "taken",
+            "--sk",
+            "sk",
+        ],
+        b"",
+        &[],
+    );
+    assert_eq!(
+        (code, stderr.as_str()),
+        (2, format!("{SEED_WARNING}{refused}").as_str())
+    );
+    let (code, _, stderr) = run_pq(
+        &oxi,
+        &[
+            "ml-kem",
+            "keygen",
+            "512",
+            "--d",
+            &"cd".repeat(32),
+            "--z",
+            &"ef".repeat(32),
+            "--ek",
+            "taken",
+            "--dk",
+            "dk",
+        ],
+        b"",
+        &[],
+    );
+    assert_eq!(
+        (code, stderr.as_str()),
+        (2, format!("{SEED_WARNING}{refused}").as_str())
+    );
+    assert_eq!(
+        std::fs::read(dir(&oxi).join("taken")).expect("read existing output"),
+        b"kept"
+    );
+}
+
 /// `--seed-out` writes the module-generated seed owner-only, and expanding
 /// it reproduces the pair.
 #[test]

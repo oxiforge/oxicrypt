@@ -11,7 +11,9 @@
 use std::hash::BuildHasher;
 use std::io::Read;
 
-use oxicrypt_module::{Error, KatEntry, Rbg, RbgError, initialize_with_tests, is_operational};
+use oxicrypt_module::{
+    Error, KatEntry, Rbg, RbgError, State, initialize_with_tests, is_operational,
+};
 
 /// Set in the child process to `<entry point> <token>`.
 const CHILD: &str = "OXICRYPT_ML_KEM_PCT_FAULT_CHILD";
@@ -89,16 +91,24 @@ fn run_child(mut command: std::process::Command) -> (bool, String, String) {
     )
 }
 
-/// In the parent: runs `control`, then each of `entries` faulted in a child
+/// In the parent: runs `control`, checks that no entry point of `gated`
+/// reports `NotOperational`, then runs each of `entries` faulted in a child
 /// process, and checks each child's exit status and stderr. In a child:
 /// arms the fault, calls the entry point it was started for, and checks
-/// that it returns `ConditionalTestFailed { reason }` and that the module is
-/// no longer operational.
+/// that it returns `ConditionalTestFailed { reason }`, that the module is no
+/// longer operational, and that every entry point of `entries` and `gated`
+/// then returns `NotOperational`.
 #[allow(
     clippy::print_stderr,
     reason = "the child reports on stderr, which the parent reads"
 )]
-pub(crate) fn run(test: &str, reason: &'static str, control: fn(), entries: &[Entry]) {
+pub(crate) fn run(
+    test: &str,
+    reason: &'static str,
+    control: fn(),
+    entries: &[Entry],
+    gated: &[Entry],
+) {
     let _ = initialize_with_tests(UNSIGNED_TEST_BINARY, &[]);
     assert!(is_operational());
 
@@ -110,11 +120,27 @@ pub(crate) fn run(test: &str, reason: &'static str, control: fn(), entries: &[En
         oxicrypt_ml_kem::seam::corrupt_next_dk();
         assert_eq!(call(), Err(Error::ConditionalTestFailed { reason }));
         assert!(!is_operational());
+        for (after, call) in entries.iter().chain(gated) {
+            assert_eq!(
+                call(),
+                Err(Error::NotOperational {
+                    current: State::Error
+                }),
+                "{after} after {name}"
+            );
+        }
         eprintln!("{DONE} {name}");
         return;
     }
 
     control();
+    assert!(!gated.is_empty());
+    for (name, call) in gated {
+        assert!(
+            !matches!(call(), Err(Error::NotOperational { .. })),
+            "{name} while operational"
+        );
+    }
     assert_eq!(entries.len(), 3);
     let token = format!(
         "pct-fault-token-{:016x}",

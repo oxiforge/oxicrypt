@@ -69,7 +69,7 @@ func fail() {
 }
 
 // say prints line to stdout and exits 1 when it cannot, so that a program
-// that printed fewer than nine lines never exits 0.
+// that lost a line never exits 0.
 func say(line string) {
 	if _, err := fmt.Println(line); err != nil {
 		fmt.Fprintln(os.Stderr, "stdout:", err)
@@ -102,13 +102,20 @@ func check(call string, rc C.int) {
 	}
 }
 
-// write writes the file readable and writable by its owner only. An existing
-// file keeps its mode through truncation, so the mode is set again. On
-// Windows the file takes the access control list of its directory.
-func write(dir, name string, data []byte) {
-	f, err := os.OpenFile(filepath.Join(dir, name), os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600)
+// write writes the file, readable and writable by its owner only when
+// ownerOnly is set, as the decapsulation key is. An existing file keeps its
+// mode through truncation, so the mode is set again. On Windows the file
+// takes the access control list of its directory.
+func write(dir, name string, data []byte, ownerOnly bool) {
+	mode := os.FileMode(0o644)
+	if ownerOnly {
+		mode = 0o600
+	}
+	f, err := os.OpenFile(filepath.Join(dir, name), os.O_WRONLY|os.O_CREATE|os.O_TRUNC, mode)
 	if err == nil {
-		err = f.Chmod(0o600)
+		if ownerOnly {
+			err = f.Chmod(mode)
+		}
 		if _, werr := f.Write(data); err == nil {
 			err = werr
 		}
@@ -197,9 +204,9 @@ func run(out string) {
 	pk, sig := make([]byte, pkLen), make([]byte, sigLen)
 	expectOK("ml-dsa-87 keygen", C.oxi_ml_dsa_87_keygen_rbg(rbg, ptr(pk), ptr(sk), nil))
 	check("oxi_ml_dsa_87_sign", C.oxi_ml_dsa_87_sign(ptr(sk), ptr(message), msgLen, nil, 0, ptr(sig)))
-	write(out, "pk.bin", pk)
-	write(out, "message.txt", message)
-	write(out, "sig.bin", sig)
+	write(out, "pk.bin", pk, false)
+	write(out, "message.txt", message, false)
+	write(out, "sig.bin", sig, false)
 	expectOK("ml-dsa-87 verify", C.oxi_ml_dsa_87_verify(ptr(pk), ptr(message), msgLen, nil, 0, ptr(sig)))
 	tamperedSig := bytes.Clone(sig)
 	tamperedSig[SIG_FLIP_BYTE] ^= 0x01
@@ -213,9 +220,9 @@ func run(out string) {
 	ek, ct := make([]byte, ekLen), make([]byte, ctLen)
 	expectOK("ml-kem-1024 keygen", C.oxi_ml_kem_1024_keygen_rbg(rbg, ptr(ek), ptr(dk), nil))
 	check("oxi_ml_kem_1024_encapsulate_rbg", C.oxi_ml_kem_1024_encapsulate_rbg(ptr(ek), rbg, ptr(ss), ptr(ct)))
-	write(out, "ek.bin", ek)
-	write(out, "dk.bin", dk)
-	write(out, "ct.bin", ct)
+	write(out, "ek.bin", ek, false)
+	write(out, "dk.bin", dk, true)
+	write(out, "ct.bin", ct, false)
 	expect("ml-kem-1024 decaps match", decapsLine("ml-kem-1024 decaps", ct))
 	tamperedCT := bytes.Clone(ct)
 	tamperedCT[CT_FLIP_BYTE] ^= 0x01

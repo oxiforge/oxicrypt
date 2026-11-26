@@ -1697,7 +1697,10 @@ macro_rules! ml_dsa_impl {
         ///
         /// # Errors
         ///
-        /// - [`Error::NotOperational`] unless the module is operational.
+        /// - [`Error::NotOperational`] unless the module is operational,
+        ///   checked again after the pairwise consistency test so that no
+        ///   pair is returned once another thread has put the module in its
+        ///   error state.
         /// - [`Error::AlgorithmRestricted`] when the active profile does not
         ///   admit this parameter set's key generation.
         /// - [`Error::RbgTooWeak`] when `rbg.strength_bits()` is below the
@@ -1793,7 +1796,7 @@ macro_rules! ml_dsa_impl {
             if !pairwise_consistency(&pk.bytes, &sk.bytes)? {
                 return Err(pairwise_consistency_failed(xi, pk, sk));
             }
-            oxicrypt_module::require_operational()?;
+            oxicrypt_module::require_operational_for_output()?;
             Ok((xi, pk.bytes, sk.bytes))
         }
 

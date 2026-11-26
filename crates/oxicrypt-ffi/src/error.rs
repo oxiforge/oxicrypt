@@ -74,7 +74,7 @@ pub enum OxiResult {
     // differently (`Uninstantiated` calls for an `instantiate`).
     /// `generate` (or `reseed`) called before `instantiate` succeeded on this DRBG handle.
     Uninstantiated = 8,
-    /// The DRBG's reseed counter passed the SP 800-90A Table 3 reseed
+    /// The DRBG's reseed counter passed the SP 800-90A Tables 2 and 3 reseed
     /// interval and the DRBG cannot reseed itself. No exported function
     /// returns it: every C DRBG handle is seeded by the module and
     /// reseeds itself at the interval. It is returned by `generate` on an
@@ -90,7 +90,7 @@ pub enum OxiResult {
     BufferTooSmall = 11,
     /// Output bound exceeded. Reused across families: HKDF-Expand requested more than
     /// `255 * HashLen` bytes (RFC 5869 §2.3); HMAC_DRBG `generate` requested more than
-    /// `2^19` bits (SP 800-90A Table 3 `max_number_of_bits_per_request`). Same
+    /// `2^19` bits (SP 800-90A Table 2 `max_number_of_bits_per_request`). Same
     /// cross-family-discriminant-reuse pattern as `TagMismatch = 22`: one code, multiple
     /// upstream sources, all sharing the same caller-recovery semantic ("ask for less").
     OutputTooLong = 12,
@@ -257,13 +257,13 @@ impl From<oxicrypt_drbg::DrbgError> for OxiResult {
         match e {
             oxicrypt_drbg::DrbgError::Uninstantiated => OxiResult::Uninstantiated,
             oxicrypt_drbg::DrbgError::ReseedRequired => OxiResult::ReseedRequired,
-            // The SP 800-90A Table 3 bounds on the personalization string
+            // The SP 800-90A Tables 2 and 3 bounds on the personalization string
             // and additional input, and CTR_DRBG's seed-length mismatch,
             // share `InvalidInput = 5` with the module's own input refusal
             // because the caller's recovery is the same.
             oxicrypt_drbg::DrbgError::InputTooLong
             | oxicrypt_drbg::DrbgError::InvalidSeedLength => OxiResult::InvalidInput,
-            // SP 800-90A Table 3 max_number_of_bits_per_request.
+            // SP 800-90A Tables 2 and 3 max_number_of_bits_per_request.
             oxicrypt_drbg::DrbgError::RequestTooLong => OxiResult::OutputTooLong,
             oxicrypt_drbg::DrbgError::EntropyInputTooShort => OxiResult::EntropyInputTooShort,
             oxicrypt_drbg::DrbgError::Module(m) => OxiResult::from(m),

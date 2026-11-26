@@ -286,7 +286,7 @@ int main(int argc, char **argv) {
     }
     release();
     /* A line lost to a full disk or a closed pipe surfaces here, and a
-     * program that printed fewer than nine lines must not exit 0. */
+     * program that lost a line must not exit 0. */
     if (fflush(stdout) != 0 || ferror(stdout)) {
         perror("stdout");
         return 1;

@@ -40,8 +40,8 @@ catch (Example.Failure)
 }
 catch (IOException e)
 {
-    // A line lost to a full disk or a closed pipe: a program that printed
-    // fewer than nine lines must not exit 0.
+    // A line lost to a full disk or a closed pipe: a program that lost a
+    // line must not exit 0.
     Console.Error.WriteLine($"stdout: {e.Message}");
     return 1;
 }

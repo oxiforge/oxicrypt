@@ -73,12 +73,12 @@
 //! # Crate-root re-exports
 //!
 //! The crate root re-exports the ML-DSA-87 surface ([`keygen`],
-//! [`sign`], [`verify`], [`verify_internal`], [`PK_LEN`], [`SK_LEN`],
-//! [`SIG_LEN`], and with the `testing-interfaces` feature
+//! [`keygen_with_seed`], [`expand_key`], [`sign`], [`verify`],
+//! [`verify_internal`], [`PK_LEN`], [`SK_LEN`], [`SIG_LEN`],
+//! [`SEED_LEN`], and with the `testing-interfaces` feature
 //! `keygen_internal` and `sign_internal`), so `oxicrypt_ml_dsa::keygen`
-//! and the rest resolve to ML-DSA-87. `keygen_with_seed` and `expand_key`
-//! are reached through [`ml_dsa_87`]. Callers that need another set name
-//! [`ml_dsa_44`], [`ml_dsa_65`] or [`ml_dsa_87`].
+//! and the rest resolve to ML-DSA-87. Callers that need another set name
+//! [`ml_dsa_44`] or [`ml_dsa_65`].
 //!
 //! # Sensitive security parameters
 //!
@@ -229,7 +229,10 @@ pub mod ml_dsa_65;
 /// ℓ=7, η=2, β=120, ω=75).
 pub mod ml_dsa_87;
 
-pub use ml_dsa_87::{PK_LEN, SIG_LEN, SK_LEN, keygen, sign, verify, verify_internal};
+pub use ml_dsa_87::{
+    PK_LEN, SEED_LEN, SIG_LEN, SK_LEN, expand_key, keygen, keygen_with_seed, sign, verify,
+    verify_internal,
+};
 #[cfg(feature = "testing-interfaces")]
 pub use ml_dsa_87::{keygen_internal, sign_internal};
 

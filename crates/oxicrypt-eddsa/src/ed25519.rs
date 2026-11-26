@@ -143,7 +143,7 @@ pub fn verify_internal(
     let mut s_bytes = [0u8; 32];
     s_bytes.copy_from_slice(&signature[32..]);
 
-    // RFC 8032 §5.1.7 step 2: reject non-canonical S.
+    // RFC 8032 §5.1.7 step 1: reject non-canonical S.
     if !is_canonical_encoding(&s_bytes) {
         return Ok(false);
     }
@@ -647,7 +647,7 @@ mod tests {
     #[test]
     fn verify_rejects_non_canonical_s() {
         start_module();
-        // RFC 8032 §5.1.7 step 2 requires S < L, so S = L is refused.
+        // RFC 8032 §5.1.7 step 1 requires S < L, so S = L is refused.
         let l_bytes: [u8; 32] = [
             0xed, 0xd3, 0xf5, 0x5c, 0x1a, 0x63, 0x12, 0x58, 0xd6, 0x9c, 0xf7, 0xa2, 0xde, 0xf9,
             0xde, 0x14, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,

@@ -333,7 +333,7 @@ fn the_header_declares_no_aes256_function() {
 /// buffers is shown by the linked round trips and known answers in
 /// `operational.rs` and `unrestricted.rs`.
 ///
-/// Positive controls: the ML-KEM-768 invocation in `src/ops.rs`, put inside
+/// Positive controls: the ML-KEM-768 invocation in `oxicrypt::ops`, put inside
 /// a block comment and then behind line comments, leaves its four functions
 /// unnamed.
 #[test]

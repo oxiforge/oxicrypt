@@ -99,7 +99,7 @@ typedef enum {
    */
   OXI_RESULT_UNINSTANTIATED = 8,
   /*
-   The DRBG's reseed counter passed the SP 800-90A Table 3 reseed
+   The DRBG's reseed counter passed the SP 800-90A Tables 2 and 3 reseed
    interval and the DRBG cannot reseed itself. No exported function
    returns it: every C DRBG handle is seeded by the module and
    reseeds itself at the interval. It is returned by `generate` on an
@@ -119,7 +119,7 @@ typedef enum {
   /*
    Output bound exceeded. Reused across families: HKDF-Expand requested more than
    `255 * HashLen` bytes (RFC 5869 §2.3); HMAC_DRBG `generate` requested more than
-   `2^19` bits (SP 800-90A Table 3 `max_number_of_bits_per_request`). Same
+   `2^19` bits (SP 800-90A Table 2 `max_number_of_bits_per_request`). Same
    cross-family-discriminant-reuse pattern as `TagMismatch = 22`: one code, multiple
    upstream sources, all sharing the same caller-recovery semantic ("ask for less").
    */
@@ -1463,7 +1463,7 @@ int oxi_ecdh_p384_generate_keypair(OxiHmacDrbgSha256 *drbg,
  run an SP 800-56C Rev. 2 extractor over `Z` before using it as
  keying material — same discipline as ECDH.
 
- Peer public key undergoes SP 800-56Ar3 §5.6.2.3.1 partial
+ Peer public key undergoes SP 800-56Ar3 §5.6.2.3.2 partial
  validation (`2 ≤ y ≤ p − 2`) before any modular exponentiation;
  a peer key failing the bound check causes the call to return
  `OxiResult::InvalidInput = 5` without performing the exponent.

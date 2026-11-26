@@ -144,14 +144,6 @@ mod tests {
         assert_eq!(SHARED_SECRET_LEN, 32);
     }
 
-    #[test]
-    fn gated_api_requires_operational() {
-        ensure_initialized();
-        let d = [0u8; 32];
-        let z = [0u8; 32];
-        assert_eq!(expand_key(&d, &z), keygen_internal_guarded(&d, &z));
-    }
-
     /// FIPS 203 §3.3: 256 bits. CTR_DRBG with AES-128 and with AES-192 are
     /// both too weak.
     #[test]

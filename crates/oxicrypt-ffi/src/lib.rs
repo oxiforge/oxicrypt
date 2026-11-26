@@ -1216,9 +1216,6 @@ pub unsafe extern "C" fn oxi_hmac_sha3_512(
 }
 
 // ── ECDSA (FIPS 186-5) ───────────────────────────────────────────
-//
-// Sizes: P-256 d 32 bytes, public key 65 (SEC1 §2.3.3 uncompressed),
-// signature 64 (r ‖ s); P-384 48, 97 and 96.
 
 // ── ECDSA P-256 ──────────────────────────────────────────────────
 
@@ -2012,9 +2009,6 @@ pub unsafe extern "C" fn oxi_tls13_derive_secret_sha384(
 }
 
 // ── EdDSA Ed25519 (RFC 8032, FIPS 186-5 §7.8) ────────────────────
-//
-// Sizes: seed 32 bytes, public key 32 (RFC 8032 §5.1.2 encoding),
-// signature 64 (R ‖ S).
 
 /// Derive the Ed25519 public key from a 32-byte seed (RFC 8032 §5.1.5).
 ///
@@ -2139,10 +2133,6 @@ pub unsafe extern "C" fn oxi_ed25519_verify(
 }
 
 // ── ECDH (SP 800-56Ar3 §5.7.1.2) ─────────────────────────────────
-//
-// Sizes: P-256 d 32 bytes, public key 65 (SEC1 uncompressed), Z 32;
-// P-384 48, 97 and 48. The public key of a stored scalar comes from
-// `oxi_ecdsa_p{256,384}_derive_public_key`, the same computation.
 
 // ── ECDH P-256 ───────────────────────────────────────────────────
 
@@ -2381,10 +2371,6 @@ pub unsafe extern "C" fn oxi_ecdh_p384_generate_keypair(
 }
 
 // ── DH-3072 (RFC 3526 Group 15, SP 800-56Ar3 §5.7.1.1) ───────────
-//
-// Sizes: x, y and Z are 384 bytes big-endian. Peer keys get the
-// partial validation of SP 800-56Ar3 §5.6.2.3.1 (2 ≤ y ≤ p − 2), which
-// suffices for a safe-prime group.
 
 /// Compute the SP 800-56Ar3 §5.7.1.1 finite-field DH shared secret
 /// over RFC 3526 Group 15 (3072-bit safe prime): `Z = y^x mod p`.
@@ -2399,7 +2385,7 @@ pub unsafe extern "C" fn oxi_ecdh_p384_generate_keypair(
 /// run an SP 800-56C Rev. 2 extractor over `Z` before using it as
 /// keying material — same discipline as ECDH.
 ///
-/// Peer public key undergoes SP 800-56Ar3 §5.6.2.3.1 partial
+/// Peer public key undergoes SP 800-56Ar3 §5.6.2.3.2 partial
 /// validation (`2 ≤ y ≤ p − 2`) before any modular exponentiation;
 /// a peer key failing the bound check causes the call to return
 /// `OxiResult::InvalidInput = 5` without performing the exponent.
@@ -2794,10 +2780,6 @@ pub unsafe extern "C" fn oxi_rsa_pss_verify_4096_sha256(
 }
 
 // ── ML-DSA-87 (FIPS 204) ─────────────────────────────────────────
-//
-// Sizes (FIPS 204 Table 2): seed ξ 32 bytes, pk 2592, sk 4896,
-// sig 4627; context 0 to 255 bytes (FIPS 204 §5.2). Admitted under the
-// unrestricted, CNSA 2.0 and migration profiles.
 
 /// ML-DSA-87 key generation (FIPS 204 Algorithm 1): draws the seed ξ from
 /// the caller's DRBG handle, expands the key pair and runs the pairwise
@@ -3027,10 +3009,6 @@ pub unsafe extern "C" fn oxi_ml_dsa_87_verify(
 }
 
 // ── ML-DSA-44 (FIPS 204) ─────────────────────────────────────────
-//
-// Sizes (FIPS 204 Table 2): seed ξ 32 bytes, pk 1312, sk 2560,
-// sig 2420; context 0 to 255 bytes (FIPS 204 §5.2). Admitted under the
-// unrestricted profile only.
 
 /// ML-DSA-44 key generation (FIPS 204 Algorithm 1): draws the seed ξ from
 /// the caller's DRBG handle, expands the key pair and runs the pairwise
@@ -3260,10 +3238,6 @@ pub unsafe extern "C" fn oxi_ml_dsa_44_verify(
 }
 
 // ── ML-DSA-65 (FIPS 204) ─────────────────────────────────────────
-//
-// Sizes (FIPS 204 Table 2): seed ξ 32 bytes, pk 1952, sk 4032,
-// sig 3309; context 0 to 255 bytes (FIPS 204 §5.2). Admitted under the
-// unrestricted profile only.
 
 /// ML-DSA-65 key generation (FIPS 204 Algorithm 1): draws the seed ξ from
 /// the caller's DRBG handle, expands the key pair and runs the pairwise
@@ -3493,11 +3467,6 @@ pub unsafe extern "C" fn oxi_ml_dsa_65_verify(
 }
 
 // ── ML-KEM-1024 (FIPS 203) ───────────────────────────────────────
-//
-// Sizes (FIPS 203 Table 3): seed d ‖ z 64 bytes, ek 1568, dk 3168,
-// ct 1568, shared secret 32. The module draws m for every encapsulation
-// from the caller's DRBG handle (FIPS 203 §3.3). Admitted under the
-// unrestricted, CNSA 2.0 and migration profiles.
 
 /// ML-KEM-1024 key generation (FIPS 203 Algorithm 19): draws the seeds d
 /// and z from the caller's DRBG handle, expands the key pair and runs the
@@ -3708,11 +3677,6 @@ pub unsafe extern "C" fn oxi_ml_kem_1024_decapsulate(
 }
 
 // ── ML-KEM-512 (FIPS 203) ────────────────────────────────────────
-//
-// Sizes (FIPS 203 Table 3): seed d ‖ z 64 bytes, ek 800, dk 1632,
-// ct 768, shared secret 32. The module draws m for every encapsulation
-// from the caller's DRBG handle (FIPS 203 §3.3). Admitted under the
-// unrestricted profile only.
 
 /// ML-KEM-512 key generation (FIPS 203 Algorithm 19): draws the seeds d
 /// and z from the caller's DRBG handle, expands the key pair and runs the
@@ -3923,11 +3887,6 @@ pub unsafe extern "C" fn oxi_ml_kem_512_decapsulate(
 }
 
 // ── ML-KEM-768 (FIPS 203) ────────────────────────────────────────
-//
-// Sizes (FIPS 203 Table 3): seed d ‖ z 64 bytes, ek 1184, dk 2400,
-// ct 1088, shared secret 32. The module draws m for every encapsulation
-// from the caller's DRBG handle (FIPS 203 §3.3). Admitted under the
-// unrestricted profile only.
 
 /// ML-KEM-768 key generation (FIPS 203 Algorithm 19): draws the seeds d
 /// and z from the caller's DRBG handle, expands the key pair and runs the
@@ -4138,10 +4097,6 @@ pub unsafe extern "C" fn oxi_ml_kem_768_decapsulate(
 }
 
 // ── SLH-DSA-SHA2-256s (FIPS 205) ─────────────────────────────────
-//
-// Sizes (FIPS 205 Table 2): seed 96 bytes (SK.seed ‖ SK.prf ‖ PK.seed),
-// pk 64, sk 128, sig 29 792; context 0 to 255 bytes. Admitted under the
-// unrestricted profile only, as is every SLH-DSA parameter set.
 
 /// Generate an SLH-DSA-SHA2-256s key pair from a 96-byte
 /// caller-supplied seed (FIPS 205 §9.1 Algorithm 17).
@@ -4303,10 +4258,6 @@ pub unsafe extern "C" fn oxi_slh_dsa_sha2_256s_verify(
 }
 
 // ── SLH-DSA — the other SHA-2 parameter sets (FIPS 205) ──────────
-//
-// Sizes (FIPS 205 Table 2), seed ‖ pk ‖ sk ‖ sig-s ‖ sig-f in bytes:
-// n = 16: 48, 32, 64, 7 856, 17 088; n = 24: 72, 48, 96, 16 224,
-// 35 664; n = 32: 96, 64, 128, 29 792, 49 856.
 
 /// Generate an SLH-DSA-SHA2-128s key pair from a 48-byte seed
 /// (FIPS 205 §9.1 Algorithm 17; n=16; xi=48, pk=32, sk=64).
@@ -4919,9 +4870,6 @@ pub unsafe extern "C" fn oxi_slh_dsa_sha2_256f_verify(
 }
 
 // ── SLH-DSA — the SHAKE parameter sets (FIPS 205) ────────────────
-//
-// Sizes as for the SHA-2 parameter set of the same n and s/f
-// (FIPS 205 Table 2).
 
 /// Generate an SLH-DSA-SHAKE-128s key pair from a 48-byte seed
 /// (FIPS 205 §9.1 Algorithm 17; n=16).

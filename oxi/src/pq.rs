@@ -7,7 +7,7 @@
 //! | [`cmd_ml_kem`] | `keygen`, `encaps` and `decaps` for ML-KEM-512, -768 and -1024 |
 //! | [`parse`] | the hand-written flag grammar every verb shares |
 //! | [`verdict`] | the mapping from a module error to the exit code and stderr line |
-//! | [`write_output`] | creates every output file, by temporary and hard link |
+//! | [`write_output`] | creates every output file, by temporary, then hard link or rename |
 
 use std::fmt::Write as _;
 use std::io::{self, Read as _, Write as _};
@@ -33,7 +33,8 @@ pub(crate) const ML_KEM_GRAMMAR: [&str; 3] = [
     "oxi ml-kem decaps <512|768|1024> --dk FILE --ct FILE [--ss FILE]",
 ];
 
-/// The line printed on stderr whenever a seed is supplied on the command line.
+/// The line printed on stderr when a well-formed seed is supplied on the
+/// command line, before the output files are checked.
 pub(crate) const SEED_WARNING: &str =
     "seed supplied: protect this seed as you would the secret key";
 
@@ -619,13 +620,12 @@ fn place(
 const NO_HARD_LINKS: &[i32] = &[1, 95, 38];
 #[cfg(target_vendor = "apple")]
 const NO_HARD_LINKS: &[i32] = &[1, 102, 45, 78];
-#[cfg(any(
-    target_os = "freebsd",
-    target_os = "netbsd",
-    target_os = "openbsd",
-    target_os = "dragonfly"
-))]
+#[cfg(any(target_os = "freebsd", target_os = "dragonfly"))]
 const NO_HARD_LINKS: &[i32] = &[1, 45, 78];
+#[cfg(target_os = "netbsd")]
+const NO_HARD_LINKS: &[i32] = &[1, 45, 86, 78];
+#[cfg(target_os = "openbsd")]
+const NO_HARD_LINKS: &[i32] = &[1, 45, 91, 78];
 #[cfg(all(
     unix,
     not(any(
@@ -897,13 +897,15 @@ fn dsa_keygen(cmd: Cmd, set: &str, rest: &[String]) -> Result<(), Exit> {
         .get("--seed")
         .map(|hex| decode_exact::<32>(cmd, "--seed", hex))
         .transpose()?;
+    if seed.is_some() {
+        eprintln!("{SEED_WARNING}");
+    }
     let mut outputs = vec![("--pk", pk_path), ("--sk", sk_path)];
     outputs.extend(seed_out.map(|p| ("--seed-out", p)));
     check_outputs(cmd, &outputs)?;
 
     per_dsa_set!(set, m, {
         let (pk, sk, xi) = if let Some(seed) = &seed {
-            eprintln!("{SEED_WARNING}");
             let (pk, mut sk) = m::expand_key(seed).map_err(|e| verdict(cmd, e))?;
             (pk, held(&mut sk), None)
         } else if seed_out.is_some() {
@@ -988,13 +990,15 @@ fn kem_keygen(cmd: Cmd, set: &str, rest: &[String]) -> Result<(), Exit> {
             ))
         })
         .transpose()?;
+    if seed.is_some() {
+        eprintln!("{SEED_WARNING}");
+    }
     let mut outputs = vec![("--ek", ek_path), ("--dk", dk_path)];
     outputs.extend(seed_out.map(|p| ("--seed-out", p)));
     check_outputs(cmd, &outputs)?;
 
     per_kem_set!(set, m, {
         let (ek, dk, d_z) = if let Some((d, z)) = &seed {
-            eprintln!("{SEED_WARNING}");
             let (ek, mut dk) = m::expand_key(d, z).map_err(|e| verdict(cmd, e))?;
             (ek, held(&mut dk), None)
         } else if seed_out.is_some() {

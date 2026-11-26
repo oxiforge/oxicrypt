@@ -214,9 +214,12 @@ mod tests {
     fn from_components_pct_catches_mismatch() {
         crate::test_support::start_module();
         init_module();
-        let bad_n = [0xffu8; MODULUS_BYTES];
-        let bad_d = [0x01u8; MODULUS_BYTES];
-        assert!(RsaPrivateKey4096::from_components(&bad_n, 65537, &bad_d).is_err());
+        let mut drbg = HmacDrbgSha256::instantiate_from_module(b"rsa4096-import-pct").unwrap();
+        let key = RsaPrivateKey4096::generate(&mut drbg, 65537).unwrap();
+        let mut bad_d = key.d_bytes;
+        bad_d[MODULUS_BYTES - 1] ^= 0x01;
+        let imported = RsaPrivateKey4096::from_components(&key.n_bytes, key.e, &bad_d);
+        assert_eq!(imported.err(), Some(oxicrypt_module::Error::InvalidInput));
         assert!(oxicrypt_module::is_operational());
     }
 

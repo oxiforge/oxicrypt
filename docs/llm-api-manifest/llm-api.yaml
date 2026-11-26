@@ -186,7 +186,7 @@ modules:
     depends_on: [oxicrypt-zeroize]
 
   - name: oxicrypt-ml-kem
-    description: "ML-KEM-1024 (FIPS 203) key encapsulation: keygen, encapsulate, decapsulate with implicit-rejection construction."
+    description: "ML-KEM-512, ML-KEM-768 and ML-KEM-1024 (FIPS 203) key encapsulation: key generation drawn from an RBG, key expansion from a stored d and z seed, encapsulation, implicit-rejection decapsulation, and the FIPS 203 §7.2 encapsulation-key and §7.3 decapsulation-key checks."
     no_std: true
     depends_on:
       - oxicrypt-module
@@ -194,7 +194,7 @@ modules:
       - oxicrypt-drbg
 
   - name: oxicrypt-ml-dsa
-    description: "ML-DSA-87 (FIPS 204) digital signatures: keygen, sign, verify with deterministic Fiat-Shamir-with-aborts signing; a default-off accel-keccak feature batches ExpandA four SHAKE-128 streams at a time through oxicrypt-sha's Sponge4, byte-identical to the scalar build."
+    description: "ML-DSA-44, ML-DSA-65 and ML-DSA-87 (FIPS 204) digital signatures: key generation drawn from an RBG, key expansion from a stored 32-byte seed, sign and verify with deterministic Fiat-Shamir-with-aborts signing; a default-off accel-keccak feature batches ExpandA four SHAKE-128 streams at a time through oxicrypt-sha's Sponge4, byte-identical to the scalar build."
     no_std: true
     depends_on:
       - oxicrypt-module
@@ -8147,10 +8147,10 @@ functions:
       handles_secrets: false
       fips_approved: false
 
-  - name: "seam::reset"
+  - name: "seam::disarm"
     module: oxicrypt-ecdh
     description: "Disarms seam::corrupt_next_pk, so the next key generation takes its production path; available with the fault-injection feature or in the crate's own tests."
-    signature: "pub fn reset()"
+    signature: "pub fn disarm()"
     returns:
       type: "()"
       description: "Nothing."
@@ -8173,10 +8173,10 @@ functions:
       handles_secrets: false
       fips_approved: false
 
-  - name: "seam::reset"
+  - name: "seam::disarm"
     module: oxicrypt-ecdsa
     description: "Disarms seam::corrupt_next_pk, so the next key generation takes its production path; available with the fault-injection feature or in the crate's own tests."
-    signature: "pub fn reset()"
+    signature: "pub fn disarm()"
     returns:
       type: "()"
       description: "Nothing."
@@ -8199,10 +8199,10 @@ functions:
       handles_secrets: false
       fips_approved: false
 
-  - name: "seam::reset"
+  - name: "seam::disarm"
     module: oxicrypt-eddsa
     description: "Disarms seam::corrupt_next_pk, so the next key generation takes its production path; available with the fault-injection feature or in the crate's own tests."
-    signature: "pub fn reset()"
+    signature: "pub fn disarm()"
     returns:
       type: "()"
       description: "Nothing."
@@ -8225,10 +8225,10 @@ functions:
       handles_secrets: false
       fips_approved: false
 
-  - name: "seam::reset"
+  - name: "seam::disarm"
     module: oxicrypt-rsa
     description: "Disarms seam::corrupt_next_pk, so the next key generation takes its production path; available with the fault-injection feature or in the crate's own tests."
-    signature: "pub fn reset()"
+    signature: "pub fn disarm()"
     returns:
       type: "()"
       description: "Nothing."
