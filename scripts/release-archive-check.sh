@@ -24,6 +24,11 @@
 #                verify key: <verify-key-fingerprint>
 #          and `oxi selftest --quiet` must exit 0 and print
 #              self-test indicator: PASS
+#          Then, in a new directory and with no seed, `oxi` must generate an
+#          ML-DSA-87 key pair, sign a message and verify the signature with
+#          exit 0, and generate an ML-KEM-1024 key pair, encapsulate and
+#          decapsulate, printing the same 64-hex-digit secret both times.
+#          A failed step fails as `FAILED: <command> <reason>`.
 # library  The README's Quick start C and Python examples run against the
 #          bundle. Both are read from README.md at run time, so the check runs
 #          the programs the README shows. The C example is compiled with the
@@ -84,7 +89,7 @@
 #          runs. An example that fails is reported as
 #          `FAILED: examples/<language> <reason>`, naming the first line that
 #          differs. An example whose toolchain is not on PATH is skipped with
-#          `skip: <language> (<reason>)`: c needs `cc`, python needs
+#          `skip: <language> (<reason>)`: c needs `cc` or `gcc`, python needs
 #          `python3` or `python`, go needs a `go` at least as new as
 #          the `go` directive of examples/go/go.mod and the C compiler
 #          `go env CC` names, node needs `node` and `npm`, java needs `java`
@@ -108,7 +113,7 @@
 #                  oxi-ct.bin` prints `ml-kem-1024 ss <that secret>`
 #              oxi ml-dsa keygen 87 --seed <seed> --pk nist.pk --sk nist.sk
 #              oxi hash sha256 nist.pk
-#                  exits 0 and prints the digest first
+#                  exits 0 and prints `<digest>  nist.pk`
 #          with the seed and the digest the two ```text blocks of the
 #          `## A known answer from NIST` section of examples/README.md
 #          hold. The first check that does not hold fails the example as
@@ -166,10 +171,11 @@ run_program() {
 # 1. The standard output stays in $tmp/stdout.
 run_example() {
     local what="$1" script="$2" bundle_dir="$3" status reason
-    printf '%s\n' "$4" > "$tmp/fixed" || return 1
+    printf '%s\n' "$4" > "$tmp/fixed" || { echo "FAILED: $what could not write the expected lines to $tmp/fixed" >&2; return 1; }
     bash "$script" "$bundle_dir" ${5:+"$5"} > "$tmp/stdout" 2> "$tmp/stderr"
     status=$?
-    printf '%s (exit %s):\n' "$what" "$status"
+    # A `<what>` ending in a colon, as crosscheck's does, heads the output without it.
+    printf '%s (exit %s):\n' "${what%:}" "$status"
     tr -d '\r' < "$tmp/stdout"
     tr -d '\r' < "$tmp/stderr"
     if [ "$status" -ne 0 ]; then
@@ -206,13 +212,41 @@ in_work() {
     tr -d '\r' < "$tmp/xerr"
 }
 
+# cli_round_trips <oxi>: in a new directory, with no seed, an ML-DSA-87
+# keygen, sign and verify, and an ML-KEM-1024 keygen, encaps and decaps.
+# Returns 1, printing `FAILED: <command> <reason>`, at the first step that
+# does not hold.
+cli_round_trips() {
+    local oxi="$1" step ss
+    work="$(mktemp -d "$tmp/cli-pq.XXXXXX")" || { echo "FAILED: could not create a directory for the round trips" >&2; return 1; }
+    printf 'oxicrypt release check' > "$work/message.txt" || { echo "FAILED: could not write $work/message.txt" >&2; return 1; }
+    for step in "ml-dsa keygen 87 --pk pk.bin --sk sk.bin" "ml-dsa sign 87 --sk sk.bin --sig sig.bin message.txt" \
+        "ml-dsa verify 87 --pk pk.bin --sig sig.bin message.txt" "ml-kem keygen 1024 --ek ek.bin --dk dk.bin"; do
+        # The steps are fixed words, split on purpose.
+        # shellcheck disable=SC2086
+        in_work "$oxi" $step
+        [ "$xrc" -eq 0 ] || { echo "FAILED: oxi $step exited $xrc" >&2; return 1; }
+    done
+    in_work "$oxi" ml-kem encaps 1024 --ek ek.bin --ct ct.bin
+    ss="$xout"
+    if [ "$xrc" -ne 0 ] || [ "${#ss}" -ne 64 ] || [ -n "${ss//[0-9a-f]/}" ]; then
+        echo "FAILED: oxi ml-kem encaps 1024 exited $xrc printing \"$ss\", not 64 hex digits" >&2
+        return 1
+    fi
+    in_work "$oxi" ml-kem decaps 1024 --dk dk.bin --ct ct.bin
+    if [ "$xrc" -ne 0 ] || [ "$xout" != "$ss" ]; then
+        echo "FAILED: oxi ml-kem decaps 1024 exited $xrc printing \"$xout\", not the secret encaps printed" >&2
+        return 1
+    fi
+}
+
 # crosscheck_one <language> <run.sh> <bundle-dir> <fixed lines>: runs the
 # example into a new directory and then each check of its how-to's sixth
 # section with $oxi in that directory. Returns 1, printing
 # `FAILED: crosscheck/<language>: <check>`, at the first that does not hold.
 crosscheck_one() {
     local what="crosscheck/$1:" script="$2" bundle_dir="$3" ss oxi_ss
-    work="$(mktemp -d "$tmp/crosscheck.XXXXXX")" || return 1
+    work="$(mktemp -d "$tmp/crosscheck.XXXXXX")" || { echo "FAILED: $what could not create an output directory" >&2; return 1; }
     run_example "$what" "$script" "$bundle_dir" "$4" "$(native "$work")" || return 1
     ss="$(tr -d '\r' < "$tmp/stdout" | sed -n '9s/^ml-kem-1024 ss //p')"
     in_work "$oxi" ml-dsa verify 87 --pk pk.bin --sig sig.bin message.txt
@@ -236,8 +270,8 @@ crosscheck_one() {
     in_work "$oxi" ml-dsa keygen 87 --seed "$nist_seed" --pk nist.pk --sk nist.sk
     [ "$xrc" -eq 0 ] || { echo "FAILED: $what oxi ml-dsa keygen with the known-answer seed exited $xrc" >&2; return 1; }
     in_work "$oxi" hash sha256 nist.pk
-    if [ "$xrc" -ne 0 ] || [ "${xout%% *}" != "$nist_digest" ]; then
-        echo "FAILED: $what oxi hash sha256 nist.pk exited $xrc printing \"$xout\", not the digest $nist_digest" >&2
+    if [ "$xrc" -ne 0 ] || [ "$xout" != "$nist_digest  nist.pk" ]; then
+        echo "FAILED: $what oxi hash sha256 nist.pk exited $xrc printing \"$xout\", not \"$nist_digest  nist.pk\"" >&2
         return 1
     fi
 }
@@ -473,8 +507,9 @@ case "$mode" in
             "  verify key: $3" || failed=1
         run_program "$bin selftest --quiet" "$bin" selftest --quiet
         require "$bin selftest --quiet" "self-test indicator: PASS" || failed=1
+        cli_round_trips "$dir/$names" || failed=1
         if [ "$failed" -eq 0 ]; then
-            echo "ok: $bin from the extracted archive passes its integrity test and its self-tests"
+            echo "ok: $bin from the extracted archive passes its integrity test, its self-tests and the ML-DSA-87 and ML-KEM-1024 round trips"
         fi
         exit "$failed"
         ;;
@@ -674,8 +709,7 @@ case "$mode" in
             language="$(basename "$example")"
             seen="$seen $language "
             case "$language" in
-                c) tools="cc" ;;
-                python) tools="" ;;
+                c | python) tools="" ;;
                 go) tools="go" ;;
                 node) tools="node npm" ;;
                 java) tools="java javac" ;;
@@ -688,6 +722,9 @@ case "$mode" in
             done
             if [ "$language" = python ] && ! command -v python3 >/dev/null 2>&1 && ! command -v python >/dev/null 2>&1; then
                 skip="no python3 or python on PATH"
+            fi
+            if [ "$language" = c ] && ! command -v cc >/dev/null 2>&1 && ! command -v gcc >/dev/null 2>&1; then
+                skip="no cc or gcc on PATH"
             fi
             if [ -z "$skip" ] && [ "$language" = go ]; then
                 go_have="$(go version 2>&1 | tr -d '\r' | sed -nE 's/^go version go([0-9]+(\.[0-9]+)*).*/\1/p')"

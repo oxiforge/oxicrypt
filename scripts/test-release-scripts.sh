@@ -45,8 +45,13 @@
 # OXICRYPT_TEST_CLI also names a CLI archive signed the same way, the
 # crosscheck mode must pass against it, and must fail for every example when
 # the archive's `oxi` flips byte 0 of the signature before verifying it.
-# check-example-inputs.sh runs against a copy of examples/ completed with
-# how-to stand-ins that state the fixed inputs as examples/README.md does.
+# With OXICRYPT_TEST_REQUIRE_BUILT=1 the suite fails unless those cases ran
+# and every one of the six languages ran.
+# check-example-inputs.sh runs against copies of examples/ whose six how-tos
+# are replaced by stand-ins stating only the fixed inputs, as
+# examples/README.md states them, and against the repository's own files.
+# The crosscheck mode runs against the stub toolchains and a stub `oxi`
+# whose answers can be made to disagree with the examples'.
 # Its imports mode runs against a bundle holding a shared library compiled
 # here that calls puts, with allow-lists written from `nm -D` independently
 # of the script, and against stub objdump, llvm-readobj, nm, readelf and
@@ -371,8 +376,12 @@ PASSED="integrity: passed — this binary matches the signature recorded inside 
 
 # cli_archive <name> <integrity lines> <indicator> [<status> [<binary>]]: an
 # archive whose bundle holds a stub <binary> (default oxi) printing
-# <integrity lines> for --integrity and exiting <status> (default 0), and
-# printing `self-test indicator: <indicator>` for `selftest --quiet`.
+# <integrity lines> for --integrity and exiting <status> (default 0),
+# printing `self-test indicator: <indicator>` for `selftest --quiet`, and
+# answering the ML-DSA-87 and ML-KEM-1024 round trips: verify exits
+# $STUB_VERIFY_EXIT (default 0), and encaps prints $STUB_SS, as decaps does
+# unless $STUB_DECAPS_SS names another secret.
+STUB_SS="$(printf '%064d' 0 | tr 0 5)"
 cli_archive() {
     local d="$T/archives/$1/oxicrypt-cli-test" bin="${5:-oxi}"
     mkdir -p "$d"
@@ -381,6 +390,12 @@ cli_archive() {
         echo 'case "$*" in'
         printf -- '--integrity) printf %%s %q; exit %s ;;\n' "$2" "${4:-0}"
         printf '"selftest --quiet") echo "self-test indicator: %s" ;;\n' "$3"
+        echo '"ml-dsa keygen 87 "*) : > pk.bin && : > sk.bin ;;'
+        echo '"ml-dsa sign 87 "*) : > sig.bin ;;'
+        echo '"ml-dsa verify 87 "*) exit "${STUB_VERIFY_EXIT:-0}" ;;'
+        echo '"ml-kem keygen 1024 "*) : > ek.bin && : > dk.bin ;;'
+        printf '"ml-kem encaps 1024 "*) : > ct.bin && echo %s ;;\n' "$STUB_SS"
+        printf '"ml-kem decaps 1024 "*) echo "${STUB_DECAPS_SS:-%s}" ;;\n' "$STUB_SS"
         echo '*) exit 2 ;;'
         echo 'esac'
     } > "$d/$bin"
@@ -392,6 +407,15 @@ archive_check() { "$HERE/release-archive-check.sh" "$@"; }
 cli_archive good "$PASSED"$'\n'"  verify key: $FP"$'\n' PASS
 expect "archive cli: the expected lines pass" 0 "ok: ./oxi from the extracted archive" \
     archive_check cli "$T/archives/good.tar.gz" "$FP"
+expect "cli: pq round trips pass" 0 \
+    "ok: ./oxi from the extracted archive passes its integrity test, its self-tests and the ML-DSA-87 and ML-KEM-1024 round trips" \
+    archive_check cli "$T/archives/good.tar.gz" "$FP"
+expect "cli: a verify that exits 5 fails the check" 1 \
+    "FAILED: oxi ml-dsa verify 87 --pk pk.bin --sig sig.bin message.txt exited 5" \
+    env STUB_VERIFY_EXIT=5 "$HERE/release-archive-check.sh" cli "$T/archives/good.tar.gz" "$FP"
+expect "cli: secrets that differ fail the check" 1 \
+    "FAILED: oxi ml-kem decaps 1024 exited 0 printing \"$(printf '%064d' 0 | tr 0 6)\", not the secret encaps printed" \
+    env STUB_DECAPS_SS="$(printf '%064d' 0 | tr 0 6)" "$HERE/release-archive-check.sh" cli "$T/archives/good.tar.gz" "$FP"
 cli_archive wrongkey "$PASSED"$'\n'"  verify key: ${FP%a}b"$'\n' PASS
 expect "archive cli: another verify key refused" 1 "did not print \"  verify key: $FP\" exactly once" \
     archive_check cli "$T/archives/wrongkey.tar.gz" "$FP"
@@ -547,7 +571,7 @@ FFI_ONE="$T/ffi/one/oxicrypt-ffi-v9.9.9-linux-x86_64.tar.gz"
 out_examples="$(PATH="$T/minpath" archive_check examples "$FFI_ONE" 2>&1)" && status=0 || status=$?
 check "archive examples: no toolchain on PATH exits 1" [ "$status" = 1 ]
 check "archive examples: no toolchain on PATH is named" grep -qxF "FAILED: no example toolchain on PATH" <<<"$out_examples"
-for skip in "c (no cc on PATH)" "python (no python3 or python on PATH)" "go (no go on PATH)" \
+for skip in "c (no cc or gcc on PATH)" "python (no python3 or python on PATH)" "go (no go on PATH)" \
     "node (no node on PATH)" "java (no java on PATH)" "csharp (no dotnet on PATH)"; do
     check "archive examples: skip: $skip" grep -qxF "skip: $skip" <<<"$out_examples"
 done
@@ -569,7 +593,13 @@ NINE_LINES="$(printf '%s\n' \
     "drbg instantiated" "ml-dsa-87 keygen ok" "ml-dsa-87 verify ok" "ml-dsa-87 verify-tampered rejected 22" \
     "ml-kem-1024 keygen ok" "ml-kem-1024 decaps match" "ml-kem-1024 decaps-tampered differs" \
     "ml-kem-1024 ss $(printf '%064d' 0 | tr 0 7)")"
-fail_or_lines() { printf '#!/usr/bin/env bash\n[ "${STUB_EXAMPLE_FAIL:-}" != %s ] || exit 1\nprintf %%s\\\\n %q\n' "$1" "$NINE_LINES"; }
+# A program run in its decaps mode prints `ml-kem-1024 ss $STUB_REVERSE_SS`,
+# by default the secret the stub `oxi` of the crosscheck cases encapsulates.
+fail_or_lines() {
+    printf '#!/usr/bin/env bash\n[ "${STUB_EXAMPLE_FAIL:-}" != %s ] || exit 1\n' "$1"
+    printf 'for a in "$@"; do [ "$a" != decaps ] || { echo "ml-kem-1024 ss ${STUB_REVERSE_SS:-%s}"; exit 0; }; done\n' "$STUB_SS"
+    printf 'printf %%s\\\\n %q\n' "$NINE_LINES"
+}
 cat > "$T/toolstub/go" <<'STUB'
 #!/usr/bin/env bash
 case "$1" in
@@ -585,7 +615,7 @@ cat > "$T/toolstub/dotnet" <<'STUB'
 case "$1" in
     --list-sdks) printf '%s\n' "${STUB_DOTNET_SDKS:-10.0.100 [/stub/sdk]}" ;;
     build) ;;
-    *) exec "$(dirname "$0")/dotnet-program" ;;
+    *) exec "$(dirname "$0")/dotnet-program" "$@" ;;
 esac
 STUB
 fail_or_lines csharp > "$T/toolstub/dotnet-program"
@@ -684,6 +714,15 @@ printf '#!/usr/bin/env bash\nprintf %%s\\\\n %q\n' "${NINE_LINES%?}" > "$T/tools
 expect "archive examples: a shared secret one digit short fails" 1 \
     "FAILED: examples/node printed \"ml-kem-1024 ss $(printf '%063d' 0 | tr 0 7)\" as line 9, not ml-kem-1024 ss and 64 hex digits" \
     stub_examples 1.24.0 "10.0.100 [/stub/sdk]" ""
+for secret in "$(printf '%063d' 0 | tr 0 7)g" "$(printf '%064d' 0 | tr 0 A)"; do
+    printf '#!/usr/bin/env bash\nprintf %%s\\\\n %q\n' "${NINE_LINES%"ml-kem-1024 ss "*}ml-kem-1024 ss $secret" > "$T/toolstub/node"
+    expect "archive examples: a shared secret $secret fails" 1 \
+        "FAILED: examples/node printed \"ml-kem-1024 ss $secret\" as line 9, not ml-kem-1024 ss and 64 hex digits" \
+        stub_examples 1.24.0 "10.0.100 [/stub/sdk]" ""
+done
+printf '#!/usr/bin/env bash\nprintf %%s\\\\n %q\n' "${NINE_LINES%$'\n'*}" > "$T/toolstub/node"
+expect "archive examples: eight lines fail" 1 "FAILED: examples/node printed 8 lines, not 9" \
+    stub_examples 1.24.0 "10.0.100 [/stub/sdk]" ""
 fail_or_lines node > "$T/toolstub/node"
 
 # example_runs <language>: the toolchain release-archive-check.sh's header
@@ -702,7 +741,7 @@ example_runs() {
             && [ "$(javac -version 2>&1 | sed -nE 's/^javac ([0-9]+).*/\1/p')" -ge 22 ] 2>/dev/null ;;
         csharp) command -v dotnet >/dev/null \
             && dotnet --list-sdks 2>/dev/null | awk '{ split($1, v, "."); if (v[1] + 0 >= 10) ok = 1 } END { exit !ok }' ;;
-        c) command -v cc >/dev/null ;;
+        c) command -v cc >/dev/null || command -v gcc >/dev/null ;;
         python) command -v python3 >/dev/null || command -v python >/dev/null ;;
         *) return 1 ;;
     esac
@@ -720,11 +759,13 @@ section() {
 }
 
 # each_prints <case> <output> <line...>: for every language in $examples_ran,
-# the section of <output> for it holds each <line> as a whole line.
+# <output> reports `FAILED: examples/<language> exited 1`, and its section
+# for that language holds each <line> as a whole line.
 each_prints() {
     local name="$1" output="$2" language line
     shift 2
     for language in $examples_ran; do
+        check "$name: examples/$language exited 1" grep -qxF "FAILED: examples/$language exited 1" <<<"$output"
         for line in "$@"; do
             check "$name: examples/$language prints \"$line\"" grep -qxF -- "$line" <<<"$(section "$language" <<<"$output")"
         done
@@ -836,10 +877,6 @@ C
     check "archive examples: a failing oxi_init exits 1" [ "$status" = 1 ]
     each_prints "archive examples: a failing oxi_init" "$out_examples" \
         "oxi_init returned 2: the module refused to start" "integrity status 2"
-    for language in $examples_ran; do
-        check "archive examples: a failing oxi_init fails $language" \
-            grep -qxF "FAILED: examples/$language exited 1" <<<"$out_examples"
-    done
     out_examples="$(STUB_DRBG_INSTANTIATE_FAILS=1 archive_check examples "$EX_STAND" 2>&1)" && status=0 || status=$?
     check "archive examples: a failing oxi_drbg_instantiate exits 1" [ "$status" = 1 ]
     each_prints "archive examples: a failing oxi_drbg_instantiate" "$out_examples" "oxi_drbg_instantiate returned 33"
@@ -858,10 +895,6 @@ C
     each_prints "examples: altered expected value exits 1" "$out_examples" \
         "expected: sha256 abc ca7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad" \
         "     got: sha256 abc ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
-    for language in $examples_ran; do
-        check "examples: altered expected value exits 1: examples/$language exited 1" \
-            grep -qxF "FAILED: examples/$language exited 1" <<<"$out_examples"
-    done
 
     if [ -n "${OXICRYPT_TEST_BUNDLE:-}" ] && [ -n "${OXICRYPT_TEST_FAULT_BUNDLE:-}" ] && [ -n "${OXICRYPT_TEST_SIGNER:-}" ]; then
         built_library="run"
@@ -893,38 +926,60 @@ C
         each_prints "examples: drbg instantiate failure exits 1" "$out_examples" "oxi_drbg_instantiate returned 33"
 
         if [ -n "${OXICRYPT_TEST_CLI:-}" ]; then
-            expect "crosscheck: every example agrees with oxi" 0 "agree with oxi on every object" \
+            expect "crosscheck: every example agrees with oxi" 0 "on every object, against" \
                 env OXICRYPT_EXAMPLES_REQUIRED="$examples_ran" "$HERE/release-archive-check.sh" crosscheck \
                 "$OXICRYPT_TEST_CLI" "$OXICRYPT_TEST_BUNDLE"
             # The same CLI archive, with `oxi` a wrapper that flips byte 0
-            # of the signature file before the real oxi verifies it.
+            # of the signature file before the real oxi verifies it, and
+            # records that byte before and after in $T/flip.log. The wrapper
+            # replaces a Unix `oxi`; an archive holding `oxi.exe` is not
+            # handled.
             mkdir -p "$T/flipcli"
             tar -xzf "$OXICRYPT_TEST_CLI" -C "$T/flipcli"
             cdir="$(find "$T/flipcli" -mindepth 1 -maxdepth 1 -type d)"
-            mv "$cdir/oxi" "$cdir/oxi-real"
-            {
-                echo '#!/usr/bin/env bash'
-                echo 'if [ "$1 $2" = "ml-dsa verify" ]; then'
-                printf '    python3 %q sig.bin 0 || exit 99\n' "$HERE/../.github/probes/flip-byte.py"
-                echo 'fi'
-                echo 'exec "$(dirname "$0")/oxi-real" "$@"'
-            } > "$cdir/oxi"
-            chmod +x "$cdir/oxi"
-            tar -czf "$T/flipcli.tar.gz" -C "$T/flipcli" "$(basename "$cdir")"
-            out_examples="$("$HERE/release-archive-check.sh" crosscheck "$T/flipcli.tar.gz" "$OXICRYPT_TEST_BUNDLE" 2>&1)" \
-                && status=0 || status=$?
-            check "crosscheck: a flipped signature byte fails" [ "$status" = 1 ]
-            for language in $examples_ran; do
-                check "crosscheck: a flipped signature byte fails crosscheck/$language" \
-                    grep -q "^FAILED: crosscheck/$language: oxi ml-dsa verify exited [1-9][0-9]* on the program's signature$" \
-                    <<<"$out_examples"
-            done
+            if [ -f "$cdir/oxi" ]; then
+                mv "$cdir/oxi" "$cdir/oxi-real"
+                : > "$T/flip.log"
+                {
+                    echo '#!/usr/bin/env bash'
+                    echo 'if [ "$1 $2" = "ml-dsa verify" ]; then'
+                    printf '    before="$(od -An -tx1 -N1 sig.bin)"\n'
+                    printf '    python3 %q sig.bin 0 || exit 99\n' "$HERE/../.github/probes/flip-byte.py"
+                    printf '    echo "$before $(od -An -tx1 -N1 sig.bin)" >> %q\n' "$T/flip.log"
+                    echo 'fi'
+                    echo 'exec "$(dirname "$0")/oxi-real" "$@"'
+                } > "$cdir/oxi"
+                chmod +x "$cdir/oxi"
+                tar -czf "$T/flipcli.tar.gz" -C "$T/flipcli" "$(basename "$cdir")"
+                out_examples="$("$HERE/release-archive-check.sh" crosscheck "$T/flipcli.tar.gz" "$OXICRYPT_TEST_BUNDLE" 2>&1)" \
+                    && status=0 || status=$?
+                check "crosscheck: a flipped signature byte fails" [ "$status" = 1 ]
+                for language in $examples_ran; do
+                    check "crosscheck: a flipped signature byte fails crosscheck/$language" grep -qxF \
+                        "FAILED: crosscheck/$language: oxi ml-dsa verify exited 5 on the program's signature" <<<"$out_examples"
+                done
+                check "crosscheck: a flipped signature byte: one flip per example" \
+                    [ "$(grep -c '' "$T/flip.log")" = "$(wc -w <<<"$examples_ran" | tr -d ' ')" ]
+                check "crosscheck: a flipped signature byte: byte 0 changed every time" \
+                    awk 'NF != 2 || $1 == $2 { bad = 1 } END { exit bad || NR == 0 }' "$T/flip.log"
+            else
+                echo "crosscheck: the flipped-signature case needs a CLI archive holding oxi, not oxi.exe"
+            fi
         fi
     fi
 else
     echo "examples cases: toolchains not exercised (set OXICRYPT_TEST_EXAMPLES=1)"
 fi
 echo "examples cases against a built library: $built_library"
+# OXICRYPT_TEST_REQUIRE_BUILT=1 makes cases that could not run a failure, so
+# a job meant to run them cannot pass by skipping them.
+if [ "${OXICRYPT_TEST_REQUIRE_BUILT:-}" = 1 ]; then
+    check "required: the built-library cases ran" [ "$built_library" = run ]
+    check "required: the crosscheck cases ran" [ -n "${OXICRYPT_TEST_CLI:-}" ]
+    for language in c python go node java csharp; do
+        check "required: examples/$language ran" grep -qw -- "$language" <<<"$examples_ran"
+    done
+fi
 expect "archive examples: a wrong argument count is a usage error" 1 "usage: release-archive-check.sh examples" \
     archive_check examples
 expect "crosscheck: a wrong argument count is a usage error" 1 "usage: release-archive-check.sh crosscheck" \
@@ -934,6 +989,40 @@ sed -i.orig '/^## A known answer from NIST$/d' "$T/trees/no-nist/examples/README
 expect "crosscheck: a README without the known answer fails" 1 \
     "FAILED: examples/README.md has no known-answer section holding a 64-hex-digit seed and digest" \
     "$T/trees/no-nist/scripts/release-archive-check.sh" crosscheck "$T/archives/good.tar.gz" "$FFI_ONE"
+
+# A stub `oxi` answering the crosscheck: verify exits $STUB_VERIFY_EXIT,
+# decaps prints the stub programs' secret or $STUB_DECAPS_SS, encaps prints
+# $STUB_SS, and hash prints the known-answer digest or $STUB_DIGEST.
+NIST_DIGEST=40298270777d3306d2fcb6b4691d7a7ab799cd1069eea88f843cf0ec26d4b01f
+mkdir -p "$T/archives/xc/oxicrypt-cli-test"
+{
+    echo '#!/usr/bin/env bash'
+    echo 'case "$1 $2" in'
+    echo '    "ml-dsa verify") exit "${STUB_VERIFY_EXIT:-0}" ;;'
+    printf '    "ml-kem decaps") echo "${STUB_DECAPS_SS:-%s}" ;;\n' "$(printf '%064d' 0 | tr 0 7)"
+    printf '    "ml-kem encaps") echo %s ;;\n' "$STUB_SS"
+    echo '    "ml-dsa keygen") exit 0 ;;'
+    printf '    "hash sha256") echo "${STUB_DIGEST:-%s}  $3" ;;\n' "$NIST_DIGEST"
+    echo '    *) exit 2 ;;'
+    echo 'esac'
+} > "$T/archives/xc/oxicrypt-cli-test/oxi"
+chmod +x "$T/archives/xc/oxicrypt-cli-test/oxi"
+tar -czf "$T/archives/xc.tar.gz" -C "$T/archives/xc" oxicrypt-cli-test
+# xc [<NAME=value>...]: the crosscheck on the stub archives with the stub
+# toolchains, node required, and the given environment.
+xc() { env PATH="$stub_path" OXICRYPT_EXAMPLES_REQUIRED=node "$@" "$HERE/release-archive-check.sh" crosscheck "$T/archives/xc.tar.gz" "$FFI_ONE"; }
+expect "crosscheck: the stub oxi agreeing passes" 0 "ok: the examples for csharp go node agree with oxi on every object" xc
+expect "crosscheck: a verify exiting 5 fails" 1 "FAILED: crosscheck/node: oxi ml-dsa verify exited 5 on the program's signature" \
+    xc STUB_VERIFY_EXIT=5
+expect "crosscheck: a decaps secret that differs fails" 1 \
+    "FAILED: crosscheck/node: oxi ml-kem decaps exited 0 printing \"$(printf '%064d' 0 | tr 0 6)\", not the program's secret" \
+    xc STUB_DECAPS_SS="$(printf '%064d' 0 | tr 0 6)"
+expect "crosscheck: a reverse-direction secret that differs fails" 1 \
+    "FAILED: crosscheck/node: the program's decaps mode exited 0 printing \"ml-kem-1024 ss $(printf '%064d' 0 | tr 0 6)\", not oxi's secret $STUB_SS" \
+    xc STUB_REVERSE_SS="$(printf '%064d' 0 | tr 0 6)"
+expect "crosscheck: a known-answer digest that differs fails" 1 \
+    "FAILED: crosscheck/node: oxi hash sha256 nist.pk exited 0 printing \"$(printf '%064d' 0)  nist.pk\", not \"$NIST_DIGEST  nist.pk\"" \
+    xc STUB_DIGEST="$(printf '%064d' 0)"
 
 IMP="$T/imports/oxicrypt-ffi-v9.9.9-linux-x86_64"
 mkdir -p "$IMP" "$T/allow/exact" "$T/allow/missing" "$T/allow/extra" "$T/allow/none"
@@ -1139,7 +1228,9 @@ expect "archive imports: a listing with no libraries refused" 1 "FAILED: found n
 # operational, its unsigned template copy refused with status 3, anything
 # else refused with status 2. $ADB_LIE makes it report the signed library
 # refused, the tampered one operational, the unsigned one operational, or the
-# unsigned one refused with status 10. One case runs on a PATH without
+# unsigned one refused with status 10. A run of the example program prints
+# the nine lines, or with $ADB_LIE=pq-verify-fails stops after a failed
+# verification and exits 1. One case runs on a PATH without
 # `timeout`, which both scripts use only where it is installed.
 
 mkdir -p "$T/android/bundle/oxicrypt-ffi-v9.9.9-android-aarch64" "$T/ndk/toolchains/llvm/prebuilt/linux-x86_64/bin"
@@ -1217,6 +1308,16 @@ case "$*" in
     true) exit 0 ;;
     false) exit 1 ;;
     "rm -rf "* | "chmod 755 "*) exit 0 ;;
+    "cd "*" ./example "*)
+        echo "sha256 abc ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+        echo "drbg instantiated"
+        echo "ml-dsa-87 keygen ok"
+        if [ "${ADB_LIE:-}" = pq-verify-fails ]; then
+            printf 'expected: ml-dsa-87 verify ok\n     got: ml-dsa-87 verify returned 22\n' >&2
+            exit 1
+        fi
+        printf '%s\n' "ml-dsa-87 verify ok" "ml-dsa-87 verify-tampered rejected 22" "ml-kem-1024 keygen ok" \
+            "ml-kem-1024 decaps match" "ml-kem-1024 decaps-tampered differs" "ml-kem-1024 ss $(printf '%064d' 0 | tr 0 3)" ;;
     */harness" "*)
         sha="$(sha256sum < "$ADB_STUB/dev/$(basename "$2")" | cut -d' ' -f1)"
         if { [ "$sha" = "$ADB_SIGNED_SHA" ] && [ "${ADB_LIE:-}" != signed-refused ]; } \
@@ -1253,6 +1354,17 @@ out_good="$(device_check good 2>&1)" || true
 check "device check: the unsigned verdict printed" grep -qxF "verdict ok: the unsigned control is refused as unsigned" <<<"$out_good"
 check "device check: the signed verdict printed" grep -qxF "verdict ok: the signed library reaches operational" <<<"$out_good"
 check "device check: the page size printed" grep -qxF "  page size: 16384" <<<"$out_good"
+check "device check: the pq round trip verdict printed" grep -qxF "verdict ok: pq round trip" <<<"$out_good"
+check "device check: the round trip runs the signed library as shipped" \
+    [ "$(sha "$T/adb-good/dev/liboxicrypt_ffi.so")" = "$ADB_SIGNED_SHA" ]
+check "device check: the round trip builds examples/c/example.c for 16 KiB pages" \
+    grep -q -- "-Wl,-z,max-page-size=16384 .*examples/c/example.c" "$T/adb-good/clang"
+check "device check: the round trip runs with no seed argument" \
+    grep -qE '^shell cd /data/local/tmp/oxicrypt-pq && LD_LIBRARY_PATH=/data/local/tmp/oxicrypt-pq \./example /data/local/tmp/oxicrypt-pq /data/local/tmp/oxicrypt-pq/out$' \
+    "$T/adb-good/calls"
+export ADB_LIE=pq-verify-fails
+expect "android-device-check: a verify that fails is reported" 1 "verdict FAILED: pq round trip" device_check pqfail
+unset ADB_LIE
 check "device check: the unsigned control pushed is the template" [ "$(sha "$T/adb-good/dev/unsigned.so")" = "$ADB_UNSIGNED_SHA" ]
 check "device check: the signed library pushed as shipped" [ "$(sha "$T/adb-good/dev/signed.so")" = "$ADB_SIGNED_SHA" ]
 check "device check: the harness linked for 16 KiB pages" \
@@ -1356,12 +1468,13 @@ check "caller-entropy sites: lists a production call and skips a cfg(test) block
         = 'fixture/src/lib.rs:2: drbg.instantiate(&[0; 32], &[0; 16], b"outside");' ]
 
 # --- check-example-inputs.sh --------------------------------------------------
-# A copy of examples/ whose six how-tos are stand-ins holding the fixed-input
-# rows of examples/README.md, so the agreement logic is tested whether or not
-# the how-tos are written.
+# A copy of examples/ whose six how-tos are stand-ins holding only the
+# fixed-input rows of examples/README.md, so the agreement logic is tested
+# independently of the how-tos' text.
 
-ROWS="$(grep -E '^\| `(MESSAGE|SIG_FLIP_BYTE|CT_FLIP_BYTE)` \|' "$HERE/../examples/README.md")"
-check "example inputs: examples/README.md has the three rows" [ "$(grep -c '' <<<"$ROWS")" = 3 ]
+OK_INPUTS="ok: the message, the personalization string and both flipped bytes agree across 13 files"
+ROWS="$(grep -E '^\| `(MESSAGE|PERSONALIZATION|SIG_FLIP_BYTE|CT_FLIP_BYTE)` \|' "$HERE/../examples/README.md")" || true
+check "example inputs: examples/README.md has the four rows" [ "$(grep -c '' <<<"$ROWS")" = 4 ]
 # inputs_tree <name>: the completed copy, at $T/inputs/<name>.
 inputs_tree() {
     local language
@@ -1372,7 +1485,7 @@ inputs_tree() {
     done
 }
 inputs_tree agree
-expect "example inputs: thirteen agreeing files pass" 0 "ok: the message and both flipped bytes agree across 13 files" \
+expect "example inputs: thirteen agreeing files pass" 0 "$OK_INPUTS" \
     "$HERE/check-example-inputs.sh" "$T/inputs/agree"
 inputs_tree position
 sed -i.orig -E 's/^CT_FLIP_BYTE = 0$/CT_FLIP_BYTE = 1/' "$T/inputs/position/python/example.py"
@@ -1395,12 +1508,28 @@ printf '\nconst SIG_FLIP_BYTE_TOO = 0;\nconst SIG_FLIP_BYTE = 3;\n' >> "$T/input
 expect "example inputs: a value stated twice differently exits 1" 1 \
     "FAILED: node/example.js states SIG_FLIP_BYTE more than once, with different values" \
     "$HERE/check-example-inputs.sh" "$T/inputs/twice"
-expect "example inputs: the repository's examples and how-tos agree" 0 \
-    "ok: the message and both flipped bytes agree across 13 files" "$HERE/check-example-inputs.sh"
+expect "example inputs: the repository's examples and how-tos agree" 0 "$OK_INPUTS" "$HERE/check-example-inputs.sh"
 inputs_tree missing
 rm "$T/inputs/missing/c/README.md"
 expect "example inputs: a missing how-to exits 1" 1 "FAILED: c/README.md is missing" \
     "$HERE/check-example-inputs.sh" "$T/inputs/missing"
+inputs_tree no-root
+rm "$T/inputs/no-root/README.md"
+expect "example inputs: a missing examples/README.md exits 1" 1 "FAILED: README.md is missing" \
+    "$HERE/check-example-inputs.sh" "$T/inputs/no-root"
+inputs_tree no-row
+sed -i.orig '/^| `PERSONALIZATION` |/d' "$T/inputs/no-row/csharp/README.md"
+expect "example inputs: a how-to without a row exits 1" 1 "FAILED: csharp/README.md states no PERSONALIZATION" \
+    "$HERE/check-example-inputs.sh" "$T/inputs/no-row"
+inputs_tree perso
+sed -i.orig 's/"oxicrypt example"/"oxicrypt sample"/' "$T/inputs/perso/c/example.c"
+expect "example inputs: an edited personalization string exits 1" 1 \
+    "FAILED: c/example.c states PERSONALIZATION as \"oxicrypt sample\", README.md as \"oxicrypt example\"" \
+    "$HERE/check-example-inputs.sh" "$T/inputs/perso"
+inputs_tree prose
+printf '\nThe constants `MESSAGE` and `SIG_FLIP_BYTE` are fixed; `CT_FLIP_BYTE` (FIPS 203) too.\n' >> "$T/inputs/prose/go/README.md"
+expect "example inputs: prose naming a constant is not read as its row" 0 "$OK_INPUTS" \
+    "$HERE/check-example-inputs.sh" "$T/inputs/prose"
 
 # --- an inherited GIT_DIR ----------------------------------------------------
 # Runs this suite once more the way a git hook would start it, with GIT_DIR
@@ -1416,7 +1545,7 @@ if [ -z "${RELEASE_SCRIPTS_INNER:-}" ]; then
     before="$(sentinel)"
     check "inherited GIT_DIR: the sentinel has a ref" grep -q refs/heads/main <<<"$before"
     expect "inherited GIT_DIR: the suite still passes" 0 ", 0 failed" \
-        env -u OXICRYPT_TEST_EXAMPLES GIT_DIR="$T/sentinel/.git" RELEASE_SCRIPTS_INNER=1 "$HERE/test-release-scripts.sh"
+        env -u OXICRYPT_TEST_EXAMPLES -u OXICRYPT_TEST_REQUIRE_BUILT GIT_DIR="$T/sentinel/.git" RELEASE_SCRIPTS_INNER=1 "$HERE/test-release-scripts.sh"
     check "inherited GIT_DIR: the sentinel is unchanged" [ "$(sentinel)" = "$before" ]
 fi
 

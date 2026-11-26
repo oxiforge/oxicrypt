@@ -830,14 +830,81 @@ jobs:
       - run: python3 tools/acvp-gen/test_merge_manifest.py
 
   # The release workflow's tag check and draft attach run only on a tag push,
-  # which no pull request makes. Their fixture tests run here instead.
+  # which no pull request makes. Their fixture tests run here instead, with
+  # the six examples run against a signed library bundle, a signed
+  # fault-injection bundle and a signed CLI archive built here, so the
+  # tamper, entropy-failure and crosscheck cases run on every change.
   release-scripts:
     name: release scripts
     runs-on: ubuntu-latest
     env:
       OXICRYPT_TEST_EXAMPLES: "1"
+      OXICRYPT_TEST_REQUIRE_BUILT: "1"
     steps:
       - uses: actions/checkout@v4
+      - name: Install stable toolchain
+        run: rustup toolchain install stable --profile minimal
+      - uses: Swatinem/rust-cache@v2
+      # The toolchain versions the how-tos under examples/ state.
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "25"
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "10.0.x"
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26"
+          cache: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+      # A throwaway key pair for this job alone, kept outside the checkout
+      # and never committed.
+      - name: Build and sign the library bundles and the CLI archive
+        run: |
+          set -euo pipefail
+          cargo build --release -p oxicrypt-integrity-sign
+          signer="$PWD/target/release/oxicrypt-integrity-sign"
+          key="$RUNNER_TEMP/integrity-key"
+          "$signer" --keygen "$key"
+          export OXICRYPT_INTEGRITY_VERIFY_KEY="$key/integrity-verify.pub"
+          cargo build --release -p oxicrypt-ffi -p oxicrypt-cli -p oxicrypt-integrity-sign
+          CARGO_TARGET_DIR="$PWD/target/fault" cargo build --release -p oxicrypt-ffi --features fault-injection
+          # pack <cdylib> <name>: signs a copy of <cdylib> and packs it as the
+          # release workflow stages a library bundle.
+          pack() {
+            local w="$RUNNER_TEMP/$2" d file
+            d="$w/oxicrypt-ffi-v0.0.0-linux-x86_64"
+            mkdir -p "$d"
+            cp "$1" "$w/liboxicrypt_ffi.so"
+            INTEGRITY_SIGNING_KEY="$key/integrity-signing.key" bash scripts/release-sign.sh "$signer" "$w/liboxicrypt_ffi.so" "$w/sign.txt"
+            file="$(bash scripts/library-file-name.sh "$w/liboxicrypt_ffi.so")"
+            cp "$w/liboxicrypt_ffi.so" "$d/$file"
+            ln -s "$file" "$d/liboxicrypt_ffi.so"
+            cp crates/oxicrypt-ffi/include/oxicrypt.h LICENSE-APACHE LICENSE-MIT "$d/"
+            "$signer" --verify "$d/$file"
+            tar -czf "$w.tar.gz" -C "$w" oxicrypt-ffi-v0.0.0-linux-x86_64
+          }
+          pack target/release/liboxicrypt_ffi.so bundle
+          pack target/fault/release/liboxicrypt_ffi.so fault-bundle
+          cli="$RUNNER_TEMP/cli"
+          mkdir -p "$cli/oxicrypt-cli-v0.0.0-linux-x86_64"
+          cp target/release/oxi "$cli/oxi"
+          INTEGRITY_SIGNING_KEY="$key/integrity-signing.key" bash scripts/release-sign.sh "$signer" "$cli/oxi" "$cli/sign.txt"
+          cp "$cli/oxi" LICENSE-APACHE LICENSE-MIT "$cli/oxicrypt-cli-v0.0.0-linux-x86_64/"
+          tar -czf "$cli.tar.gz" -C "$cli" oxicrypt-cli-v0.0.0-linux-x86_64
+          bash scripts/release-signing-key.sh --erase "$key"
+          {
+            echo "OXICRYPT_TEST_BUNDLE=$RUNNER_TEMP/bundle.tar.gz"
+            echo "OXICRYPT_TEST_FAULT_BUNDLE=$RUNNER_TEMP/fault-bundle.tar.gz"
+            echo "OXICRYPT_TEST_SIGNER=$signer"
+            echo "OXICRYPT_TEST_CLI=$cli.tar.gz"
+          } >> "$GITHUB_ENV"
       - run: ./scripts/test-release-scripts.sh
 
   # The KWP length arithmetic is checked so that it cannot wrap where

@@ -330,9 +330,10 @@ jobs:
             cdylib: liboxicrypt_ffi.so
             staticlib: liboxicrypt_ffi.a
             load: host
-            # The examples the runner image has a toolchain for; the JDK comes
-            # from the image's JAVA_HOME_<version>_<arch> variable.
-            examples_required: node csharp java go
+            # Every example, on every leg that runs them: the setup steps
+            # before the examples install each toolchain, so a missing one
+            # fails the release rather than skipping its example.
+            examples_required: c python go node java csharp
           # Built on an arm64 runner, so the artifact that ships is loaded and
           # run by the job that built it.
           - name: linux-aarch64
@@ -344,7 +345,7 @@ jobs:
             cdylib: liboxicrypt_ffi.so
             staticlib: liboxicrypt_ffi.a
             load: host
-            examples_required: node csharp java go
+            examples_required: c python go node java csharp
           # macOS runner labels are retired upstream, and a retired label
           # does not fail: the job queues indefinitely. Check
           # https://github.com/actions/runner-images for the current set
@@ -358,7 +359,7 @@ jobs:
             cdylib: liboxicrypt_ffi.dylib
             staticlib: liboxicrypt_ffi.a
             load: host
-            examples_required: node csharp java
+            examples_required: c python go node java csharp
           - name: macos-aarch64
             runner: macos-15
             format: macho
@@ -368,7 +369,7 @@ jobs:
             cdylib: liboxicrypt_ffi.dylib
             staticlib: liboxicrypt_ffi.a
             load: host
-            examples_required: node csharp java
+            examples_required: c python go node java csharp
           - name: windows-x86_64
             runner: windows-latest
             format: pe
@@ -380,8 +381,9 @@ jobs:
             # `oxicrypt` crate links exactly this name.
             implib: oxicrypt_ffi.dll.lib
             load: host
-            # The Windows image also carries Go and the MinGW gcc cgo builds with.
-            examples_required: node csharp go java
+            # The Windows image carries the MinGW gcc that cgo and the C
+            # example build with.
+            examples_required: c python go node java csharp
           - name: android-x86_64
             runner: ubuntu-latest
             format: android
@@ -879,29 +881,52 @@ jobs:
           retention-days: 7
           if-no-files-found: error
 
-      # After the upload, so third-party install scripts (npm, NuGet) run only once the archive and its .sha256 are uploaded; a failure still fails the job and blocks `attach`.
+      # After the upload, so third-party install scripts (npm, NuGet) and the
+      # toolchain setup run only once the archive and its .sha256 are
+      # uploaded; a failure still fails the job and blocks `attach`. The
+      # versions are the ones the how-tos under examples/ state.
+      - uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3 # v4
+        if: matrix.load == 'host'
+        with:
+          distribution: temurin
+          java-version: "25"
+      - uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4
+        if: matrix.load == 'host'
+        with:
+          dotnet-version: "10.0.x"
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        if: matrix.load == 'host'
+        with:
+          go-version: "1.26"
+          cache: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        if: matrix.load == 'host'
+        with:
+          node-version: "22"
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        if: matrix.load == 'host'
+        with:
+          python-version: "3.14"
+
       - name: Run the examples against the staged library archive
         if: matrix.load == 'host'
         shell: bash
         env:
           OXICRYPT_EXAMPLES_REQUIRED: ${{ matrix.examples_required }}
-        run: |
-          # Puts the newest JDK of 22 or later the image installs, by its
-          # JAVA_HOME_<version>_<arch> variable, ahead of the default java on
-          # PATH. A Windows path is converted first: its drive colon would
-          # split PATH.
-          for v in 25 24 23 22; do
-            for a in X64 arm64 ARM64; do
-              var="JAVA_HOME_${v}_${a}"
-              if [ -n "${!var:-}" ]; then
-                jdk="${!var}"
-                if command -v cygpath >/dev/null 2>&1; then jdk="$(cygpath -u "$jdk")"; fi
-                export PATH="$jdk/bin:$PATH"
-                break 2
-              fi
-            done
-          done
-          bash scripts/release-archive-check.sh examples "dist/oxicrypt-ffi-${LABEL}-${{ matrix.name }}.tar.gz"
+        run: bash scripts/release-archive-check.sh examples "dist/oxicrypt-ffi-${LABEL}-${{ matrix.name }}.tar.gz"
+
+      # Every leg that packs both archives: each example's objects checked
+      # against the extracted oxi in both directions, and the NIST known
+      # answer through oxi.
+      - name: Cross-check the examples against the staged CLI archive
+        if: matrix.load == 'host' && matrix.cli != ''
+        shell: bash
+        env:
+          OXICRYPT_EXAMPLES_REQUIRED: ${{ matrix.examples_required }}
+        run: >-
+          bash scripts/release-archive-check.sh crosscheck
+          "dist/oxicrypt-cli-${LABEL}-${{ matrix.name }}.tar.gz"
+          "dist/oxicrypt-ffi-${LABEL}-${{ matrix.name }}.tar.gz"
 
   build-release:
     name: ${{ matrix.name }} (release)

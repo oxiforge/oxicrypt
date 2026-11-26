@@ -42,9 +42,15 @@
 #      unsigned control and the signed library. It derives the tampered
 #      control from the signed library with <signer>, pushes the four files
 #      and runs each case on the device.
-#   6. Prints one verdict line per case.
+#   6. Builds examples/c/example.c with the same clang against the bundle's
+#      header and library, pushes it with the signed library and runs it on
+#      the device. With no seed supplied, it generates an ML-DSA-87 key pair
+#      from a DRBG the module seeds, signs and verifies, and generates an
+#      ML-KEM-1024 key pair, encapsulates and decapsulates. It must exit 0
+#      and print `ml-dsa-87 verify ok` and `ml-kem-1024 decaps match`.
+#   7. Prints one verdict line per case, the last `pq round trip`.
 #
-# Exit 0 when every check and all three verdicts hold, 1 when any fails, 2
+# Exit 0 when every check and all four verdicts hold, 1 when any fails, 2
 # for a usage or environment error.
 set -uo pipefail
 here="$(cd "$(dirname "$0")" && pwd)"
@@ -182,4 +188,30 @@ verdict "control ok: the library as linked is refused as unsigned" "the unsigned
 verdict "ok: the signed library reaches operational" "the signed library reaches operational"
 verdict "control ok: the tampered library is refused as not matching its signature" \
     "the tampered control is refused as not matching its signature"
+
+# The round trip, through the signed library as shipped. The library's name
+# on Android is its SONAME, liboxicrypt_ffi.so.
+dev=/data/local/tmp/oxicrypt-pq
+pq_rc=1
+if "$clang" -O2 -Wall -Wextra -Wl,-z,max-page-size=16384 -I"$dir" -o "$tmp/example" "$root/examples/c/example.c" \
+        -L"$dir" -loxicrypt_ffi \
+    && adb shell "rm -rf $dev && mkdir -p $dev/out" \
+    && adb push "$signed" "$dev/liboxicrypt_ffi.so" >/dev/null \
+    && adb push "$tmp/example" "$dev/example" >/dev/null \
+    && adb shell "chmod 755 $dev/example"; then
+    adb shell "cd $dev && LD_LIBRARY_PATH=$dev ./example $dev $dev/out" > "$tmp/pq.txt" 2>&1
+    pq_rc=$?
+    tr -d '\r' < "$tmp/pq.txt" > "$tmp/pq-lf.txt"
+    printf 'pq round trip (exit %s):\n' "$pq_rc"
+    cat "$tmp/pq-lf.txt"
+else
+    echo "FAILED: building or pushing examples/c/example.c for the round trip" >&2
+fi
+if [ "$pq_rc" -eq 0 ] && [ "$(grep -cxF "ml-dsa-87 verify ok" "$tmp/pq-lf.txt")" -eq 1 ] \
+    && [ "$(grep -cxF "ml-kem-1024 decaps match" "$tmp/pq-lf.txt")" -eq 1 ]; then
+    echo "verdict ok: pq round trip"
+else
+    echo "verdict FAILED: pq round trip" >&2
+    failed=1
+fi
 exit "$failed"
