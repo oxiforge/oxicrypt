@@ -46,10 +46,14 @@ fn main() -> ExitCode {
     // before anything initialises the module. A value that does not parse
     // arms nothing past its first bad entry, and the run goes on.
     // `corrupt-next-key` also arms the post-quantum key-generation seams, so
-    // the next ML-DSA or ML-KEM key pair fails its pairwise consistency test.
+    // the next ML-DSA or ML-KEM key pair fails its pairwise consistency test,
+    // and `install-pause=<path>`, which `oxi` takes out before the rest is
+    // parsed, pauses that output's install.
     #[cfg(feature = "fault-injection")]
     {
-        let _ = oxicrypt_drbg::seam::arm_from_env(std::env::var("OXI_FAULT").ok().as_deref());
+        let fault = std::env::var("OXI_FAULT").ok();
+        let rest = pq::take_install_pause(fault.as_deref());
+        let _ = oxicrypt_drbg::seam::arm_from_env(rest.as_deref());
         if oxicrypt_drbg::seam::corrupt_next_key_armed() {
             oxicrypt_ml_dsa::seam::corrupt_next_pk();
             oxicrypt_ml_kem::seam::corrupt_next_dk();
@@ -137,9 +141,20 @@ fn usage() -> ExitCode {
     for line in pq::ML_DSA_GRAMMAR.iter().chain(&pq::ML_KEM_GRAMMAR) {
         eprintln!("  {line}");
     }
-    eprintln!("  MESSAGE is a file, or stdin when absent or given as -; -- ends the flags.");
+    eprintln!("  MESSAGE is a file, or stdin when absent or given as -; a file named -");
+    eprintln!("  is given as ./-. -- ends the flags. A flag's value cannot begin with --;");
+    eprintln!("  name such a file as ./--name.");
+    eprintln!("  --ctx is 0 to 255 bytes as hex; absent means the empty context.");
     eprintln!("  Keys, signatures and ciphertexts are raw bytes. --sk, --dk, --ss and");
-    eprintln!("  --seed-out files are created owner-only; no output file is overwritten.");
+    eprintln!("  --seed-out files are created owner-only where the system has file modes.");
+    eprintln!(
+        "  No output file is overwritten where hard links exist: each is written to its name with"
+    );
+    eprintln!("  .oxi-partial appended and then linked into place, so a run that was");
+    eprintln!("  interrupted can leave a .oxi-partial file to delete. On a filesystem that");
+    eprintln!("  refuses hard links the file is renamed into place instead, and the");
+    eprintln!("  no-overwrite guarantee is best effort there; a refusal oxi does not");
+    eprintln!("  recognise as that case is reported as an error.");
     eprintln!("  Without --ss the shared secret is printed as 64 hex characters.");
     eprintln!("  A seed flag prints \"{}\":", pq::SEED_WARNING);
     eprintln!("  a seed on the command line is visible to anyone who can read the process list.");

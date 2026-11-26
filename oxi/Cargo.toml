@@ -27,7 +27,8 @@ path = "src/main.rs"
 [features]
 default = []
 # Test builds only: `OXI_FAULT` arms the DRBG, ML-DSA and ML-KEM crates'
-# fault seams at startup.
+# fault seams at startup, and its `install-pause=<path>` entry pauses one
+# output's install.
 fault-injection = [
     "oxicrypt-drbg/fault-injection",
     "oxicrypt-ml-dsa/fault-injection",

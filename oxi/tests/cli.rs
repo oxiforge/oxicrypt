@@ -1026,31 +1026,7 @@ fn dir(oxi: &Scratch) -> PathBuf {
 /// `ETXTBSY` as [`run_in`] does.
 fn run_pq(oxi: &Path, args: &[&str], stdin: &[u8], env: &[(&str, &str)]) -> (i32, Vec<u8>, String) {
     use std::io::Write as _;
-    const ETXTBSY: i32 = 26;
-    let mut waited = std::time::Duration::ZERO;
-    let step = std::time::Duration::from_millis(20);
-    let mut child = loop {
-        let spawned = Command::new(oxi)
-            .args(args)
-            .current_dir(oxi.parent().expect("artifact has a parent"))
-            .env_remove("OXI_FAULT")
-            .envs(env.iter().copied())
-            .stdin(std::process::Stdio::piped())
-            .stdout(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::piped())
-            .spawn();
-        match spawned {
-            Ok(child) => break child,
-            Err(e)
-                if e.raw_os_error() == Some(ETXTBSY)
-                    && waited < std::time::Duration::from_secs(5) =>
-            {
-                std::thread::sleep(step);
-                waited += step;
-            }
-            Err(e) => panic!("run {}: {e}", oxi.display()),
-        }
-    };
+    let mut child = spawn_oxi(oxi, args, env);
     if let Some(mut input) = child.stdin.take() {
         input.write_all(stdin).expect("write stdin");
     }
@@ -1062,7 +1038,44 @@ fn run_pq(oxi: &Path, args: &[&str], stdin: &[u8], env: &[(&str, &str)]) -> (i32
     )
 }
 
+/// Spawns the artifact in its own directory with stdin, stdout and stderr
+/// piped and `env` set over an environment without `OXI_FAULT`. Retries on
+/// `ETXTBSY` as [`run_in`] does.
+fn spawn_oxi(oxi: &Path, args: &[&str], env: &[(&str, &str)]) -> std::process::Child {
+    const ETXTBSY: i32 = 26;
+    let mut waited = std::time::Duration::ZERO;
+    let step = std::time::Duration::from_millis(20);
+    loop {
+        let spawned = Command::new(oxi)
+            .args(args)
+            .current_dir(oxi.parent().expect("artifact has a parent"))
+            .env_remove("OXI_FAULT")
+            .envs(env.iter().copied())
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn();
+        match spawned {
+            Ok(child) => return child,
+            Err(e)
+                if e.raw_os_error() == Some(ETXTBSY)
+                    && waited < std::time::Duration::from_secs(5) =>
+            {
+                std::thread::sleep(step);
+                waited += step;
+            }
+            Err(e) => panic!("run {}: {e}", oxi.display()),
+        }
+    }
+}
+
 /// An ACVP fixture under `tests/data/`.
+///
+/// The files are hex fields of NIST ACVP-Server
+/// `gen-val/json-files/ML-DSA-keyGen-FIPS204/internalProjection.json` (`seed`,
+/// `pk`, `sk`) and `gen-val/json-files/ML-KEM-keyGen-FIPS203/internalProjection.json`
+/// (`d`, `z`, `ek`, `dk`), at commit 112690e8484dba7077709a05b1f3af58ddefdd5d,
+/// decoded to bytes; each name carries its `tgId` and `tcId`.
 fn data(name: &str) -> Vec<u8> {
     let path = Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("tests/data")
@@ -1223,22 +1236,29 @@ fn keygen_matches_acvp_vector_ml_kem_768() {
     kem_keygen_known_answer("768", "tg2-tc26", 1184, 2400);
 }
 
-/// For each ML-DSA set: a signature verifies, from a file operand, from
-/// stdin and with a context; a flipped signature byte, a different message
-/// and a missing context each exit 5.
+/// For each ML-DSA set: a signature of the Numbers-table size verifies,
+/// from a file operand (also one named like a flag, after `--`), from stdin
+/// and with a context; a flipped signature byte, a flipped public-key byte, a
+/// different message and a missing context each exit 5; a truncated
+/// signature or public key exits 2 before the module is called.
 #[test]
+#[allow(
+    clippy::too_many_lines,
+    reason = "one round trip per set, each verdict beside it"
+)]
 fn ml_dsa_round_trip_and_rejection() {
     let oxi = signed("dsa-round-trip");
     let d = dir(&oxi);
-    let message = b"oxicrypt how-to message";
+    let message = b"a message to sign";
     std::fs::write(d.join("msg"), message).expect("write msg");
-    std::fs::write(d.join("-m"), message).expect("write -m");
+    std::fs::write(d.join("--msg"), message).expect("write --msg");
     std::fs::write(d.join("other"), b"a different message").expect("write other");
     let rejected = "ml-dsa verify: signature not valid\n";
 
-    for set in ["44", "65", "87"] {
+    for (set, pk_len, sig_len) in [("44", 1312, 2420), ("65", 1952, 3309), ("87", 2592, 4627)] {
         let p = |name: &str| format!("{set}.{name}");
         let (pk, sk, sig, bad, ctx_sig) = (p("pk"), p("sk"), p("sig"), p("bad"), p("ctx-sig"));
+        let (bad_pk, short_pk, short_sig) = (p("bad-pk"), p("short-pk"), p("short-sig"));
         let ok = |args: &[&str], stdin: &[u8]| {
             let (code, stdout, stderr) = run_pq(&oxi, args, stdin, &[]);
             assert_eq!(code, 0, "{args:?}: {stderr}");
@@ -1252,9 +1272,19 @@ fn ml_dsa_round_trip_and_rejection() {
         ok(&["ml-dsa", "keygen", set, "--pk", &pk, "--sk", &sk], b"");
         ok(
             &[
-                "ml-dsa", "sign", set, "--sk", &sk, "--sig", &sig, "--", "-m",
+                "ml-dsa", "sign", set, "--sk", &sk, "--sig", &sig, "--", "--msg",
             ],
             b"",
+        );
+        assert_eq!(
+            read(&d.join(&sig)).len(),
+            sig_len,
+            "ML-DSA-{set} signature size"
+        );
+        assert_eq!(
+            read(&d.join(&pk)).len(),
+            pk_len,
+            "ML-DSA-{set} public key size"
         );
         ok(
             &["ml-dsa", "verify", set, "--pk", &pk, "--sig", &sig, "msg"],
@@ -1274,6 +1304,43 @@ fn ml_dsa_round_trip_and_rejection() {
         std::fs::write(d.join(&bad), &flipped).expect("write flipped signature");
         refused(&["ml-dsa", "verify", set, "--pk", &pk, "--sig", &bad, "msg"]);
         refused(&["ml-dsa", "verify", set, "--pk", &pk, "--sig", &sig, "other"]);
+
+        let mut flipped_pk = read(&d.join(&pk));
+        flipped_pk[0] ^= 0x01;
+        std::fs::write(d.join(&bad_pk), &flipped_pk).expect("write flipped public key");
+        refused(&[
+            "ml-dsa", "verify", set, "--pk", &bad_pk, "--sig", &sig, "msg",
+        ]);
+
+        let truncated = |from: &str, to: &str| {
+            let bytes = read(&d.join(from));
+            std::fs::write(d.join(to), &bytes[..bytes.len() - 1]).expect("write truncated");
+        };
+        truncated(&sig, &short_sig);
+        truncated(&pk, &short_pk);
+        for (args, line) in [
+            (
+                [
+                    "ml-dsa", "verify", set, "--pk", &pk, "--sig", &short_sig, "msg",
+                ],
+                format!(
+                    "oxi ml-dsa verify: {short_sig}: expected {sig_len} bytes, got {}\n",
+                    sig_len - 1
+                ),
+            ),
+            (
+                [
+                    "ml-dsa", "verify", set, "--pk", &short_pk, "--sig", &sig, "msg",
+                ],
+                format!(
+                    "oxi ml-dsa verify: {short_pk}: expected {pk_len} bytes, got {}\n",
+                    pk_len - 1
+                ),
+            ),
+        ] {
+            let (code, _, stderr) = run_pq(&oxi, &args, b"", &[]);
+            assert_eq!((code, stderr), (2, line), "{args:?}");
+        }
 
         ok(
             &[
@@ -1327,6 +1394,16 @@ fn kem_round_trip(set: &str) {
     assert_eq!(
         encapsulated, decapsulated,
         "ML-KEM-{set}: decaps must print encaps' secret"
+    );
+    let ct_len = match set {
+        "512" => 768,
+        "768" => 1088,
+        _ => 1568,
+    };
+    assert_eq!(
+        read(&d.join("ct")).len(),
+        ct_len,
+        "ML-KEM-{set} ciphertext size"
     );
 
     let mut tampered = read(&d.join("ct"));
@@ -1545,7 +1622,21 @@ fn seed_flags_no_flag_silent() {
     }
 }
 
-/// Every usage error exits 2, says why on stderr, and creates no output.
+/// The usage error `oxi ml-dsa` prints for an unknown or missing verb or set.
+const DSA_USAGE: &str = "oxi ml-dsa: usage:\n  \
+    oxi ml-dsa keygen <44|65|87>     --pk FILE --sk FILE [--seed HEX | --seed-out FILE]\n  \
+    oxi ml-dsa sign   <44|65|87>     --sk FILE --sig FILE [--ctx HEX] [--] [MESSAGE]\n  \
+    oxi ml-dsa verify <44|65|87>     --pk FILE --sig FILE [--ctx HEX] [--] [MESSAGE]\n";
+
+/// The usage error `oxi ml-kem` prints for an unknown or missing verb or set.
+const KEM_USAGE: &str = "oxi ml-kem: usage:\n  \
+    oxi ml-kem keygen <512|768|1024> --ek FILE --dk FILE [--d HEX --z HEX | --seed-out FILE]\n  \
+    oxi ml-kem encaps <512|768|1024> --ek FILE --ct FILE [--ss FILE]\n  \
+    oxi ml-kem decaps <512|768|1024> --dk FILE --ct FILE [--ss FILE]\n";
+
+/// Each usage error in the table exits 2 with exactly its stderr line (a
+/// prefix where the line ends in operating-system text) and creates none of
+/// its outputs.
 #[test]
 #[allow(
     clippy::too_many_lines,
@@ -1566,9 +1657,21 @@ fn pq_usage_errors_exit_2() {
     assert_eq!(code, 0, "control: a valid invocation succeeds: {stderr}");
     std::fs::write(d.join("msg"), b"message").expect("write msg");
     std::fs::write(d.join("short.sk"), [0u8; 100]).expect("write short.sk");
+    std::fs::write(d.join("long.sk"), [0u8; 2561]).expect("write long.sk");
     std::fs::write(d.join("exists"), b"keep").expect("write exists");
+    std::fs::write(d.join("p.pk.oxi-partial"), b"left over").expect("write partial");
+    let short = |name: &str, fixture: &str| {
+        let bytes = data(fixture);
+        std::fs::write(d.join(name), &bytes[..bytes.len() - 1]).expect("write short file");
+    };
+    short("short.ek", "ml-kem-512-keygen-tg1-tc1.ek");
+    short("short.dk", "ml-kem-512-keygen-tg1-tc1.dk");
+    std::fs::write(d.join("dk"), data("ml-kem-512-keygen-tg1-tc1.dk")).expect("write dk");
+    std::fs::write(d.join("short.ct"), [0u8; 767]).expect("write short.ct");
 
     let hex32 = "11".repeat(32);
+    let hex31 = "11".repeat(31);
+    let plus_seed = format!("+f{}", "11".repeat(31));
     let ctx256 = "00".repeat(256);
     let cases: &[(&[&str], &str, &[&str])] = &[
         (
@@ -1587,7 +1690,16 @@ fn pq_usage_errors_exit_2() {
         ),
         (
             &[
-                "ml-dsa", "sign", "44", "--sk", "sk", "--sig", "o.sig", "--ctx", &ctx256, "msg",
+                "ml-dsa",
+                "sign",
+                "44",
+                "--sk",
+                "absent.sk",
+                "--sig",
+                "o.sig",
+                "--ctx",
+                &ctx256,
+                "msg",
             ],
             "oxi ml-dsa sign: --ctx is 256 bytes; FIPS 204 §5.2 limits the context to 255 bytes\n",
             &["o.sig"],
@@ -1718,23 +1830,154 @@ fn pq_usage_errors_exit_2() {
         ),
         (
             &["ml-dsa", "keygen", "99", "--pk", "o.pk", "--sk", "o.sk"],
-            "oxi ml-dsa: usage:\n  oxi ml-dsa keygen <44|65|87>",
+            DSA_USAGE,
             &["o.pk", "o.sk"],
         ),
         (
             &["ml-kem", "frob", "512", "--ek", "o.ek", "--dk", "o.dk"],
-            "oxi ml-kem: usage:\n  oxi ml-kem keygen <512|768|1024>",
+            KEM_USAGE,
             &["o.ek", "o.dk"],
         ),
+        (&["ml-dsa", "keygen"], DSA_USAGE, &[]),
+        (&["ml-kem"], KEM_USAGE, &[]),
+        (
+            &[
+                "ml-dsa", "sign", "44", "--sk", "sk", "--sig", "o.sig", "--ctx", "abc", "msg",
+            ],
+            "oxi ml-dsa sign: --ctx must be hex digits in pairs, 0 to 255 bytes\n",
+            &["o.sig"],
+        ),
+        (
+            &[
+                "ml-dsa", "sign", "44", "--sk", "sk", "--sig", "o.sig", "--ctx", "zz", "msg",
+            ],
+            "oxi ml-dsa sign: --ctx holds a character that is not hex\n",
+            &["o.sig"],
+        ),
+        (
+            &[
+                "ml-dsa", "sign", "44", "--sk", "sk", "--sig", "o.sig", "--ctx", "+f", "msg",
+            ],
+            "oxi ml-dsa sign: --ctx holds a character that is not hex\n",
+            &["o.sig"],
+        ),
+        (
+            &[
+                "ml-dsa", "keygen", "44", "--seed", &plus_seed, "--pk", "o.pk", "--sk", "o.sk",
+            ],
+            "oxi ml-dsa keygen: --seed must be 32 bytes as 64 hex characters, and it holds a \
+             character that is not hex\n",
+            &["o.pk", "o.sk"],
+        ),
+        (
+            &[
+                "ml-kem", "keygen", "512", "--d", &hex31, "--z", &hex32, "--ek", "o.ek", "--dk",
+                "o.dk",
+            ],
+            "oxi ml-kem keygen: --d must be 32 bytes as 64 hex characters, got 62 characters\n",
+            &["o.ek", "o.dk"],
+        ),
+        (
+            &[
+                "ml-kem", "encaps", "512", "--ek", "short.ek", "--ct", "o.ct",
+            ],
+            "oxi ml-kem encaps: short.ek: expected 800 bytes, got 799\n",
+            &["o.ct"],
+        ),
+        (
+            &[
+                "ml-kem", "decaps", "512", "--dk", "short.dk", "--ct", "short.ct",
+            ],
+            "oxi ml-kem decaps: short.dk: expected 1632 bytes, got 1631\n",
+            &[],
+        ),
+        (
+            &[
+                "ml-kem", "decaps", "512", "--dk", "dk", "--ct", "short.ct", "--ss", "o.ss",
+            ],
+            "oxi ml-kem decaps: short.ct: expected 768 bytes, got 767\n",
+            &["o.ss"],
+        ),
+        (
+            &[
+                "ml-kem",
+                "keygen",
+                "512",
+                "--d",
+                &hex32,
+                "--z",
+                &hex32,
+                "--ek",
+                "o.ek",
+                "--dk",
+                "o.dk",
+                "--seed-out",
+                "o.dz",
+            ],
+            "oxi ml-kem keygen: --seed-out cannot be combined with --d and --z\n",
+            &["o.ek", "o.dk", "o.dz"],
+        ),
+        (
+            &[
+                "ml-dsa",
+                "keygen",
+                "44",
+                "--pk",
+                "o.pk",
+                "--sk",
+                "o.sk",
+                "--seed-out",
+                "exists",
+            ],
+            "oxi will not overwrite exists: it already exists\n",
+            &["o.pk", "o.sk"],
+        ),
+        (
+            &[
+                "ml-kem", "encaps", "512", "--ek", "ek", "--ct", "o.same", "--ss", "o.same",
+            ],
+            "oxi ml-kem encaps: --ct and --ss name the same file o.same\n",
+            &["o.same"],
+        ),
+        (
+            &["ml-dsa", "keygen", "44", "--pk", "p.pk", "--sk", "o.sk"],
+            "oxi ml-dsa keygen: p.pk.oxi-partial exists (an interrupted or still-running \
+             oxi); delete it once none is running, or name another output\n",
+            &["p.pk", "o.sk"],
+        ),
+        (
+            &[
+                "ml-dsa",
+                "keygen",
+                "44",
+                "--pk",
+                "x.oxi-partial",
+                "--sk",
+                "x",
+            ],
+            "oxi ml-dsa keygen: --pk names x.oxi-partial, the temporary --sk is written to\n",
+            &["x.oxi-partial", "x"],
+        ),
+        (
+            &[
+                "ml-dsa", "sign", "44", "--sk", "long.sk", "--sig", "o.sig", "msg",
+            ],
+            "oxi ml-dsa sign: long.sk: expected 2560 bytes, got 2561\n",
+            &["o.sig"],
+        ),
     ];
-    for &(args, stderr_start, outputs) in cases {
+    for &(args, expected, outputs) in cases {
         let (code, stdout, stderr) = run_pq(&oxi, args, b"", &[]);
         assert_eq!(code, 2, "{args:?}: {stderr}");
         assert!(stdout.is_empty(), "{args:?}");
-        assert!(
-            stderr.starts_with(stderr_start),
-            "{args:?}: stderr {stderr:?} must start with {stderr_start:?}"
-        );
+        if expected.ends_with('\n') {
+            assert_eq!(stderr, expected, "{args:?}");
+        } else {
+            assert!(
+                stderr.starts_with(expected) && stderr.lines().count() == 1,
+                "{args:?}: stderr {stderr:?} must be one line starting {expected:?}"
+            );
+        }
         for o in outputs {
             assert!(
                 std::fs::symlink_metadata(d.join(o)).is_err(),
@@ -1747,6 +1990,38 @@ fn pq_usage_errors_exit_2() {
         b"keep",
         "an existing file is untouched"
     );
+    assert_eq!(
+        read(&d.join("p.pk.oxi-partial")),
+        b"left over",
+        "a refused leftover keeps its bytes"
+    );
+
+    #[cfg(unix)]
+    {
+        let (code, _, stderr) = run_pq(
+            &oxi,
+            &[
+                "ml-dsa",
+                "sign",
+                "44",
+                "--sk",
+                "/dev/zero",
+                "--sig",
+                "o.sig",
+                "msg",
+            ],
+            b"",
+            &[],
+        );
+        assert_eq!(
+            (code, stderr.as_str()),
+            (
+                2,
+                "oxi ml-dsa sign: /dev/zero: expected 2560 bytes, got more than 2560\n"
+            ),
+            "an endless input is refused after N + 1 bytes"
+        );
+    }
 }
 
 /// An ML-KEM encapsulation key with a coefficient equal to q (FIPS 203
@@ -1817,7 +2092,9 @@ fn module_verdicts_mapped_invalid_key() {
 }
 
 /// A key pair that fails its pairwise consistency test is reported as a
-/// conditional self-test failure, exit 1, and nothing is written.
+/// conditional self-test failure, exit 1, and nothing is written, on each
+/// key-generation path of each family: from the DRBG, from the DRBG with
+/// `--seed-out`, and expanded from a supplied seed.
 #[cfg(feature = "fault-injection")]
 #[test]
 fn module_verdicts_mapped_pct_failure() {
@@ -1828,48 +2105,61 @@ fn module_verdicts_mapped_pct_failure() {
         hex(&data("ml-kem-1024-keygen-tg3-tc51.d")),
         hex(&data("ml-kem-1024-keygen-tg3-tc51.z")),
     ];
-    let dsa = ["ml-dsa", "keygen", "87", "--pk", "pk", "--sk", "sk"];
-    let kem = [
-        "ml-kem",
-        "keygen",
-        "1024",
-        "--d",
-        &kem_seed[0],
-        "--z",
-        &kem_seed[1],
-        "--ek",
-        "ek",
-        "--dk",
-        "dk",
+    let dsa_seed = hex(&data("ml-dsa-87-keygen-tg3-tc51.seed"));
+    let dsa_failed = "oxi ml-dsa keygen: conditional self-test failed: ML-DSA-87 pairwise \
+                      consistency; the module is in its error state\n";
+    let kem_failed = "oxi ml-kem keygen: conditional self-test failed: ML-KEM-1024 pairwise \
+                      consistency; the module is in its error state\n";
+    let paths: [(&[&str], String); 6] = [
+        (&["ml-dsa", "keygen", "87"], dsa_failed.to_owned()),
+        (
+            &["ml-dsa", "keygen", "87", "--seed-out", "xi"],
+            dsa_failed.to_owned(),
+        ),
+        (
+            &["ml-dsa", "keygen", "87", "--seed", &dsa_seed],
+            format!("{SEED_WARNING}{dsa_failed}"),
+        ),
+        (&["ml-kem", "keygen", "1024"], kem_failed.to_owned()),
+        (
+            &["ml-kem", "keygen", "1024", "--seed-out", "dz"],
+            kem_failed.to_owned(),
+        ),
+        (
+            &[
+                "ml-kem",
+                "keygen",
+                "1024",
+                "--d",
+                &kem_seed[0],
+                "--z",
+                &kem_seed[1],
+            ],
+            format!("{SEED_WARNING}{kem_failed}"),
+        ),
     ];
-
-    let (code, _, stderr) = run_pq(&oxi, &dsa, b"", &fault);
-    assert_eq!(
-        (code, stderr.as_str()),
-        (
-            1,
-            "oxi ml-dsa keygen: conditional self-test failed: ML-DSA-87 pairwise consistency; \
-             the module is in its error state\n"
-        )
-    );
-    let (code, _, stderr) = run_pq(&oxi, &kem, b"", &fault);
-    assert_eq!(
-        (code, stderr.as_str()),
-        (
-            1,
-            "seed supplied: protect this seed as you would the secret key\n\
-             oxi ml-kem keygen: conditional self-test failed: ML-KEM-1024 pairwise consistency; \
-             the module is in its error state\n"
-        )
-    );
-    for f in ["pk", "sk", "ek", "dk"] {
-        assert!(!d.join(f).exists(), "{f} must not be written");
+    for (i, (base, expected)) in paths.iter().enumerate() {
+        let (a, b) = if base[0] == "ml-dsa" {
+            ("--pk", "--sk")
+        } else {
+            ("--ek", "--dk")
+        };
+        let (public, secret) = (format!("pub{i}"), format!("sec{i}"));
+        let mut args = base.to_vec();
+        args.extend([a, public.as_str(), b, secret.as_str()]);
+        let (code, _, stderr) = run_pq(&oxi, &args, b"", &fault);
+        assert_eq!((code, stderr.as_str()), (1, expected.as_str()), "{args:?}");
+        for f in [public.as_str(), secret.as_str(), "xi", "dz"] {
+            assert!(!d.join(f).exists(), "{args:?}: {f} must not be written");
+        }
+        let (code, _, stderr) = run_pq(&oxi, &args, b"", &[]);
+        assert_eq!(code, 0, "control: unfaulted {args:?}: {stderr}");
+        for f in ["xi", "dz"] {
+            if d.join(f).exists() {
+                std::fs::remove_file(d.join(f)).expect("remove the control's seed file");
+            }
+        }
     }
-
-    let (code, _, stderr) = run_pq(&oxi, &dsa, b"", &[]);
-    assert_eq!(code, 0, "control: unfaulted ML-DSA keygen: {stderr}");
-    let (code, _, stderr) = run_pq(&oxi, &kem, b"", &[]);
-    assert_eq!(code, 0, "control: unfaulted ML-KEM keygen: {stderr}");
 }
 
 /// An entropy source that fails to start is reported as unavailable, exit
@@ -1883,6 +2173,25 @@ fn module_verdicts_mapped_entropy_unavailable() {
     let d = dir(&oxi);
     let fault = [("OXI_FAULT", "poison-entropy")];
     let keygen = ["ml-kem", "keygen", "768", "--ek", "ek", "--dk", "dk"];
+
+    // FIPS 203 §7.2 runs before the DRBG starts: a malformed key is a usage
+    // error even when the entropy source would fail.
+    let mut noncanonical = data("ml-kem-768-keygen-tg2-tc26.ek");
+    noncanonical[0] = 0x01;
+    noncanonical[1] = (noncanonical[1] & 0xf0) | 0x0d;
+    std::fs::write(d.join("bad.ek"), &noncanonical).expect("write bad.ek");
+    let (code, _, stderr) = run_pq(
+        &oxi,
+        &[
+            "ml-kem", "encaps", "768", "--ek", "bad.ek", "--ct", "bad.ct",
+        ],
+        b"",
+        &fault,
+    );
+    assert_eq!(
+        (code, stderr.as_str()),
+        (2, "bad.ek: not a valid ML-KEM-768 key\n")
+    );
 
     let (code, _, stderr) = run_pq(&oxi, &keygen, b"", &fault);
     assert_eq!((code, stderr.as_str()), (1, UNAVAILABLE));
@@ -1906,4 +2215,467 @@ fn module_verdicts_mapped_entropy_unavailable() {
     );
     assert_eq!((code, stderr.as_str()), (1, UNAVAILABLE));
     assert!(stdout.is_empty() && !d.join("ct").exists());
+}
+
+/// Waits up to 30 s for `path` to exist with at least `min_len` bytes.
+#[cfg(feature = "fault-injection")]
+fn wait_for(path: &Path, min_len: u64) {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+    while std::fs::metadata(path).map_or(true, |m| m.len() < min_len) {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "{} did not appear",
+            path.display()
+        );
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+}
+
+/// Runs `args` with the install of `gap` paused after its existence check,
+/// creates `gap` holding `content` in that pause, then lets the install go
+/// on. Returns `(exit code, stderr)`.
+#[cfg(feature = "fault-injection")]
+fn run_with_gap(oxi: &Scratch, args: &[&str], gap: &str, content: &[u8]) -> (i32, String) {
+    let d = dir(oxi);
+    let pause = format!("install-pause={gap}");
+    let child = spawn_oxi(oxi, args, &[("OXI_FAULT", &pause)]);
+    let marker = d.join(format!("{gap}.oxi-pause"));
+    wait_for(&marker, 0);
+    std::fs::write(d.join(gap), content).expect("create the target in the gap");
+    std::fs::remove_file(&marker).expect("release the install");
+    let out = child.wait_with_output().expect("wait for oxi");
+    (
+        out.status.code().unwrap_or(-1),
+        String::from_utf8_lossy(&out.stderr).into_owned(),
+    )
+}
+
+/// The SHA-256 `oxi hash` prints for the file `name`.
+fn sha256_of(oxi: &Scratch, name: &str) -> String {
+    let (code, stdout, stderr) = run_pq(oxi, &["hash", "sha256", name], b"", &[]);
+    assert_eq!(code, 0, "{stderr}");
+    String::from_utf8(stdout).expect("hex digest")
+}
+
+/// An existing output is refused before anything is written, and its bytes
+/// are unchanged; fresh paths are written in full.
+#[test]
+fn output_never_replaced() {
+    let oxi = signed("never-replaced");
+    let d = dir(&oxi);
+    std::fs::write(d.join("taken.pk"), b"already here").expect("write taken.pk");
+    let before = sha256_of(&oxi, "taken.pk");
+    let (code, _, stderr) = run_pq(
+        &oxi,
+        &[
+            "ml-dsa", "keygen", "44", "--pk", "taken.pk", "--sk", "fresh.sk",
+        ],
+        b"",
+        &[],
+    );
+    assert_eq!(
+        (code, stderr.as_str()),
+        (2, "oxi will not overwrite taken.pk: it already exists\n")
+    );
+    assert_eq!(sha256_of(&oxi, "taken.pk"), before, "taken.pk is unchanged");
+    assert!(!d.join("fresh.sk").exists() && !d.join("taken.pk.oxi-partial").exists());
+
+    let (code, _, stderr) = run_pq(
+        &oxi,
+        &[
+            "ml-dsa", "keygen", "44", "--pk", "fresh.pk", "--sk", "fresh.sk",
+        ],
+        b"",
+        &[],
+    );
+    assert_eq!(code, 0, "control: fresh paths are written: {stderr}");
+    assert_eq!(read(&d.join("fresh.pk")).len(), 1312);
+    assert_eq!(read(&d.join("fresh.sk")).len(), 2560);
+    for leftover in ["fresh.pk.oxi-partial", "fresh.sk.oxi-partial"] {
+        assert!(!d.join(leftover).exists(), "{leftover} must be removed");
+    }
+}
+
+/// A target that appears between the existence check and the install is not
+/// replaced: the install fails, its temporary is removed, and the file that
+/// appeared keeps its bytes.
+#[cfg(feature = "fault-injection")]
+#[test]
+fn output_never_replaced_in_the_gap() {
+    let oxi = signed("never-replaced-gap");
+    let d = dir(&oxi);
+    {
+        let (code, stderr) = run_with_gap(
+            &oxi,
+            &["ml-dsa", "keygen", "44", "--pk", "gap.pk", "--sk", "gap.sk"],
+            "gap.pk",
+            b"created in the gap",
+        );
+        assert_eq!(
+            (code, stderr.as_str()),
+            (1, "oxi will not overwrite gap.pk: it already exists\n")
+        );
+        assert_eq!(read(&d.join("gap.pk")), b"created in the gap");
+        std::fs::write(d.join("gap.expected"), b"created in the gap").expect("write");
+        assert_eq!(
+            sha256_of(&oxi, "gap.pk"),
+            sha256_of(&oxi, "gap.expected"),
+            "gap.pk keeps the bytes it was created with"
+        );
+        assert!(
+            !d.join("gap.pk.oxi-partial").exists(),
+            "the temporary is removed"
+        );
+        assert!(
+            !d.join("gap.sk").exists(),
+            "nothing after the failed output"
+        );
+    }
+}
+
+/// Under `umask 0`, every secret output is exactly `0o600`; a public output
+/// written alongside is not owner-only, so the umask did not mask the mode.
+#[cfg(unix)]
+#[test]
+fn secret_files_are_owner_only() {
+    use std::os::unix::fs::PermissionsExt as _;
+    const UMASK_0: &str = "umask 0 && exec \"$0\" \"$@\"";
+    let oxi = signed("owner-only");
+    let d = dir(&oxi);
+    for args in [
+        &[
+            "ml-dsa",
+            "keygen",
+            "44",
+            "--pk",
+            "pk",
+            "--sk",
+            "sk",
+            "--seed-out",
+            "xi",
+        ][..],
+        &[
+            "ml-kem",
+            "keygen",
+            "512",
+            "--ek",
+            "ek",
+            "--dk",
+            "dk",
+            "--seed-out",
+            "dz",
+        ],
+        &[
+            "ml-kem", "encaps", "512", "--ek", "ek", "--ct", "ct", "--ss", "ss.sent",
+        ],
+        &[
+            "ml-kem", "decaps", "512", "--dk", "dk", "--ct", "ct", "--ss", "ss.got",
+        ],
+    ] {
+        let out = Command::new("/bin/sh")
+            .arg("-c")
+            .arg(UMASK_0)
+            .arg(&*oxi)
+            .args(args)
+            .current_dir(&d)
+            .env_remove("OXI_FAULT")
+            .output()
+            .expect("run oxi under sh");
+        assert!(
+            out.status.success(),
+            "{args:?}: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+    }
+    let mode = |f: &str| {
+        std::fs::metadata(d.join(f))
+            .expect("stat")
+            .permissions()
+            .mode()
+            & 0o777
+    };
+    for secret in ["sk", "xi", "dk", "dz", "ss.sent", "ss.got"] {
+        assert_eq!(mode(secret), 0o600, "{secret} must be exactly 0o600");
+    }
+    for public in ["pk", "ek", "ct"] {
+        assert_ne!(
+            mode(public) & 0o077,
+            0,
+            "control: {public} must not be owner-only under umask 0"
+        );
+    }
+}
+
+/// A process killed while it writes leaves no file at the target path; the
+/// unkilled run leaves both outputs complete and no temporary.
+#[cfg(all(unix, feature = "fault-injection"))]
+#[test]
+fn kill_during_write() {
+    let oxi = signed("kill-during-write");
+    let d = dir(&oxi);
+    let slow = [("OXI_FAULT", "slow-write")];
+    let mut child = spawn_oxi(
+        &oxi,
+        &["ml-dsa", "keygen", "44", "--pk", "k.pk", "--sk", "k.sk"],
+        &slow,
+    );
+    wait_for(&d.join("k.pk.oxi-partial"), 1);
+    child.kill().expect("SIGKILL oxi");
+    let status = child.wait().expect("reap oxi");
+    {
+        use std::os::unix::process::ExitStatusExt as _;
+        assert_eq!(status.signal(), Some(9), "oxi died of SIGKILL: {status:?}");
+    }
+    assert!(!d.join("k.pk").exists(), "no file at the target path");
+    assert!(!d.join("k.sk").exists());
+    let partial = read(&d.join("k.pk.oxi-partial")).len();
+    assert!(
+        (1..1312).contains(&partial),
+        "the kill landed mid-write: {partial} of 1312 bytes"
+    );
+    let (code, _, stderr) = run_pq(
+        &oxi,
+        &["ml-dsa", "keygen", "44", "--pk", "k.pk", "--sk", "k.sk"],
+        b"",
+        &[],
+    );
+    assert_eq!(
+        (code, stderr.as_str()),
+        (
+            2,
+            "oxi ml-dsa keygen: k.pk.oxi-partial exists (an interrupted or still-running oxi); \
+             delete it once none is running, or name another output\n"
+        ),
+        "a rerun names the leftover"
+    );
+
+    let (code, _, stderr) = run_pq(
+        &oxi,
+        &["ml-dsa", "keygen", "44", "--pk", "c.pk", "--sk", "c.sk"],
+        b"",
+        &slow,
+    );
+    assert_eq!(code, 0, "control: the unkilled run completes: {stderr}");
+    assert_eq!(read(&d.join("c.pk")).len(), 1312);
+    assert_eq!(read(&d.join("c.sk")).len(), 2560);
+    assert!(!d.join("c.pk.oxi-partial").exists() && !d.join("c.sk.oxi-partial").exists());
+}
+
+/// `--seed-out` is refused beside a seed flag; alone, it writes the seed.
+#[test]
+fn seed_out_and_output_failures_exclusive() {
+    let oxi = signed("seed-out-exclusive");
+    let d = dir(&oxi);
+    let hex32 = "11".repeat(32);
+    for (args, line) in [
+        (
+            &[
+                "ml-dsa",
+                "keygen",
+                "65",
+                "--pk",
+                "pk",
+                "--sk",
+                "sk",
+                "--seed",
+                &hex32,
+                "--seed-out",
+                "xi",
+            ][..],
+            "oxi ml-dsa keygen: --seed-out cannot be combined with --seed\n",
+        ),
+        (
+            &[
+                "ml-kem",
+                "keygen",
+                "768",
+                "--ek",
+                "ek",
+                "--dk",
+                "dk",
+                "--d",
+                &hex32,
+                "--z",
+                &hex32,
+                "--seed-out",
+                "dz",
+            ],
+            "oxi ml-kem keygen: --seed-out cannot be combined with --d and --z\n",
+        ),
+    ] {
+        let (code, _, stderr) = run_pq(&oxi, args, b"", &[]);
+        assert_eq!((code, stderr.as_str()), (2, line));
+    }
+    for f in ["pk", "sk", "xi", "ek", "dk", "dz"] {
+        assert!(!d.join(f).exists(), "{f} must not be written");
+    }
+    let (code, _, stderr) = run_pq(
+        &oxi,
+        &[
+            "ml-dsa",
+            "keygen",
+            "65",
+            "--pk",
+            "pk",
+            "--sk",
+            "sk",
+            "--seed-out",
+            "xi",
+        ],
+        b"",
+        &[],
+    );
+    assert_eq!(code, 0, "control: --seed-out alone: {stderr}");
+    assert_eq!(read(&d.join("xi")).len(), 32);
+    assert_owner_only(&d.join("xi"));
+}
+
+/// A stdout whose reader is gone while the secret is printed is exit 1:
+/// `encaps` names its ciphertext as written and the secret as not delivered;
+/// `decaps` reports the error alone. The reader is what is gone, not the
+/// descriptor: Rust's runtime reopens a closed fd 1 on `/dev/null` at
+/// startup, so a closed stdout cannot be observed.
+#[test]
+fn seed_out_and_output_failures_stdout_reader_gone() {
+    let oxi = signed("stdout-reader-gone");
+    let d = dir(&oxi);
+    std::fs::write(d.join("ek"), data("ml-kem-512-keygen-tg1-tc1.ek")).expect("write ek");
+    std::fs::write(d.join("dk"), data("ml-kem-512-keygen-tg1-tc1.dk")).expect("write dk");
+    let closed = |args: &[&str]| {
+        let (reader, writer) = std::io::pipe().expect("pipe");
+        drop(reader);
+        let out = Command::new(&*oxi)
+            .args(args)
+            .current_dir(&d)
+            .env_remove("OXI_FAULT")
+            .stdout(writer)
+            .output()
+            .expect("run oxi");
+        (
+            out.status.code().unwrap_or(-1),
+            String::from_utf8_lossy(&out.stderr).into_owned(),
+        )
+    };
+
+    let (code, stderr) = closed(&["ml-kem", "encaps", "512", "--ek", "ek", "--ct", "ct"]);
+    let lines: Vec<&str> = stderr.lines().collect();
+    assert_eq!(code, 1, "{stderr}");
+    assert_eq!(lines.len(), 2, "{stderr}");
+    assert!(
+        lines[0].starts_with("oxi ml-kem encaps: stdout: "),
+        "{stderr}"
+    );
+    assert_eq!(
+        lines[1],
+        "oxi ml-kem encaps: written: ct; not written: the shared secret"
+    );
+    assert_eq!(read(&d.join("ct")).len(), 768, "the ciphertext stays");
+
+    let (code, stderr) = closed(&["ml-kem", "decaps", "512", "--dk", "dk", "--ct", "ct"]);
+    assert_eq!(code, 1, "{stderr}");
+    assert!(
+        stderr.starts_with("oxi ml-kem decaps: stdout: ") && stderr.lines().count() == 1,
+        "{stderr}"
+    );
+
+    let (code, stdout, stderr) = run_pq(
+        &oxi,
+        &["ml-kem", "decaps", "512", "--dk", "dk", "--ct", "ct"],
+        b"",
+        &[],
+    );
+    assert_eq!(
+        code, 0,
+        "control: an open stdout receives the secret: {stderr}"
+    );
+    printed_secret(&stdout);
+}
+
+/// A second output that fails after the first is installed is exit 1: the
+/// first stays and stderr names both. Only the `fault-injection` arm, whose
+/// second output fails after its temporary exists, observes that temporary
+/// being removed.
+#[test]
+fn seed_out_and_output_failures_second_output() {
+    let oxi = signed("second-output");
+    let d = dir(&oxi);
+    let (code, _, stderr) = run_pq(
+        &oxi,
+        &[
+            "ml-dsa", "keygen", "44", "--pk", "ok.pk", "--sk", "nodir/sk",
+        ],
+        b"",
+        &[],
+    );
+    let lines: Vec<&str> = stderr.lines().collect();
+    assert_eq!(code, 1, "{stderr}");
+    assert_eq!(lines.len(), 2, "{stderr}");
+    assert!(
+        lines[0].starts_with("oxi: nodir/sk.oxi-partial: "),
+        "{stderr}"
+    );
+    assert_eq!(
+        lines[1],
+        "oxi ml-dsa keygen: written: ok.pk; not written: nodir/sk"
+    );
+    assert_eq!(read(&d.join("ok.pk")).len(), 1312, "the first output stays");
+
+    #[cfg(feature = "fault-injection")]
+    {
+        let (code, stderr) = run_with_gap(
+            &oxi,
+            &["ml-dsa", "keygen", "44", "--pk", "g.pk", "--sk", "g.sk"],
+            "g.sk",
+            b"another process",
+        );
+        assert_eq!(
+            (code, stderr.as_str()),
+            (
+                1,
+                "oxi will not overwrite g.sk: it already exists\n\
+                 oxi ml-dsa keygen: written: g.pk; not written: g.sk\n"
+            )
+        );
+        assert_eq!(read(&d.join("g.pk")).len(), 1312, "the first output stays");
+        assert_eq!(read(&d.join("g.sk")), b"another process");
+        assert!(
+            !d.join("g.sk.oxi-partial").exists(),
+            "the temporary is removed"
+        );
+    }
+}
+
+/// `oxi --help` lists the six post-quantum commands and states the grammar
+/// rules, the leftover temporary and exit code 5.
+#[test]
+fn help_lists_the_post_quantum_commands() {
+    let oxi = signed("help");
+    let (code, _, stderr) = run_pq(&oxi, &["--help"], b"", &[]);
+    assert_eq!(code, 2, "{stderr}");
+    let grammar: Vec<&str> = DSA_USAGE
+        .lines()
+        .chain(KEM_USAGE.lines())
+        .filter(|l| l.starts_with("  oxi "))
+        .collect();
+    assert_eq!(grammar.len(), 6, "premise failed: six grammar lines");
+    for line in grammar {
+        assert!(
+            stderr.contains(&format!("\n{line}\n")),
+            "--help lacks {line:?}"
+        );
+    }
+    for needle in [
+        "--ctx is 0 to 255 bytes as hex",
+        "is given as ./-.",
+        "A flag's value cannot begin with --",
+        ".oxi-partial",
+        "best effort there; a refusal oxi does not",
+        "owner-only where the system has file modes",
+        "\n  5  ml-dsa verify only",
+    ] {
+        assert!(
+            stderr.contains(needle),
+            "--help lacks {needle:?}:\n{stderr}"
+        );
+    }
 }
