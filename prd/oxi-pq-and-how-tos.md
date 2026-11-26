@@ -251,7 +251,7 @@ Every size is fixed by FIPS 203 and FIPS 204 and is already the size the C heade
 - Each seed is one 32-byte DRBG request, within HMAC_DRBG's 65536-byte per-request limit. FIPS 203 §3.3 requires `d` and `z` drawn from an approved RBG at the parameter set's security strength; the strength check of section 3 enforces it, and two requests keep the two values distinct outputs.
 - The first DRBG instantiate in a process pays the entropy source's startup, specified and measured in `prd/drbg-seeding.md`; the examples and `oxi` pay it once per process.
 - Power-up grows by four ML-KEM-1024 self-tests. The added time is measured before approval and recorded in the ISA; the existing bench harness compiles the same inventory file.
-- Self-tests listed by `oxi selftest`: 89 today. The seeding change adds the `entropy source (1)` line, this arc adds `ml-kem (4)`, the AES arc adds seven to `aes`; each document states its delta and the release records the total (102 if all three ship together: 89 + 1 + 4 + 8).
+- Self-tests listed by `oxi selftest`: 89 today. The seeding change adds the `entropy source (1)` line, this arc adds `ml-kem (4)`, the AES arc adds eight to `aes`; each document states its delta and the release records the total (102 if all three ship together: 89 + 1 + 4 + 8).
 
 ## Exit codes
 

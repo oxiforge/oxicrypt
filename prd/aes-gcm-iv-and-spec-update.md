@@ -331,9 +331,10 @@ with the IV, the IV is a public parameter (§9.1 item 2 ends its CSP status at
 invocation) and is copied to the caller. If anything fails between
 generation and use, the buffer is zeroized and no IV leaves the module.
 
-The DRBGs' own temporaries hold the output block too: HMAC_DRBG and CTR_DRBG
-leave it in working buffers after `generate`, while Hash_DRBG wipes. G4
-extends to those buffers, so the IV exists nowhere unzeroized before use.
+The DRBGs' own temporaries hold the output block too. HMAC_DRBG, CTR_DRBG and
+Hash_DRBG each wipe those temporaries on every exit from `generate`, and the
+crate's wipe seam observes each one, so the IV exists nowhere unzeroized
+before use.
 The crate's SSP section is rewritten to say this, listing the GCM IV as a
 CSP from generation to use and a PSP after, and dropping the sentence that
 IVs are never SSPs.
