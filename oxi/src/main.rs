@@ -548,7 +548,7 @@ fn cmd_hash(args: &[String]) -> ExitCode {
 
     match result {
         Ok(digest) => {
-            println!("{}  -", hex(&digest));
+            println!("{}  {}", hex(&digest), operand_label(args.get(1)));
             ExitCode::SUCCESS
         }
         Err(e) => {
@@ -606,7 +606,7 @@ fn cmd_hmac(args: &[String]) -> ExitCode {
 
     match result {
         Ok(tag) => {
-            println!("{}  -", hex(&tag));
+            println!("{}  {}", hex(&tag), operand_label(args.get(2)));
             ExitCode::SUCCESS
         }
         Err(e) => {
@@ -919,6 +919,12 @@ fn run_selftest_groups(
         }
     }
     tally
+}
+
+/// The name printed after a digest or tag, as `sha256sum` prints it: the
+/// file operand as given, or `-` for stdin.
+fn operand_label(path: Option<&String>) -> &str {
+    path.map_or("-", String::as_str)
 }
 
 /// Read from a file path or stdin.

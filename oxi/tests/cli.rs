@@ -2254,7 +2254,11 @@ fn run_with_gap(oxi: &Scratch, args: &[&str], gap: &str, content: &[u8]) -> (i32
 fn sha256_of(oxi: &Scratch, name: &str) -> String {
     let (code, stdout, stderr) = run_pq(oxi, &["hash", "sha256", name], b"", &[]);
     assert_eq!(code, 0, "{stderr}");
-    String::from_utf8(stdout).expect("hex digest")
+    let line = String::from_utf8(stdout).expect("hex digest");
+    let digest = line
+        .strip_suffix(&format!("  {name}\n"))
+        .unwrap_or_else(|| panic!("`oxi hash` must print `<digest>  {name}`: {line:?}"));
+    digest.to_owned()
 }
 
 /// An existing output is refused before anything is written, and its bytes
@@ -2720,9 +2724,43 @@ fn readme_nist_known_answer_matches_the_fixture() {
         data("ml-dsa-87-keygen-tg3-tc51.pk"),
     )
     .expect("write nist.pk");
+    assert_eq!(sha256_of(&oxi, "nist.pk"), digest, "digest");
+}
+
+/// `hash` and `hmac` print the file operand as given after the digest or
+/// tag, as `sha256sum` does, and `-` when they read stdin.
+#[test]
+fn hash_and_hmac_name_the_operand() {
+    const ABC_SHA256: &str = "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad";
+    let oxi = signed("operand-label");
+    std::fs::write(dir(&oxi).join("abc.txt"), b"abc").expect("write abc.txt");
+    for (args, stdin, name) in [
+        (&["hash", "sha256", "abc.txt"][..], &b""[..], "abc.txt"),
+        (&["hash", "sha256", "./abc.txt"], b"", "./abc.txt"),
+        (&["hash", "sha256"], b"abc", "-"),
+    ] {
+        let (code, stdout, stderr) = run_pq(&oxi, args, stdin, &[]);
+        assert_eq!(code, 0, "{args:?}: {stderr}");
+        assert_eq!(
+            String::from_utf8(stdout).expect("text"),
+            format!("{ABC_SHA256}  {name}\n"),
+            "{args:?}"
+        );
+    }
+    let key = "0b0b0b0b";
+    let (code, from_file, stderr) = run_pq(&oxi, &["hmac", "sha256", key, "abc.txt"], b"", &[]);
+    assert_eq!(code, 0, "{stderr}");
+    let (code, from_stdin, stderr) = run_pq(&oxi, &["hmac", "sha256", key], b"abc", &[]);
+    assert_eq!(code, 0, "{stderr}");
+    let (from_file, from_stdin) = (
+        String::from_utf8(from_file).expect("text"),
+        String::from_utf8(from_stdin).expect("text"),
+    );
+    let tag = from_stdin.strip_suffix("  -\n").expect("stdin is named -");
+    assert_eq!(tag.len(), 64, "{from_stdin:?}");
     assert_eq!(
-        sha256_of(&oxi, "nist.pk"),
-        format!("{digest}  -\n"),
-        "digest"
+        from_file,
+        format!("{tag}  abc.txt\n"),
+        "the same tag, named"
     );
 }
