@@ -171,7 +171,7 @@ every platform but Android:
 tar -xzf oxicrypt-cli-<version>-<platform>.tar.gz
 cd oxicrypt-cli-<version>-<platform>
 ./oxi --integrity     # the module verifies its own image, and reports what it covered
-./oxi selftest        # every self-test, named with the NIST vector it checks (currently 90)
+./oxi selftest        # every self-test, named with the NIST vector it checks (currently 102)
 ```
 
 Signed per platform, with a provenance record inside the tarball. `oxi` also

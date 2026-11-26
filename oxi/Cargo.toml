@@ -26,8 +26,13 @@ path = "src/main.rs"
 
 [features]
 default = []
-# Test builds only: `OXI_FAULT` arms the DRBG crate's fault seams at startup.
-fault-injection = ["oxicrypt-drbg/fault-injection"]
+# Test builds only: `OXI_FAULT` arms the DRBG, ML-DSA and ML-KEM crates'
+# fault seams at startup.
+fault-injection = [
+    "oxicrypt-drbg/fault-injection",
+    "oxicrypt-ml-dsa/fault-injection",
+    "oxicrypt-ml-kem/fault-injection",
+]
 
 [dependencies]
 oxicrypt-module = { workspace = true }
@@ -39,6 +44,7 @@ oxicrypt-drbg = { workspace = true }
 oxicrypt-xof = { workspace = true }
 oxicrypt-ml-dsa = { workspace = true }
 oxicrypt-ml-kem = { workspace = true }
+oxicrypt-zeroize = { workspace = true }
 
 [dev-dependencies]
 # Tests need to PRODUCE a signed binary in order to exercise the signed path.

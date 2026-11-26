@@ -77,13 +77,16 @@ sha (11)
 aes (31)
   ok    AES-256-GCM KAT (SP 800-38D / McGrew-Viega Case 15, encrypt+decrypt)
   ...
+ml-kem (4)
+  ok    ML-KEM-1024 CAST (key generation, FIPS 203, NIST ACVP vector)
+  ...
 102 of 102 self-tests passed
 self-test indicator: PASS
 ```
 
 These are the tests the module runs at power-up, before it will serve
-anything — the integrity test first, then every known-answer test for the
-algorithms this binary can reach. The `entropy source` line is the on-demand
+anything — the integrity test first, then every known-answer test of the
+algorithm crates this binary links. The `entropy source` line is the on-demand
 test of the module's seed path, run by `selftest` itself, and names the path
 in use: the in-boundary jitter source on an assessed operational
 environment, or the operating system's generator elsewhere. The integrity line shows the verdict from
@@ -179,10 +182,10 @@ The mechanism, and how to satisfy the same test in your own binaries, is in
 
 ## What it is not
 
-A small utility over the module's hashing, MAC and RNG surface — not a general
-cryptographic toolkit. There is no key generation, signing, verification or
-encryption here, and the post-quantum algorithms the module implements are not
-yet reachable from the command line.
+A small utility over the module's hashing, MAC and RNG services and its two
+post-quantum algorithms, ML-DSA and ML-KEM — not a general cryptographic
+toolkit. There is no symmetric encryption, no classical signature or key
+agreement, and no key format other than raw bytes.
 
 ## Documentation
 

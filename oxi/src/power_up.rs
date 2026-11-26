@@ -1,16 +1,19 @@
-//! The algorithm self-tests `oxi` runs at power-up.
+//! The algorithm self-tests `oxi` runs at power-up: the known-answer tests
+//! and CASTs of every approved algorithm crate this binary links.
 //!
 //! `oxicrypt-bench`'s `power_up` benchmark and this crate's CLI tests compile
 //! this file as well, so the set they time and count is the set `oxi` runs.
 
 use oxicrypt_module::KatEntry;
 
-/// Pre-operational algorithm self-tests for the services this CLI offers:
-/// SHA for `hash`, HMAC for `hmac`, and the DRBG — with the AES it is built
-/// on — for `rand` — plus ML-DSA, which the integrity test links for its
-/// signature, and the SHAKE it is built on, and ML-KEM, so that its
-/// cryptographic algorithm self-tests run before its first use, as FIPS 140-3
-/// requires. [`inventory`] flattened, in order.
+/// Pre-operational algorithm self-tests for the algorithm crates this binary
+/// links: SHA for `hash`, HMAC for `hmac`, and the DRBG, with the AES it is
+/// built on, for `rand` and key generation. ML-DSA and the SHAKE it is built
+/// on are linked by the integrity test and the `ml-dsa` commands, and ML-KEM
+/// by the `ml-kem` commands. Each linked crate's `KATS` is here because
+/// `the_inventory_covers_every_linked_algorithm_crate` requires it, and the
+/// ML-KEM entries are the CASTs FIPS 140-3 IG 10.3.A item 14 requires.
+/// [`inventory`] flattened, in order.
 pub(crate) fn power_up_tests() -> Vec<KatEntry> {
     inventory()
         .iter()

@@ -11,6 +11,8 @@
 //! | `oxi hash <alg> [FILE]` | Hash a file (or stdin) with an approved algorithm |
 //! | `oxi hmac <alg> <key-hex> [FILE]` | HMAC a file (or stdin) |
 //! | `oxi rand <nbytes>` | Generate random bytes from HMAC_DRBG-SHA-256 |
+//! | `oxi ml-dsa {keygen,sign,verify} <44\|65\|87> ...` | ML-DSA key generation, signing and verification (`pq`) |
+//! | `oxi ml-kem {keygen,encaps,decaps} <512\|768\|1024> ...` | ML-KEM key generation, encapsulation and decapsulation (`pq`) |
 //! | `oxi selftest` | Report the power-up self-tests by name: the integrity test's verdict from this start, and the algorithm self-tests run again |
 //! | `oxi --lama` | Dump the LAMA manifest |
 //! | `oxi --integrity` | Report the pre-operational integrity test's outcome |
@@ -26,6 +28,7 @@
 )]
 
 mod power_up;
+mod pq;
 
 #[cfg(not(test))]
 use oxicrypt_module::initialize_with_tests;
@@ -42,8 +45,16 @@ fn main() -> ExitCode {
     // Test builds only: arm the DRBG crate's fault seams from `OXI_FAULT`
     // before anything initialises the module. A value that does not parse
     // arms nothing past its first bad entry, and the run goes on.
+    // `corrupt-next-key` also arms the post-quantum key-generation seams, so
+    // the next ML-DSA or ML-KEM key pair fails its pairwise consistency test.
     #[cfg(feature = "fault-injection")]
-    let _ = oxicrypt_drbg::seam::arm_from_env(std::env::var("OXI_FAULT").ok().as_deref());
+    {
+        let _ = oxicrypt_drbg::seam::arm_from_env(std::env::var("OXI_FAULT").ok().as_deref());
+        if oxicrypt_drbg::seam::corrupt_next_key_armed() {
+            oxicrypt_ml_dsa::seam::corrupt_next_pk();
+            oxicrypt_ml_kem::seam::corrupt_next_dk();
+        }
+    }
 
     // The pre-initialization flags are matched at argv[1] ONLY, never scanned
     // across the whole command line.
@@ -101,6 +112,8 @@ fn main() -> ExitCode {
         Some("hmac") => cmd_hmac(rest),
         Some("rand") => cmd_rand(rest),
         Some("selftest") => cmd_selftest(rest),
+        Some("ml-dsa") => pq::cmd_ml_dsa(rest),
+        Some("ml-kem") => pq::cmd_ml_kem(rest),
         Some("--help" | "-h") | None => usage(),
         Some(other) => {
             eprintln!("oxi: unknown command '{other}'");
@@ -120,6 +133,17 @@ fn usage() -> ExitCode {
     eprintln!("  --lama                       Dump LAMA manifest (YAML)");
     eprintln!("  --integrity                  Report the integrity test's outcome");
     eprintln!();
+    eprintln!("Post-quantum commands:");
+    for line in pq::ML_DSA_GRAMMAR.iter().chain(&pq::ML_KEM_GRAMMAR) {
+        eprintln!("  {line}");
+    }
+    eprintln!("  MESSAGE is a file, or stdin when absent or given as -; -- ends the flags.");
+    eprintln!("  Keys, signatures and ciphertexts are raw bytes. --sk, --dk, --ss and");
+    eprintln!("  --seed-out files are created owner-only; no output file is overwritten.");
+    eprintln!("  Without --ss the shared secret is printed as 64 hex characters.");
+    eprintln!("  A seed flag prints \"{}\":", pq::SEED_WARNING);
+    eprintln!("  a seed on the command line is visible to anyone who can read the process list.");
+    eprintln!();
     eprintln!("Algorithms:");
     eprintln!("  sha1, sha224, sha256, sha384, sha512");
     eprintln!("  sha512-224, sha512-256");
@@ -129,13 +153,17 @@ fn usage() -> ExitCode {
     eprintln!("  0  success");
     eprintln!("  1  a test ran and failed: the image does not match, its slot is unsigned or");
     eprintln!("     damaged, or it names another key; for a command other than --integrity,");
-    eprintln!("     also a self-test that failed or was not run after the image check passed");
+    eprintln!("     also a self-test that failed or was not run after the image check passed;");
+    eprintln!("     for ml-dsa and ml-kem, also a module error during the operation, an");
+    eprintln!("     unavailable entropy source, or an output that could not be written");
     eprintln!("  2  usage error");
     eprintln!("  3  the integrity test was not performed or could not decide: a CAST it");
     eprintln!("     depends on failed, the image could not be read, or the binary carries no");
     eprintln!("     verifying key; the image's state is unknown");
     eprintln!("  4  --integrity only: the image matches, but a later algorithm self-test");
     eprintln!("     failed, so the module is in its error state");
+    eprintln!("  5  ml-dsa verify only: the signature is not valid for this public key,");
+    eprintln!("     message and context");
     ExitCode::from(2)
 }
 
@@ -582,12 +610,13 @@ fn hmac_oneshot<H: oxicrypt_hmac::BlockHash<B, L>, const B: usize, const L: usiz
     Ok(mac.finalize()?.to_vec())
 }
 
-/// The personalization string of every DRBG `oxi` instantiates.
+/// The personalization string [`module_drbg`] passes to the module's seed
+/// path.
 const DRBG_PERSONALIZATION: &[u8] = b"oxi";
 
-/// The one HMAC_DRBG-SHA-256 a command that needs randomness draws from,
-/// instantiated from the module's seed path, which supplies the entropy input
-/// and the nonce.
+/// An HMAC_DRBG-SHA-256 instantiated from the module's seed path, which
+/// supplies the entropy input and the nonce. Outside the tests this is the
+/// only place `oxi` instantiates a DRBG.
 fn module_drbg() -> Result<oxicrypt_drbg::HmacDrbgSha256, oxicrypt_module::Error> {
     oxicrypt_drbg::HmacDrbgSha256::instantiate_from_module(DRBG_PERSONALIZATION)
 }
@@ -1072,7 +1101,7 @@ mod tests {
     fn fn_body<'a>(src: &'a str, decl: &str) -> &'a str {
         let start = src
             .find(decl)
-            .unwrap_or_else(|| panic!("{decl} is no longer declared"));
+            .unwrap_or_else(|| panic!("{decl} is not declared"));
         let rest = src.get(start..).unwrap_or_default();
         let end = rest
             .find("\n}\n")
@@ -1121,15 +1150,31 @@ mod tests {
         );
     }
 
-    /// Every command that draws random bytes instantiates its DRBG through
-    /// [`super::module_drbg`], which passes the personalization string `oxi`
-    /// to the module's seed path. The string reaches only the DRBG's seed
-    /// material, so no output can show it, and the call is read from source.
+    /// [`super::module_drbg`] is the only place outside the tests where `oxi`
+    /// instantiates a DRBG, it passes the personalization string `oxi` to the
+    /// module's seed path, and `oxi rand` draws from it. The string reaches
+    /// only the DRBG's seed material, so no output can show it, and the calls
+    /// are read from source.
     #[test]
     fn rand_draws_from_the_module_seeded_drbg_personalized_oxi() {
         assert_eq!(super::DRBG_PERSONALIZATION, b"oxi");
 
         let src = include_str!("main.rs");
+        for (file, whole) in [("main.rs", src), ("pq.rs", include_str!("pq.rs"))] {
+            let code = whole
+                .split_once("\nmod tests {")
+                .map_or(whole, |(code, _)| code);
+            assert!(
+                code.len() < whole.len() && code.contains("fn "),
+                "premise failed: {file} was not cut at its test module"
+            );
+            let calls = code.matches("instantiate_from_module(").count();
+            let expected = usize::from(file == "main.rs");
+            assert_eq!(
+                calls, expected,
+                "{file} calls instantiate_from_module {calls} times; only module_drbg may"
+            );
+        }
         assert!(
             fn_body(src, "fn module_drbg(")
                 .contains("instantiate_from_module(DRBG_PERSONALIZATION)"),
@@ -1439,13 +1484,12 @@ mod tests {
              The module has been placed in the error state and will refuse\n  \
              every service until it is restarted. Do not use this binary.\n"
         );
-        // --quiet keeps the counts, which a script reads.
         let quiet = super::selftest_verdict(&run.tally, true);
         assert!(
             quiet
                 .text
                 .starts_with("1 of 2 self-tests passed\n3 self-tests not run"),
-            "{}",
+            "--quiet must keep the counts, which a script reads: {}",
             quiet.text
         );
     }
