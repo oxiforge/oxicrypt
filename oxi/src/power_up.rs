@@ -1,15 +1,16 @@
 //! The algorithm self-tests `oxi` runs at power-up.
 //!
-//! `oxicrypt-bench`'s `power_up` benchmark compiles this file as well, so the
-//! set it times is the set `oxi` runs.
+//! `oxicrypt-bench`'s `power_up` benchmark and this crate's CLI tests compile
+//! this file as well, so the set they time and count is the set `oxi` runs.
 
 use oxicrypt_module::KatEntry;
 
 /// Pre-operational algorithm self-tests for the services this CLI offers:
 /// SHA for `hash`, HMAC for `hmac`, and the DRBG — with the AES it is built
 /// on — for `rand` — plus ML-DSA, which the integrity test links for its
-/// signature, and the SHAKE it is built on. [`inventory`] flattened, in
-/// order.
+/// signature, and the SHAKE it is built on, and ML-KEM, so that its
+/// cryptographic algorithm self-tests run before its first use, as FIPS 140-3
+/// requires. [`inventory`] flattened, in order.
 pub(crate) fn power_up_tests() -> Vec<KatEntry> {
     inventory()
         .iter()
@@ -37,5 +38,6 @@ pub(crate) fn inventory() -> &'static [(&'static str, &'static [KatEntry])] {
         ("drbg", oxicrypt_drbg::KATS),
         ("xof", oxicrypt_xof::KATS),
         ("ml-dsa", oxicrypt_ml_dsa::KATS),
+        ("ml-kem", oxicrypt_ml_kem::KATS),
     ]
 }

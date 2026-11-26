@@ -32,6 +32,11 @@ use std::process::Command;
 use oxicrypt_integrity::slot::Range;
 use oxicrypt_integrity_sign::SigningKey;
 
+/// The power-up inventory the binary runs, compiled from the file the binary
+/// builds it from, so a count derived here is the count the binary runs.
+#[path = "../src/power_up.rs"]
+mod power_up;
+
 /// The `oxi` cargo built for this test run. Unsigned: a cargo build has no
 /// step after linking, which is why an installed `oxi` must be signed.
 const OXI: &str = env!("CARGO_BIN_EXE_oxi");
@@ -206,8 +211,6 @@ fn flip(path: &Path, offset: usize) {
     std::fs::write(path, &bytes).expect("write artifact");
 }
 
-// ---------------------------------------------------------------------
-
 /// An unsigned binary tells the reader the one command that fixes it, on the
 /// ordinary path — not only when asked with `--integrity`.
 #[test]
@@ -374,7 +377,6 @@ fn an_ordinary_invocation_of_an_unsigned_binary_writes_nothing() {
     let before = read(&oxi);
     let before_entries = entries(&dir);
 
-    // Every path an ordinary user reaches, including the ones that fail.
     for args in [
         vec!["hash", "sha256", OXI],
         vec!["--integrity"],
@@ -476,8 +478,6 @@ fn oxi_never_writes_to_its_own_executable() {
     );
 }
 
-// ── selftest ────────────────────────────────────────────────────
-
 /// The on-demand self-test reports every test in the power-up inventory, and
 /// its indicator agrees with its exit code.
 #[test]
@@ -510,8 +510,17 @@ fn selftest_runs_the_whole_inventory_and_indicates_pass() {
         "the indicator line is required, got:\n{stdout}"
     );
 
-    // Each group the CLI can reach is represented, named, and non-empty.
-    for group in ["integrity", "sha", "hmac", "aes", "drbg"] {
+    for group in [
+        "integrity",
+        "entropy source",
+        "sha",
+        "hmac",
+        "aes",
+        "drbg",
+        "xof",
+        "ml-dsa",
+        "ml-kem",
+    ] {
         assert!(
             stdout.contains(&format!("\n{group} (")),
             "group {group} is missing from the report"
@@ -526,6 +535,63 @@ fn selftest_runs_the_whole_inventory_and_indicates_pass() {
     assert!(
         stdout.contains("Module image integrity"),
         "the integrity test must be reported"
+    );
+}
+
+/// The ML-KEM self-tests run at power-up as a group of their own, listed
+/// directly after ML-DSA, and the printed total is every inventory group plus
+/// the integrity group and the entropy source's line: 102 for this inventory.
+#[test]
+fn selftest_lists_ml_kem_group() {
+    let oxi = scratch("selftest-ml-kem");
+    sign(&oxi);
+
+    let (code, stdout, stderr) = run(&oxi, &["selftest"]);
+    assert_eq!(code, 0, "selftest must pass on a signed binary: {stderr}");
+    let lines: Vec<&str> = stdout.lines().collect();
+
+    let ml_dsa = lines
+        .iter()
+        .position(|l| l.starts_with("ml-dsa ("))
+        .unwrap_or_else(|| panic!("no ml-dsa group:\n{stdout}"));
+    let next = lines
+        .iter()
+        .skip(ml_dsa + 1)
+        .find(|l| !l.starts_with("  "))
+        .unwrap_or_else(|| panic!("nothing follows the ml-dsa group:\n{stdout}"));
+    assert_eq!(
+        *next, "ml-kem (4)",
+        "the group after ml-dsa must be `ml-kem (4)`:\n{stdout}"
+    );
+    let ml_kem_ok = lines
+        .iter()
+        .skip_while(|l| **l != "ml-kem (4)")
+        .skip(1)
+        .take_while(|l| l.starts_with("  "))
+        .filter(|l| l.starts_with("  ok    "))
+        .count();
+    assert_eq!(
+        ml_kem_ok, 4,
+        "the ml-kem group must pass four tests:\n{stdout}"
+    );
+
+    let expected = oxicrypt_integrity::KATS.len() + 1 + power_up::power_up_tests().len();
+    assert_eq!(
+        expected, 102,
+        "premise failed: the inventory is not the 98 self-tests before ML-KEM plus its four"
+    );
+    let total = format!("{expected} of {expected} self-tests passed");
+    assert!(
+        lines.contains(&total.as_str()),
+        "the total must be `{total}`:\n{stdout}"
+    );
+
+    let (code, quiet, _) = run(&oxi, &["selftest", "--quiet"]);
+    assert_eq!(code, 0);
+    assert_eq!(
+        quiet.lines().collect::<Vec<_>>(),
+        [total.as_str(), "self-test indicator: PASS"],
+        "--quiet must print the total, then the indicator"
     );
 }
 
@@ -544,7 +610,6 @@ fn selftest_lists_entropy_source() {
         .iter()
         .position(|l| l.starts_with("integrity ("))
         .expect("no integrity group");
-    // The first heading after the integrity group's own lines.
     let heading = lines
         .iter()
         .enumerate()
@@ -575,7 +640,6 @@ fn selftest_lists_entropy_source() {
         "the entropy group holds exactly one line"
     );
 
-    // The total counts it: every `ok` line, this one included.
     let reported: usize = stdout
         .lines()
         .find_map(|l| l.strip_suffix(" self-tests passed"))

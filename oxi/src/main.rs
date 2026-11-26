@@ -78,9 +78,6 @@ fn main() -> ExitCode {
         return usage();
     }
 
-    // Initialize the module: the integrity group plus every algorithm group
-    // this binary can reach. That the second list covers the subcommands below
-    // is checked — see `power_up_tests`.
     if let Err(e) = init_module() {
         eprintln!("fatal: module initialization failed: {e}");
         if let Some(detail) = oxicrypt_integrity::status_detail() {
@@ -474,8 +471,6 @@ fn init_module() -> Result<(), oxicrypt_module::Error> {
     }
 }
 
-// ── hash ────────────────────────────────────────────────────────
-
 fn cmd_hash(args: &[String]) -> ExitCode {
     if args.is_empty() {
         eprintln!("oxi hash: missing algorithm argument");
@@ -519,8 +514,6 @@ fn cmd_hash(args: &[String]) -> ExitCode {
         }
     }
 }
-
-// ── hmac ────────────────────────────────────────────────────────
 
 fn cmd_hmac(args: &[String]) -> ExitCode {
     if args.len() < 2 {
@@ -589,7 +582,15 @@ fn hmac_oneshot<H: oxicrypt_hmac::BlockHash<B, L>, const B: usize, const L: usiz
     Ok(mac.finalize()?.to_vec())
 }
 
-// ── rand ────────────────────────────────────────────────────────
+/// The personalization string of every DRBG `oxi` instantiates.
+const DRBG_PERSONALIZATION: &[u8] = b"oxi";
+
+/// The one HMAC_DRBG-SHA-256 a command that needs randomness draws from,
+/// instantiated from the module's seed path, which supplies the entropy input
+/// and the nonce.
+fn module_drbg() -> Result<oxicrypt_drbg::HmacDrbgSha256, oxicrypt_module::Error> {
+    oxicrypt_drbg::HmacDrbgSha256::instantiate_from_module(DRBG_PERSONALIZATION)
+}
 
 fn cmd_rand(args: &[String]) -> ExitCode {
     if args.is_empty() {
@@ -604,8 +605,7 @@ fn cmd_rand(args: &[String]) -> ExitCode {
         }
     };
 
-    // The module's seed path supplies the entropy input and the nonce.
-    let mut drbg = match oxicrypt_drbg::HmacDrbgSha256::instantiate_from_module(b"oxi rand") {
+    let mut drbg = match module_drbg() {
         Ok(drbg) => drbg,
         Err(e) => {
             eprintln!("oxi rand: DRBG instantiate failed: {e}");
@@ -622,8 +622,6 @@ fn cmd_rand(args: &[String]) -> ExitCode {
     println!("{}", hex(&buf));
     ExitCode::SUCCESS
 }
-
-// ── selftest ────────────────────────────────────────────────────
 
 /// Shows the module's power-up self-tests by name and runs the algorithm
 /// self-tests again.
@@ -879,8 +877,6 @@ fn run_selftest_groups(
     tally
 }
 
-// ── helpers ─────────────────────────────────────────────────────
-
 /// Read from a file path or stdin.
 fn read_input(path: Option<&str>) -> io::Result<Vec<u8>> {
     if let Some(p) = path {
@@ -985,7 +981,8 @@ mod tests {
         oxicrypt_aes,
         oxicrypt_drbg,
         oxicrypt_xof,
-        oxicrypt_ml_dsa
+        oxicrypt_ml_dsa,
+        oxicrypt_ml_kem
     ];
 
     /// The names of the integrity and algorithm self-tests the most recent
@@ -1121,6 +1118,31 @@ mod tests {
         assert!(
             !fn_body(src, "fn usage(").contains("enter_error_state("),
             "the extractor is returning more than the named function's body"
+        );
+    }
+
+    /// Every command that draws random bytes instantiates its DRBG through
+    /// [`super::module_drbg`], which passes the personalization string `oxi`
+    /// to the module's seed path. The string reaches only the DRBG's seed
+    /// material, so no output can show it, and the call is read from source.
+    #[test]
+    fn rand_draws_from_the_module_seeded_drbg_personalized_oxi() {
+        assert_eq!(super::DRBG_PERSONALIZATION, b"oxi");
+
+        let src = include_str!("main.rs");
+        assert!(
+            fn_body(src, "fn module_drbg(")
+                .contains("instantiate_from_module(DRBG_PERSONALIZATION)"),
+            "module_drbg must instantiate from the module with DRBG_PERSONALIZATION"
+        );
+        let rand = fn_body(src, "fn cmd_rand(");
+        assert!(
+            rand.contains("module_drbg()"),
+            "oxi rand must draw from module_drbg"
+        );
+        assert!(
+            !rand.contains("instantiate_from_module("),
+            "oxi rand must not instantiate a DRBG of its own"
         );
     }
 

@@ -77,7 +77,7 @@ sha (11)
 aes (31)
   ok    AES-256-GCM KAT (SP 800-38D / McGrew-Viega Case 15, encrypt+decrypt)
   ...
-98 of 98 self-tests passed
+102 of 102 self-tests passed
 self-test indicator: PASS
 ```
 

@@ -603,6 +603,7 @@ dependencies = [
  "oxicrypt-integrity",
  "oxicrypt-integrity-sign",
  "oxicrypt-ml-dsa",
+ "oxicrypt-ml-kem",
  "oxicrypt-module",
  "oxicrypt-sha",
  "oxicrypt-xof",
