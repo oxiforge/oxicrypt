@@ -80,12 +80,15 @@ fn generate_aes_lifecycle_slices() {
     let mut key_bytes = [0u8; 32];
     drbg.generate(None, &mut key_bytes).expect("drbg gen key");
     let key_hex = hex_upper(&key_bytes);
-    let cipher = oxicrypt_aes::Aes256Key::new_internal(&key_bytes).expect("AES key");
+    let ecb = oxicrypt_aes::EcbKey::new(&key_bytes).expect("AES key");
+    let cbc = oxicrypt_aes::CbcKey::new(&key_bytes).expect("AES key");
+    let ctr = oxicrypt_aes::CtrKey::new(&key_bytes).expect("AES key");
+    let gcm = oxicrypt_aes::GcmKey::new(&key_bytes).expect("AES key");
+    let kw = oxicrypt_aes::KwKey::new(&key_bytes).expect("AES key");
 
     let base = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../vendor/nist/acvp-server/gen-val/json-files");
 
-    // ── ECB ──────────────────────────────────────────────────────
     {
         let mut enc_tests = Vec::new();
         let mut dec_tests = Vec::new();
@@ -97,7 +100,7 @@ fn generate_aes_lifecycle_slices() {
             drbg.generate(None, &mut pt).expect("drbg gen pt");
 
             let mut ct = [0u8; 32];
-            oxicrypt_aes::ecb_encrypt(&cipher, &pt, &mut ct).expect("ecb encrypt");
+            oxicrypt_aes::ecb_encrypt(&ecb, &pt, &mut ct).expect("ecb encrypt");
 
             enc_tests.push(format!(
                 r#"        {{
@@ -165,7 +168,6 @@ fn generate_aes_lifecycle_slices() {
         println!("wrote {} ({} bytes)", path.display(), json.len());
     }
 
-    // ── CBC ──────────────────────────────────────────────────────
     {
         let mut enc_tests = Vec::new();
         let mut dec_tests = Vec::new();
@@ -178,7 +180,7 @@ fn generate_aes_lifecycle_slices() {
             drbg.generate(None, &mut pt).expect("drbg gen pt");
 
             let mut ct = [0u8; 32];
-            oxicrypt_aes::cbc_encrypt(&cipher, &iv, &pt, &mut ct).expect("cbc encrypt");
+            oxicrypt_aes::cbc_encrypt(&cbc, &iv, &pt, &mut ct).expect("cbc encrypt");
 
             enc_tests.push(format!(
                 r#"        {{
@@ -250,7 +252,6 @@ fn generate_aes_lifecycle_slices() {
         println!("wrote {} ({} bytes)", path.display(), json.len());
     }
 
-    // ── CTR ──────────────────────────────────────────────────────
     {
         let mut enc_tests = Vec::new();
         let mut dec_tests = Vec::new();
@@ -263,7 +264,7 @@ fn generate_aes_lifecycle_slices() {
             drbg.generate(None, &mut pt).expect("drbg gen pt");
 
             let mut ct = [0u8; 48];
-            oxicrypt_aes::ctr_xor(&cipher, &icb, &pt, &mut ct).unwrap();
+            oxicrypt_aes::ctr(&ctr, &icb, &pt, &mut ct).unwrap();
 
             enc_tests.push(format!(
                 r#"        {{
@@ -335,7 +336,6 @@ fn generate_aes_lifecycle_slices() {
         println!("wrote {} ({} bytes)", path.display(), json.len());
     }
 
-    // ── GCM ──────────────────────────────────────────────────────
     {
         let mut enc_tests = Vec::new();
         let mut valid_dec_tests = Vec::new();
@@ -343,17 +343,15 @@ fn generate_aes_lifecycle_slices() {
         let mut tc_id = 1;
 
         for _ in 0..NUM_TESTS {
-            let mut iv = [0u8; 12]; // 96-bit IV
-            drbg.generate(None, &mut iv).expect("drbg gen iv");
             let mut aad = [0u8; 16];
             drbg.generate(None, &mut aad).expect("drbg gen aad");
             let mut pt = [0u8; 32];
             drbg.generate(None, &mut pt).expect("drbg gen pt");
 
             let mut ct = [0u8; 32];
-            let mut tag = [0u8; 16];
-            oxicrypt_aes::gcm_encrypt(&cipher, &iv, &aad, &pt, &mut ct, &mut tag)
+            let sealed = oxicrypt_aes::gcm_encrypt(&gcm, &mut drbg, &aad, &pt, &mut ct)
                 .expect("gcm encrypt");
+            let (iv, tag) = (sealed.iv, sealed.tag);
 
             let ct_hex = hex_upper(&ct);
             let tag_hex = hex_upper(&tag);
@@ -470,7 +468,6 @@ fn generate_aes_lifecycle_slices() {
         println!("wrote {} ({} bytes)", path.display(), json.len());
     }
 
-    // ── CCM ──────────────────────────────────────────────────────
     {
         let tlen: usize = 16; // 128-bit tag
         let nonce_len: usize = 12; // 96-bit nonce
@@ -488,8 +485,9 @@ fn generate_aes_lifecycle_slices() {
             drbg.generate(None, &mut pt).expect("drbg gen pt");
 
             let mut ct_with_tag = vec![0u8; pt.len() + tlen];
-            oxicrypt_aes::ccm_encrypt(&cipher, &nonce, &aad, &pt, tlen, &mut ct_with_tag)
-                .expect("ccm encrypt");
+            let ccm = oxicrypt_aes::CcmKey::new(&key_bytes, tlen).expect("AES key");
+            let (ct, tag) = ct_with_tag.split_at_mut(pt.len());
+            oxicrypt_aes::ccm_encrypt(&ccm, &nonce, &aad, &pt, ct, tag).expect("ccm encrypt");
 
             let ct_hex = hex_upper(&ct_with_tag);
             let pt_hex = hex_upper(&pt);
@@ -606,7 +604,6 @@ fn generate_aes_lifecycle_slices() {
         println!("wrote {} ({} bytes)", path.display(), json.len());
     }
 
-    // ── KW ───────────────────────────────────────────────────────
     {
         let mut enc_tests = Vec::new();
         let mut valid_dec_tests = Vec::new();
@@ -619,7 +616,7 @@ fn generate_aes_lifecycle_slices() {
             drbg.generate(None, &mut pt).expect("drbg gen pt");
 
             let mut ct = [0u8; 40]; // pt + 8-byte ICV
-            oxicrypt_aes::kw_wrap(&cipher, &pt, &mut ct).expect("kw wrap");
+            oxicrypt_aes::kw_wrap(&kw, &pt, &mut ct).expect("kw wrap");
 
             let ct_hex = hex_upper(&ct);
             let pt_hex = hex_upper(&pt);
@@ -715,7 +712,6 @@ fn generate_aes_lifecycle_slices() {
         println!("wrote {} ({} bytes)", path.display(), json.len());
     }
 
-    // ── KWP ──────────────────────────────────────────────────────
     {
         let mut enc_tests = Vec::new();
         let mut valid_dec_tests = Vec::new();
@@ -731,7 +727,7 @@ fn generate_aes_lifecycle_slices() {
             let padded = ((pt.len() + 7) / 8) * 8;
             let ct_len = padded + 8;
             let mut ct = vec![0u8; ct_len];
-            oxicrypt_aes::kwp_wrap(&cipher, &pt, &mut ct).expect("kwp wrap");
+            oxicrypt_aes::kwp_wrap(&kw, &pt, &mut ct).expect("kwp wrap");
 
             let ct_hex = hex_upper(&ct);
             let pt_hex = hex_upper(&pt);

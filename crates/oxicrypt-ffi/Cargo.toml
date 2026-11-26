@@ -48,7 +48,11 @@ oxicrypt-platform = { workspace = true }
 [features]
 default = []
 # Exports the oxi_test_* symbols of include/oxicrypt-test.h; never in a release build.
-fault-injection = ["oxicrypt-drbg/fault-injection"]
+fault-injection = [
+    "oxicrypt-drbg/fault-injection",
+    "oxicrypt-aes/fault-injection",
+    "oxicrypt-cmac/fault-injection",
+]
 
 [package.metadata.lama]
 # Registry discovery (LAMA SPEC.md, "Package registry discovery"). Must be a

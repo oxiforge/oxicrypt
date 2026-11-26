@@ -11,9 +11,9 @@ mod common;
 
 use common::{acvp, array, init};
 use oxicrypt::{
-    DrbgKind, Error, HKDF_SHA384_MAX_OKM_LEN, IntegrityStatus, MlDsa87KeySeed, MlDsa87SecretKey,
-    MlKem1024DecapsulationKey, MlKem1024EncapsSeed, MlKem1024KeySeedD, MlKem1024KeySeedZ, Module,
-    Profile,
+    Drbg, DrbgKind, Error, HKDF_SHA384_MAX_OKM_LEN, IntegrityStatus, MlDsa87KeySeed,
+    MlDsa87SecretKey, MlKem1024DecapsulationKey, MlKem1024EncapsSeed, MlKem1024KeySeedD,
+    MlKem1024KeySeedZ, Module, Profile,
 };
 
 fn module() -> Module {
@@ -131,7 +131,7 @@ fn hkdf_sha384_output_bound() {
     );
 }
 
-// ----- AES-256-GCM -----
+// ----- AES-GCM -----
 
 // McGrew & Viega, "The Galois/Counter Mode of Operation", Appendix B, Test
 // Case 15 (AES-256, 64-byte plaintext, no AAD); the same values are the
@@ -147,6 +147,8 @@ const GCM256_TAG: &str = "b094dac5d93471bdec1a502270e3cc6c";
 /// Key, IV, plaintext, ciphertext and tag.
 type GcmCase = ([u8; 32], [u8; 12], Vec<u8>, Vec<u8>, [u8; 16]);
 
+type CcmFault<'a> = (&'a str, &'a [u8], &'a [u8], &'a [u8]);
+
 fn gcm_inputs() -> GcmCase {
     (
         array(&common::unhex(GCM256_KEY)),
@@ -157,55 +159,183 @@ fn gcm_inputs() -> GcmCase {
     )
 }
 
-#[test]
-fn aes256_gcm_known_answer_both_ways() {
-    let m = module();
-    let (key, iv, pt, ct, tag) = gcm_inputs();
-    let key = m.aes256_key(&key).unwrap();
-    let mut out = vec![0u8; pt.len()];
-    assert_eq!(
-        m.aes256_gcm_encrypt(&key, &iv, &[], &pt, &mut out).unwrap(),
-        tag
-    );
-    assert_eq!(out, ct);
-    let mut back = vec![0u8; ct.len()];
-    m.aes256_gcm_decrypt(&key, &iv, &[], &ct, &mut back, &tag)
-        .unwrap();
-    assert_eq!(back, pt);
-    assert_eq!(
-        m.aes256_gcm_decrypt_vec(&key, &iv, &[], &ct, &tag).unwrap(),
-        pt
-    );
+/// A DRBG the CNSA 2.0 profile allows, instantiated.
+fn cnsa2_drbg(m: Module) -> Drbg {
+    let mut drbg = m.drbg(DrbgKind::HmacSha512).unwrap();
+    drbg.instantiate(b"gcm").unwrap();
+    drbg
 }
 
 #[test]
-fn aes256_gcm_tag_mismatch_wipes_the_output() {
+fn aes_gcm_open_known_answer() {
+    let m = module();
+    let (key, iv, pt, ct, tag) = gcm_inputs();
+    let key = m.aes_gcm_key(&key).unwrap();
+    let mut back = vec![0u8; ct.len()];
+    m.aes_gcm_open(&key, &iv, &[], &ct, &tag, &mut back)
+        .unwrap();
+    assert_eq!(back, pt);
+    assert_eq!(m.aes_gcm_open_vec(&key, &iv, &[], &ct, &tag).unwrap(), pt);
+}
+
+/// The module draws the IV, so encryption has no known answer: a sealed
+/// message opens under the IV and tag returned, two seals of one plaintext
+/// draw different IVs, and each seal counts once against the key.
+#[test]
+fn aes_gcm_seal_round_trips_under_a_drawn_iv() {
+    let m = module();
+    let (key, _, pt, _, _) = gcm_inputs();
+    let key = m.aes_gcm_key(&key).unwrap();
+    let mut drbg = cnsa2_drbg(m);
+    assert_eq!(m.aes_gcm_invocations(&key), Ok(0));
+    let mut ct = vec![0xAAu8; pt.len()];
+    let sealed = m
+        .aes_gcm_seal(&key, &mut drbg, b"aad", &pt, &mut ct)
+        .unwrap();
+    assert_ne!(ct, pt);
+    assert_eq!(
+        m.aes_gcm_open_vec(&key, &sealed.iv, b"aad", &ct, &sealed.tag)
+            .unwrap(),
+        pt
+    );
+    let (ct2, sealed2) = m.aes_gcm_seal_vec(&key, &mut drbg, b"aad", &pt).unwrap();
+    assert_ne!(sealed.iv, sealed2.iv);
+    assert_ne!(ct, ct2);
+    assert_eq!(m.aes_gcm_invocations(&key), Ok(2));
+}
+
+/// A key at its limit refuses the next encryption with `KeyExhausted` and
+/// zeroes the output, as does a key preloaded to 2^32. Whether the refusal
+/// draws from the DRBG is not observable through the crate; the
+/// `oxicrypt-aes` test `gcm_key_exhausts_at_2_32` pins that no IV is drawn.
+#[test]
+fn aes_gcm_key_at_its_limit_is_exhausted_and_zeroes_its_output() {
+    let m = module();
+    let mut drbg = cnsa2_drbg(m);
+    let key = m.aes_gcm_key_with_limit(&[5; 32], 1).unwrap();
+    let mut ct = [0u8; 4];
+    m.aes_gcm_seal(&key, &mut drbg, &[], &[1; 4], &mut ct)
+        .unwrap();
+    let mut ct = [0xAAu8; 4];
+    assert_eq!(
+        m.aes_gcm_seal(&key, &mut drbg, &[], &[1; 4], &mut ct),
+        Err(Error::KeyExhausted)
+    );
+    assert_eq!(ct, [0; 4]);
+    assert_eq!(m.aes_gcm_invocations(&key), Ok(1));
+
+    let full = m.aes_gcm_key_with_count(&[5; 32], 1 << 32).unwrap();
+    assert_eq!(m.aes_gcm_invocations(&full), Ok(1 << 32));
+    let mut ct = [0xAAu8; 4];
+    assert_eq!(
+        m.aes_gcm_seal(&full, &mut drbg, &[], &[1; 4], &mut ct),
+        Err(Error::KeyExhausted)
+    );
+    assert_eq!(ct, [0; 4]);
+    assert_eq!(
+        m.aes_gcm_key_with_count(&[5; 32], (1 << 32) + 1)
+            .unwrap_err(),
+        Error::InvalidInput
+    );
+    assert_eq!(
+        m.aes_gcm_key_with_limit(&[5; 32], 0).unwrap_err(),
+        Error::InvalidInput
+    );
+}
+
+/// A key built with a share of 3 encryptions seals three times and refuses
+/// the fourth with `KeyExhausted`.
+#[test]
+fn aes_gcm_key_with_a_share_of_3_refuses_the_fourth_seal() {
+    let m = module();
+    let mut drbg = cnsa2_drbg(m);
+    let key = m.aes_gcm_key_with_limit(&[6; 32], 3).unwrap();
+    for n in 1..=3 {
+        let mut ct = [0u8; 4];
+        m.aes_gcm_seal(&key, &mut drbg, &[], &[1; 4], &mut ct)
+            .unwrap_or_else(|e| panic!("seal {n}: {e:?}"));
+        assert_eq!(m.aes_gcm_invocations(&key), Ok(n));
+    }
+    let mut ct = [0xAAu8; 4];
+    assert_eq!(
+        m.aes_gcm_seal(&key, &mut drbg, &[], &[1; 4], &mut ct),
+        Err(Error::KeyExhausted)
+    );
+    assert_eq!(ct, [0; 4]);
+    assert_eq!(m.aes_gcm_invocations(&key), Ok(3));
+}
+
+#[test]
+fn aes_key_lengths_are_16_24_or_32_and_cnsa2_refuses_aes_128_and_192() {
+    let m = module();
+    assert_eq!(m.aes_gcm_key(&[1; 31]).unwrap_err(), Error::InvalidInput);
+    assert_eq!(m.aes_gcm_key(&[]).unwrap_err(), Error::InvalidInput);
+    for k in [&[1u8; 16][..], &[1u8; 24][..]] {
+        let n = k.len();
+        let restricted = Err(Error::AlgorithmRestricted);
+        assert_eq!(m.aes_gcm_key(k).map(drop), restricted, "{n}");
+        assert_eq!(m.aes_gcm_key_with_count(k, 0).map(drop), restricted, "{n}");
+        assert_eq!(m.aes_gcm_key_with_limit(k, 1).map(drop), restricted, "{n}");
+        assert_eq!(m.aes_ccm_key(k, 16).map(drop), restricted, "{n}");
+        assert_eq!(
+            m.aes_ccm_key_with_count(k, 16, 0).map(drop),
+            restricted,
+            "{n}"
+        );
+        assert_eq!(m.aes_cbc_key(k).map(drop), restricted, "{n}");
+        assert_eq!(m.aes_ctr_key(k).map(drop), restricted, "{n}");
+        assert_eq!(m.aes_kw_key(k).map(drop), restricted, "{n}");
+        assert_eq!(m.aes_cmac_key(k, 16).map(drop), restricted, "{n}");
+    }
+}
+
+#[test]
+fn aes_gcm_seal_refuses_an_uninstantiated_drbg() {
+    let m = module();
+    let key = m.aes_gcm_key(&[1; 32]).unwrap();
+    let mut never = m.drbg(DrbgKind::HmacSha512).unwrap();
+    let mut ct = [0xAAu8; 4];
+    assert_eq!(
+        m.aes_gcm_seal(&key, &mut never, &[], &[1; 4], &mut ct),
+        Err(Error::Uninstantiated)
+    );
+    assert_eq!(ct, [0; 4]);
+}
+
+#[test]
+fn aes_gcm_tag_mismatch_wipes_the_output() {
     let m = module();
     let (key, iv, _, ct, mut tag) = gcm_inputs();
-    let key = m.aes256_key(&key).unwrap();
+    let key = m.aes_gcm_key(&key).unwrap();
     tag[15] ^= 0x01;
     let mut out = vec![0xAAu8; ct.len()];
     assert_eq!(
-        m.aes256_gcm_decrypt(&key, &iv, &[], &ct, &mut out, &tag),
+        m.aes_gcm_open(&key, &iv, &[], &ct, &tag, &mut out),
         Err(Error::TagMismatch)
     );
     assert!(out.iter().all(|b| *b == 0), "plaintext_out not wiped");
 }
 
 #[test]
-fn aes256_gcm_length_mismatch_is_refused_before_the_call() {
+fn aes_gcm_length_mismatch_is_refused_before_the_call() {
     let m = module();
     let (key, iv, pt, ct, tag) = gcm_inputs();
-    let key = m.aes256_key(&key).unwrap();
+    let key = m.aes_gcm_key(&key).unwrap();
+    let mut drbg = cnsa2_drbg(m);
     let mut short = vec![0xAAu8; pt.len() - 1];
     assert_eq!(
-        m.aes256_gcm_encrypt(&key, &iv, &[], &pt, &mut short),
+        m.aes_gcm_seal(&key, &mut drbg, &[], &pt, &mut short),
         Err(Error::LengthMismatch)
     );
     assert!(short.iter().all(|b| *b == 0));
+    assert_eq!(
+        m.aes_gcm_invocations(&key),
+        Ok(0),
+        "refused before the call"
+    );
     let mut long = vec![0xAAu8; ct.len() + 1];
     assert_eq!(
-        m.aes256_gcm_decrypt(&key, &iv, &[], &ct, &mut long, &tag),
+        m.aes_gcm_open(&key, &iv, &[], &ct, &tag, &mut long),
         Err(Error::LengthMismatch)
     );
     assert!(long.iter().all(|b| *b == 0));
@@ -215,15 +345,16 @@ fn aes256_gcm_length_mismatch_is_refused_before_the_call() {
 /// the caller's slice: an output shorter than the input. A guard byte after
 /// the sub-slice must be untouched.
 #[test]
-fn aes256_gcm_short_output_is_refused_and_nothing_past_it_is_written() {
+fn aes_gcm_short_output_is_refused_and_nothing_past_it_is_written() {
     let m = module();
     let (key, iv, pt, ct, tag) = gcm_inputs();
-    let key = m.aes256_key(&key).unwrap();
+    let key = m.aes_gcm_key(&key).unwrap();
+    let mut drbg = cnsa2_drbg(m);
 
     let mut buf = vec![0xAAu8; ct.len()];
     let (head, guard) = buf.split_at_mut(ct.len() - 1);
     assert_eq!(
-        m.aes256_gcm_decrypt(&key, &iv, &[], &ct, head, &tag),
+        m.aes_gcm_open(&key, &iv, &[], &ct, &tag, head),
         Err(Error::LengthMismatch)
     );
     assert!(head.iter().all(|b| *b == 0));
@@ -232,7 +363,7 @@ fn aes256_gcm_short_output_is_refused_and_nothing_past_it_is_written() {
     let mut buf = vec![0xAAu8; pt.len()];
     let (head, guard) = buf.split_at_mut(pt.len() - 1);
     assert_eq!(
-        m.aes256_gcm_encrypt(&key, &iv, &[], &pt, head),
+        m.aes_gcm_seal(&key, &mut drbg, &[], &pt, head),
         Err(Error::LengthMismatch)
     );
     assert_eq!(guard, [0xAA]);
@@ -240,7 +371,7 @@ fn aes256_gcm_short_output_is_refused_and_nothing_past_it_is_written() {
     // The other direction: an output longer than the input.
     let mut long = vec![0xAAu8; pt.len() + 1];
     assert_eq!(
-        m.aes256_gcm_encrypt(&key, &iv, &[], &pt, &mut long),
+        m.aes_gcm_seal(&key, &mut drbg, &[], &pt, &mut long),
         Err(Error::LengthMismatch)
     );
 }
@@ -315,15 +446,18 @@ const OVER_THE_LIMIT: usize = (1 << 36) - 31;
 /// alone would answer `LengthMismatch`.
 #[cfg(target_os = "linux")]
 #[test]
-fn aes256_gcm_payload_over_the_limit_is_refused_by_the_crate() {
+fn aes_gcm_payload_over_the_limit_is_refused_by_the_crate() {
     let huge = Reserved::new(OVER_THE_LIMIT);
     let m = module();
-    let key = m.aes256_key(&[3; 32]).unwrap();
+    let key = m.aes_gcm_key(&[3; 32]).unwrap();
+    let mut drbg = cnsa2_drbg(m);
     let mut out = [0xAAu8; 1];
-    let encrypt = m.aes256_gcm_encrypt(&key, &[1; 12], &[], huge.bytes(), &mut out);
-    let decrypt = m.aes256_gcm_decrypt(&key, &[1; 12], &[], huge.bytes(), &mut out, &[0; 16]);
-    assert_eq!(encrypt, Err(Error::InvalidPayloadLength));
-    assert_eq!(decrypt, Err(Error::InvalidPayloadLength));
+    let seal = m.aes_gcm_seal(&key, &mut drbg, &[], huge.bytes(), &mut out);
+    assert_eq!(seal, Err(Error::InvalidPayloadLength));
+    assert_eq!(out, [0]);
+    let mut out = [0xAAu8; 1];
+    let open = m.aes_gcm_open(&key, &[1; 12], &[], huge.bytes(), &[0; 16], &mut out);
+    assert_eq!(open, Err(Error::InvalidPayloadLength));
     assert_eq!(out, [0]);
 }
 
@@ -331,16 +465,17 @@ fn aes256_gcm_payload_over_the_limit_is_refused_by_the_crate() {
 /// which would otherwise be a 64 GiB allocation.
 #[cfg(target_os = "linux")]
 #[test]
-fn aes256_gcm_vec_forms_refuse_over_the_limit_before_allocating() {
+fn aes_gcm_vec_forms_refuse_over_the_limit_before_allocating() {
     let huge = Reserved::new(OVER_THE_LIMIT);
     let m = module();
-    let key = m.aes256_key(&[3; 32]).unwrap();
+    let key = m.aes_gcm_key(&[3; 32]).unwrap();
+    let mut drbg = cnsa2_drbg(m);
     assert_eq!(
-        m.aes256_gcm_encrypt_vec(&key, &[1; 12], &[], huge.bytes()),
+        m.aes_gcm_seal_vec(&key, &mut drbg, &[], huge.bytes()),
         Err(Error::InvalidPayloadLength)
     );
     assert_eq!(
-        m.aes256_gcm_decrypt_vec(&key, &[1; 12], &[], huge.bytes(), &[0; 16]),
+        m.aes_gcm_open_vec(&key, &[1; 12], &[], huge.bytes(), &[0; 16]),
         Err(Error::InvalidPayloadLength)
     );
 }
@@ -348,9 +483,15 @@ fn aes256_gcm_vec_forms_refuse_over_the_limit_before_allocating() {
 #[test]
 fn handle_debug_prints_only_the_type_name() {
     let m = module();
+    let k = [1u8; 32];
+    assert_eq!(format!("{:?}", m.aes_gcm_key(&k).unwrap()), "AesGcmKey");
+    assert_eq!(format!("{:?}", m.aes_ccm_key(&k, 16).unwrap()), "AesCcmKey");
+    assert_eq!(format!("{:?}", m.aes_cbc_key(&k).unwrap()), "AesCbcKey");
+    assert_eq!(format!("{:?}", m.aes_ctr_key(&k).unwrap()), "AesCtrKey");
+    assert_eq!(format!("{:?}", m.aes_kw_key(&k).unwrap()), "AesKwKey");
     assert_eq!(
-        format!("{:?}", m.aes256_key(&[1; 32]).unwrap()),
-        "Aes256Key"
+        format!("{:?}", m.aes_cmac_key(&k, 16).unwrap()),
+        "AesCmacKey"
     );
     assert_eq!(
         format!("{:?}", m.drbg(DrbgKind::HmacSha512).unwrap()),
@@ -358,20 +499,407 @@ fn handle_debug_prints_only_the_type_name() {
     );
 }
 
+/// One key on four threads, each with its own DRBG: every seal opens, and
+/// the key's count is the number of seals.
 #[test]
-fn aes256_key_is_shared_across_threads() {
+fn aes_gcm_key_is_shared_across_threads() {
     let m = module();
-    let (key, iv, pt, ct, tag) = gcm_inputs();
-    let key = std::sync::Arc::new(m.aes256_key(&key).unwrap());
+    let (key, _, pt, _, _) = gcm_inputs();
+    let key = std::sync::Arc::new(m.aes_gcm_key(&key).unwrap());
     let handles: Vec<_> = (0..4)
         .map(|_| {
             let (key, pt) = (key.clone(), pt.clone());
-            std::thread::spawn(move || m.aes256_gcm_encrypt_vec(&key, &iv, &[], &pt).unwrap())
+            std::thread::spawn(move || {
+                let mut drbg = cnsa2_drbg(m);
+                let (ct, sealed) = m.aes_gcm_seal_vec(&key, &mut drbg, &[], &pt).unwrap();
+                m.aes_gcm_open_vec(&key, &sealed.iv, &[], &ct, &sealed.tag)
+                    .unwrap()
+            })
         })
         .collect();
     for h in handles {
-        assert_eq!(h.join().unwrap(), (ct.clone(), tag));
+        assert_eq!(h.join().unwrap(), pt);
     }
+    assert_eq!(m.aes_gcm_invocations(&key), Ok(4));
+}
+
+// ----- the other AES modes, AES-256 -----
+
+// SP 800-38A Appendix F: the plaintext of F.2.5 and F.5.5, the key of both,
+// the CBC IV of F.2.5 and the initial counter block of F.5.5.
+const SP38A_PT: &str = "6bc1bee22e409f96e93d7e117393172aae2d8a571e03ac9c9eb76fac45af8e51\
+                        30c81c46a35ce411e5fbc1191a0a52eff69f2445df4f9b17ad2b417be66c3710";
+const SP38A_KEY256: &str = "603deb1015ca71be2b73aef0857d77811f352c073b6108d72d9810a30914dff4";
+const CBC_IV: &str = "000102030405060708090a0b0c0d0e0f";
+const CBC256_CT: &str = "f58c4c04d6e5f1ba779eabfb5f7bfbd69cfc4e967edb808d679f777bc6702c7d\
+                         39f23369a9d9bacfa530e26304231461b2eb05e2c39be9fcda6c19078c6a9d1b";
+const CTR_ICB: &str = "f0f1f2f3f4f5f6f7f8f9fafbfcfdfeff";
+const CTR256_CT: &str = "601ec313775789a5b7a7f504bbf3d228f443e3ca4d62b59aca84e990cacaf5c5\
+                         2b0930daa23de94ce87017ba2d84988ddfc9c58db67aada613c2dd08457941a6";
+
+#[test]
+fn aes_cbc_known_answer_both_ways() {
+    let m = module();
+    let key = m.aes_cbc_key(&common::unhex(SP38A_KEY256)).unwrap();
+    let (iv, pt, ct) = (
+        array(&common::unhex(CBC_IV)),
+        common::unhex(SP38A_PT),
+        common::unhex(CBC256_CT),
+    );
+    let mut out = vec![0u8; pt.len()];
+    m.aes_cbc_encrypt(&key, &iv, &pt, &mut out).unwrap();
+    assert_eq!(out, ct);
+    m.aes_cbc_decrypt(&key, &iv, &ct, &mut out).unwrap();
+    assert_eq!(out, pt);
+
+    let mut short = vec![0xAAu8; pt.len() - 16];
+    assert_eq!(
+        m.aes_cbc_encrypt(&key, &iv, &pt, &mut short),
+        Err(Error::LengthMismatch)
+    );
+    assert!(short.iter().all(|b| *b == 0));
+    let mut out = [0xAAu8; 15];
+    assert_eq!(
+        m.aes_cbc_encrypt(&key, &iv, &[1; 15], &mut out),
+        Err(Error::NotBlockAligned)
+    );
+    assert_eq!(out, [0; 15]);
+    assert_eq!(
+        m.aes_cbc_encrypt(&key, &iv, &[], &mut []),
+        Err(Error::InvalidPayloadLength)
+    );
+    assert_eq!(
+        m.aes_cbc_decrypt(&key, &iv, &[], &mut []),
+        Err(Error::InvalidPayloadLength)
+    );
+}
+
+#[test]
+fn aes_ctr_known_answer_both_ways() {
+    let m = module();
+    let key = m.aes_ctr_key(&common::unhex(SP38A_KEY256)).unwrap();
+    let (icb, pt, ct) = (
+        array(&common::unhex(CTR_ICB)),
+        common::unhex(SP38A_PT),
+        common::unhex(CTR256_CT),
+    );
+    let mut out = vec![0u8; pt.len()];
+    m.aes_ctr(&key, &icb, &pt, &mut out).unwrap();
+    assert_eq!(out, ct);
+    m.aes_ctr(&key, &icb, &ct, &mut out).unwrap();
+    assert_eq!(out, pt);
+    let mut long = vec![0xAAu8; pt.len() + 1];
+    assert_eq!(
+        m.aes_ctr(&key, &icb, &pt, &mut long),
+        Err(Error::LengthMismatch)
+    );
+    assert!(long.iter().all(|b| *b == 0));
+    let mut buf = vec![0xAAu8; pt.len()];
+    let (head, guard) = buf.split_at_mut(pt.len() - 1);
+    assert_eq!(m.aes_ctr(&key, &icb, &pt, head), Err(Error::LengthMismatch));
+    assert!(head.iter().all(|b| *b == 0));
+    assert_eq!(guard, [0xAA]);
+}
+
+// NIST CAVP CCMVS VPT256.rsp, [Alen = 32, Nlen = 13, Tlen = 16, Plen = 16],
+// Count = 160; CT is the ciphertext followed by the tag. The same values are
+// the module's CCM self-test in crates/oxicrypt-aes/src/kat.rs.
+const CCM256_KEY: &str = "ee8ce187169779d13e443d6428e38b38b55dfb90f0228a8a4e62f8f535806e62";
+const CCM256_NONCE: &str = "121642c4218b391c98e6269c8a";
+const CCM256_AAD: &str = "718d13e47522ac4cdf3f828063980b6d452fcdcd6e1a1904bf87f548a5fd5a05";
+const CCM256_PT: &str = "d15f98f2c6d670f55c78a06648332bc9";
+const CCM256_CT: &str = "cc17bf8794c843457d899391898ed22a6f9d28fcb64234e1cd793c4144f1da50";
+
+#[test]
+fn aes_ccm_known_answer_both_ways() {
+    let m = module();
+    let key = m.aes_ccm_key(&common::unhex(CCM256_KEY), 16).unwrap();
+    assert_eq!(key.tag_len(), 16);
+    let (nonce, aad, pt) = (
+        common::unhex(CCM256_NONCE),
+        common::unhex(CCM256_AAD),
+        common::unhex(CCM256_PT),
+    );
+    let expected = common::unhex(CCM256_CT);
+    let (ct, tag) = expected.split_at(pt.len());
+    let (mut ct_out, mut tag_out) = (vec![0u8; pt.len()], [0u8; 16]);
+    m.aes_ccm_seal(&key, &nonce, &aad, &pt, &mut ct_out, &mut tag_out)
+        .unwrap();
+    assert_eq!(ct_out, ct);
+    assert_eq!(tag_out, tag);
+    let mut back = vec![0u8; ct.len()];
+    m.aes_ccm_open(&key, &nonce, &aad, ct, tag, &mut back)
+        .unwrap();
+    assert_eq!(back, pt);
+    assert!(m.aes_ccm_invocations(&key).unwrap() > 0);
+
+    let mut flipped = tag.to_vec();
+    flipped[0] ^= 1;
+    let mut out = vec![0xAAu8; ct.len()];
+    assert_eq!(
+        m.aes_ccm_open(&key, &nonce, &aad, ct, &flipped, &mut out),
+        Err(Error::TagMismatch)
+    );
+    assert!(out.iter().all(|b| *b == 0));
+    let mut out = vec![0xAAu8; ct.len()];
+    assert_eq!(
+        m.aes_ccm_open(&key, &nonce, &aad, ct, &tag[..8], &mut out),
+        Err(Error::InvalidTagLength)
+    );
+    assert!(out.iter().all(|b| *b == 0));
+    assert_eq!(
+        m.aes_ccm_open(&key, &nonce[..6], &aad, ct, tag, &mut out),
+        Err(Error::TagMismatch)
+    );
+    let mut short_tag = [0xAAu8; 8];
+    assert_eq!(
+        m.aes_ccm_seal(&key, &nonce, &aad, &pt, &mut ct_out, &mut short_tag),
+        Err(Error::LengthMismatch)
+    );
+    assert_eq!(short_tag, [0; 8]);
+    assert_eq!(
+        m.aes_ccm_seal(&key, &nonce[..6], &aad, &pt, &mut ct_out, &mut tag_out),
+        Err(Error::InvalidNonceLength)
+    );
+    assert_eq!(tag_out, [0; 16]);
+    assert_eq!(m.aes_ccm_key(&[1; 32], 9).unwrap_err(), Error::InvalidInput);
+}
+
+/// A CCM tag slice of another length than the key's is refused with
+/// `InvalidTagLength`, shorter or longer, and the output is zeroed.
+#[test]
+fn aes_ccm_open_tag_of_another_length_is_invalid_tag_length() {
+    let m = module();
+    let key = m.aes_ccm_key(&common::unhex(CCM256_KEY), 16).unwrap();
+    let (nonce, aad) = (common::unhex(CCM256_NONCE), common::unhex(CCM256_AAD));
+    let expected = common::unhex(CCM256_CT);
+    let (ct, tag) = expected.split_at(expected.len() - 16);
+    for len in [0, 4, 15, 17] {
+        let mut wrong = tag.to_vec();
+        wrong.resize(len, 0);
+        let mut out = vec![0xAAu8; ct.len()];
+        assert_eq!(
+            m.aes_ccm_open(&key, &nonce, &aad, ct, &wrong, &mut out),
+            Err(Error::InvalidTagLength),
+            "tag of {len} bytes"
+        );
+        assert!(out.iter().all(|b| *b == 0), "tag of {len} bytes");
+    }
+}
+
+/// Each input the library refuses on a CCM decryption is reported as one
+/// error, `TagMismatch`: a nonce length outside 7 to 13, a ciphertext one
+/// byte short, and a tag with one bit flipped. The output is zeroed each
+/// time, and the unaltered inputs open.
+#[test]
+fn aes_ccm_open_reports_each_refusal_as_tag_mismatch() {
+    let m = module();
+    let key = m.aes_ccm_key(&common::unhex(CCM256_KEY), 16).unwrap();
+    let (nonce, aad, pt) = (
+        common::unhex(CCM256_NONCE),
+        common::unhex(CCM256_AAD),
+        common::unhex(CCM256_PT),
+    );
+    let expected = common::unhex(CCM256_CT);
+    let (ct, tag) = expected.split_at(pt.len());
+    let mut flipped = tag.to_vec();
+    flipped[15] ^= 0x80;
+    let short = &ct[..ct.len() - 1];
+    let cases: [CcmFault<'_>; 3] = [
+        ("a 6-byte nonce", &nonce[..6], ct, tag),
+        ("a short ciphertext", &nonce, short, tag),
+        ("a flipped tag", &nonce, ct, &flipped),
+    ];
+    for (name, n, c, t) in cases {
+        let mut out = vec![0xAAu8; c.len()];
+        assert_eq!(
+            m.aes_ccm_open(&key, n, &aad, c, t, &mut out),
+            Err(Error::TagMismatch),
+            "{name}"
+        );
+        assert!(out.iter().all(|b| *b == 0), "{name}");
+    }
+    let mut back = vec![0u8; ct.len()];
+    m.aes_ccm_open(&key, &nonce, &aad, ct, tag, &mut back)
+        .unwrap();
+    assert_eq!(back, pt);
+}
+
+#[test]
+fn aes_ccm_count_is_preloaded_and_bounded() {
+    let m = module();
+    let key = m.aes_ccm_key_with_count(&[2; 32], 8, 1 << 61).unwrap();
+    assert_eq!(key.tag_len(), 8);
+    assert_eq!(m.aes_ccm_invocations(&key), Ok(1 << 61));
+    let (mut ct, mut tag) = ([0xAAu8; 4], [0xAAu8; 8]);
+    assert_eq!(
+        m.aes_ccm_seal(&key, &[0; 13], &[], &[1; 4], &mut ct, &mut tag),
+        Err(Error::KeyExhausted)
+    );
+    assert_eq!((ct, tag), ([0; 4], [0; 8]));
+    assert_eq!(
+        m.aes_ccm_key_with_count(&[2; 32], 8, (1 << 61) + 1)
+            .unwrap_err(),
+        Error::InvalidInput
+    );
+}
+
+// RFC 3394 §4.6: a 256-bit KEK wrapping 256 bits of key data.
+const KW_KEK: &str = "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f";
+const KW_PT: &str = "00112233445566778899aabbccddeeff000102030405060708090a0b0c0d0e0f";
+const KW_CT: &str =
+    "28c9f404c4b810f4cbccb35cfb87f8263f5786e2d80ed326cbc7f0e71a99f43bfb988b9b7a02dd21";
+
+#[test]
+fn aes_kw_known_answer_both_ways() {
+    let m = module();
+    let key = m.aes_kw_key(&common::unhex(KW_KEK)).unwrap();
+    let (pt, ct) = (common::unhex(KW_PT), common::unhex(KW_CT));
+    let mut wrapped = vec![0u8; pt.len() + 8];
+    m.aes_kw_wrap(&key, &pt, &mut wrapped).unwrap();
+    assert_eq!(wrapped, ct);
+    let mut unwrapped = vec![0u8; ct.len() - 8];
+    m.aes_kw_unwrap(&key, &ct, &mut unwrapped).unwrap();
+    assert_eq!(unwrapped, pt);
+
+    let mut bad = ct.clone();
+    bad[0] ^= 1;
+    let mut out = vec![0xAAu8; ct.len() - 8];
+    assert_eq!(
+        m.aes_kw_unwrap(&key, &bad, &mut out),
+        Err(Error::TagMismatch)
+    );
+    assert!(out.iter().all(|b| *b == 0));
+    let mut out = vec![0xAAu8; pt.len()];
+    assert_eq!(
+        m.aes_kw_wrap(&key, &pt, &mut out),
+        Err(Error::LengthMismatch)
+    );
+    assert!(out.iter().all(|b| *b == 0));
+    assert_eq!(
+        m.aes_kw_unwrap(&key, &[0; 4], &mut []),
+        Err(Error::LengthMismatch)
+    );
+}
+
+// NIST ACVP-Server ACVP-AES-KW-1.0, tgId 31, tcId 3001 (`kwCipher: inverse`,
+// `keyLen: 256`, `payloadLen: 832`); the same values are the module's KW
+// inverse-cipher self-test in crates/oxicrypt-aes/src/kat.rs.
+const KW_INV_KEY: &str = "e66fd4b07c5a06e1200862cc8fddd8b0ca28eba5cab639891c8ac47597a1aa36";
+const KW_INV_PT: &str = "96427f1babafdddc46125c9474757dae6896339c36185619f42730cd9c3630a4\
+                         fd61bf1ce8920158d24b91747679517be721601d397133555f68adac08af28d8\
+                         86d20dc5f165cfc9b46c0e696eb581a1d4387cc40eb6770b27b082b85bb5c4e0\
+                         b50029f71b25b464";
+const KW_INV_CT: &str = "ef71f30ebf5694ec2bd4bbe215ff77a0002bbb0e63b675f4ff83f3f93bb8f766\
+                         3e89288560496130129b16c434ecee69b0710dbbff37ba86421c59c9bb780d3e\
+                         2d4183b6fc5a820c96c319fbc775147f0055fd887a61f1a78d026ce31143714b\
+                         d78432232158dc58b73df36341d8d726";
+
+// NIST ACVP-Server ACVP-AES-KWP-1.0, tgId 21, tcId 2001 (`kwCipher: inverse`,
+// `keyLen: 256`, `payloadLen: 656`); the same values are the module's KWP
+// inverse-cipher self-test in crates/oxicrypt-aes/src/kat.rs.
+const KWP_INV_KEY: &str = "63a9a46618a7d6f198c772764010a6fe9e1270e2469c98a115ca8467ec8e80f0";
+const KWP_INV_PT: &str = "b5ef66688fa02bccdfa25cf273355985617bce110771056da0b57016cf3320cf\
+                          6111450652154bbe210d91a2ec53517538eefcafb2dd90fbf5b97dda5f4cda71\
+                          454946c5ab92745d2b81ee986cfb261d90d0";
+const KWP_INV_CT: &str = "f1a5d99082f974de12c09de3c83aa3534e357fb891f74ced88e5b91e49f8b0f1\
+                          346d64044b95bb55fe2d70c0c93b33b954d7ffd049585d69abe4cbc79138d106\
+                          c8fcc98591fb4efe87edc9e82bfd6424cef1ffab8fc115deaaeb08d8621166e8";
+
+#[test]
+fn aes_kw_inverse_known_answer_both_ways() {
+    let m = module();
+    let key = m.aes_kw_key(&common::unhex(KW_INV_KEY)).unwrap();
+    let (pt, ct) = (common::unhex(KW_INV_PT), common::unhex(KW_INV_CT));
+    let mut wrapped = vec![0u8; pt.len() + 8];
+    m.aes_kw_wrap_inverse(&key, &pt, &mut wrapped).unwrap();
+    assert_eq!(wrapped, ct);
+    let mut unwrapped = vec![0u8; ct.len() - 8];
+    m.aes_kw_unwrap_inverse(&key, &ct, &mut unwrapped).unwrap();
+    assert_eq!(unwrapped, pt);
+}
+
+#[test]
+fn aes_kwp_inverse_known_answer_both_ways() {
+    let m = module();
+    let key = m.aes_kw_key(&common::unhex(KWP_INV_KEY)).unwrap();
+    let (pt, ct) = (common::unhex(KWP_INV_PT), common::unhex(KWP_INV_CT));
+    let mut wrapped = vec![0u8; ct.len()];
+    let n = m.aes_kwp_wrap_inverse(&key, &pt, &mut wrapped).unwrap();
+    assert_eq!(&wrapped[..n], ct.as_slice());
+    let mut unwrapped = vec![0u8; ct.len()];
+    let k = m.aes_kwp_unwrap_inverse(&key, &ct, &mut unwrapped).unwrap();
+    assert_eq!(&unwrapped[..k], pt.as_slice());
+}
+
+/// The inverse-cipher variants round-trip, and differ from the forward
+/// variants under one key.
+#[test]
+fn aes_kw_and_kwp_inverse_round_trip() {
+    let m = module();
+    let key = m.aes_kw_key(&common::unhex(KW_KEK)).unwrap();
+    let pt = common::unhex(KW_PT);
+    let (mut fwd, mut inv) = (vec![0u8; pt.len() + 8], vec![0u8; pt.len() + 8]);
+    m.aes_kw_wrap(&key, &pt, &mut fwd).unwrap();
+    m.aes_kw_wrap_inverse(&key, &pt, &mut inv).unwrap();
+    assert_ne!(fwd, inv);
+    let mut back = vec![0u8; pt.len()];
+    m.aes_kw_unwrap_inverse(&key, &inv, &mut back).unwrap();
+    assert_eq!(back, pt);
+    assert_eq!(
+        m.aes_kw_unwrap_inverse(&key, &fwd, &mut back),
+        Err(Error::TagMismatch)
+    );
+
+    let mut wrapped = [0u8; 48];
+    let n = m
+        .aes_kwp_wrap_inverse(&key, &pt[..20], &mut wrapped)
+        .unwrap();
+    assert_eq!(n, 32);
+    let mut back = [0u8; 32];
+    let k = m
+        .aes_kwp_unwrap_inverse(&key, &wrapped[..n], &mut back)
+        .unwrap();
+    assert_eq!(&back[..k], &pt[..20]);
+}
+
+// SP 800-38B Appendix D.3: AES-256, Mlen = 128 and Mlen = 320 over the
+// SP 800-38A plaintext.
+const CMAC256_TAG_128: &str = "28a7023f452e8f82bd4bf28d8c37c35c";
+const CMAC256_TAG_320: &str = "aaf3d8f1de5640c232f5b169b9c911e6";
+
+#[test]
+fn aes_cmac_known_answers_and_verify() {
+    let m = module();
+    let key = m.aes_cmac_key(&common::unhex(SP38A_KEY256), 16).unwrap();
+    assert_eq!(key.mac_len(), 16);
+    let msg = common::unhex(SP38A_PT);
+    for (len, tag) in [(16, CMAC256_TAG_128), (40, CMAC256_TAG_320)] {
+        let mut mac = [0u8; 16];
+        m.aes_cmac(&key, &msg[..len], &mut mac).unwrap();
+        assert_eq!(mac.as_slice(), common::unhex(tag), "Mlen = {}", len * 8);
+        assert_eq!(m.aes_cmac_verify(&key, &msg[..len], &mac), Ok(()));
+        mac[15] ^= 1;
+        assert_eq!(
+            m.aes_cmac_verify(&key, &msg[..len], &mac),
+            Err(Error::TagMismatch)
+        );
+    }
+    let mut short = [0xAAu8; 8];
+    assert_eq!(
+        m.aes_cmac(&key, &msg, &mut short),
+        Err(Error::LengthMismatch)
+    );
+    assert_eq!(short, [0; 8]);
+    assert_eq!(
+        m.aes_cmac_verify(&key, &msg[..16], &common::unhex(CMAC256_TAG_128)[..8]),
+        Err(Error::InvalidTagLength)
+    );
+    // A truncated MAC is the leading bytes of the full one (SP 800-38B §6.2).
+    let short_key = m.aes_cmac_key(&common::unhex(SP38A_KEY256), 8).unwrap();
+    let mut mac = [0u8; 8];
+    m.aes_cmac(&short_key, &msg[..16], &mut mac).unwrap();
+    assert_eq!(mac.as_slice(), &common::unhex(CMAC256_TAG_128)[..8]);
 }
 
 // ----- the DRBGs under CNSA 2.0 -----

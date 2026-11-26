@@ -76,7 +76,7 @@
 //! or deploy the library where the loader looks: on Windows, the
 //! application's directory. When the library is missing, the loader refuses
 //! to start the program with its own message, before any Rust code runs: on
-//! Linux `error while loading shared libraries: liboxicrypt_ffi.so.2: cannot
+//! Linux `error while loading shared libraries: liboxicrypt_ffi.so.3: cannot
 //! open shared object file`, naming the library's delivered name, exit status
 //! 127; on macOS `dyld: Library not
 //! loaded`; on Windows a dialog or exit status `0xC0000135`
@@ -118,6 +118,11 @@
 //! seed role has its own type ([`MlDsa87KeySeed`], [`MlKem1024KeySeedD`],
 //! [`MlKem1024KeySeedZ`], [`MlKem1024EncapsSeed`]), and each is consumed by
 //! the call that uses it.
+//! AES keys are handles of one mode each ([`AesGcmKey`], [`AesCcmKey`],
+//! [`AesCbcKey`], [`AesCtrKey`], [`AesKwKey`], [`AesCmacKey`]), built from 16,
+//! 24 or 32 key bytes. AES-GCM encryption takes a [`Drbg`], from which the
+//! module draws each 96-bit IV, and returns the IV with the tag in
+//! [`GcmSealed`].
 //! The module's DRBGs are reached through [`Drbg`], which the module seeds
 //! from its own entropy source when [`Drbg::instantiate`] and
 //! [`Drbg::reseed`] are called; [`Module::entropy_on_demand_test`] runs that
@@ -175,6 +180,23 @@
 //! }
 //! ```
 //!
+//! Each AES mode has its own key type, so a key of one mode cannot reach
+//! another mode's call:
+//!
+//! ```compile_fail,E0308
+//! fn crossed(m: oxicrypt::Module, k: &oxicrypt::AesCtrKey, out: &mut [u8]) {
+//!     let _ = m.aes_cbc_encrypt(k, &[0; 16], &[0; 16], out);
+//! }
+//! ```
+//!
+//! while the same call with a key of its own mode compiles:
+//!
+//! ```
+//! fn matched(m: oxicrypt::Module, k: &oxicrypt::AesCbcKey, out: &mut [u8]) {
+//!     let _ = m.aes_cbc_encrypt(k, &[0; 16], &[0; 16], out);
+//! }
+//! ```
+//!
 //! [`Error`], [`Profile`] and [`IntegrityStatus`] are `#[non_exhaustive]`, so
 //! a later release can add a variant without breaking a caller; a `match`
 //! outside this crate needs a wildcard arm:
@@ -215,7 +237,7 @@
 //!         | E::LengthMismatch | E::InvalidNonceLength | E::InvalidTagLength
 //!         | E::InvalidPayloadLength | E::InvalidAadLength | E::IntegrityUnverified
 //!         | E::EntropyInputTooShort | E::NonceTooShort | E::RbgTooWeak | E::Busy
-//!         | E::EntropyUnavailable | E::Internal | E::SignatureInvalid
+//!         | E::EntropyUnavailable | E::KeyExhausted | E::Internal | E::SignatureInvalid
 //!         | E::Unknown(_) | E::LibraryAbi { .. } | E::LibraryVersion { .. }
 //!         | E::ProfileMismatch { .. } | E::KeyFingerprint { .. } => false,
 //!     }
@@ -247,10 +269,40 @@
 //! - `oxi_sha384`
 //! - `oxi_hkdf_sha384_extract`
 //! - `oxi_hkdf_sha384_expand`
-//! - `oxi_aes256_new`
-//! - `oxi_aes256_free`
-//! - `oxi_aes256_gcm_encrypt`
-//! - `oxi_aes256_gcm_decrypt`
+//! - `oxi_aes_gcm_key_new`
+//! - `oxi_aes_gcm_key_new_with_count`
+//! - `oxi_aes_gcm_key_new_with_limit`
+//! - `oxi_aes_gcm_key_invocations`
+//! - `oxi_aes_gcm_key_free`
+//! - `oxi_aes_gcm_seal`
+//! - `oxi_aes_gcm_open`
+//! - `oxi_aes_ccm_key_new`
+//! - `oxi_aes_ccm_key_new_with_count`
+//! - `oxi_aes_ccm_key_invocations`
+//! - `oxi_aes_ccm_key_free`
+//! - `oxi_aes_ccm_seal`
+//! - `oxi_aes_ccm_open`
+//! - `oxi_aes_cbc_key_new`
+//! - `oxi_aes_cbc_key_free`
+//! - `oxi_aes_cbc_encrypt`
+//! - `oxi_aes_cbc_decrypt`
+//! - `oxi_aes_ctr_key_new`
+//! - `oxi_aes_ctr_key_free`
+//! - `oxi_aes_ctr`
+//! - `oxi_aes_kw_key_new`
+//! - `oxi_aes_kw_key_free`
+//! - `oxi_aes_kw_wrap`
+//! - `oxi_aes_kw_unwrap`
+//! - `oxi_aes_kwp_wrap`
+//! - `oxi_aes_kwp_unwrap`
+//! - `oxi_aes_kw_wrap_inverse`
+//! - `oxi_aes_kw_unwrap_inverse`
+//! - `oxi_aes_kwp_wrap_inverse`
+//! - `oxi_aes_kwp_unwrap_inverse`
+//! - `oxi_aes_cmac_key_new`
+//! - `oxi_aes_cmac_key_free`
+//! - `oxi_aes_cmac`
+//! - `oxi_aes_cmac_verify`
 //! - `oxi_hmac_drbg_sha256_new_rbg`
 //! - `oxi_hmac_drbg_sha384_new_rbg`
 //! - `oxi_hmac_drbg_sha512_new_rbg`
@@ -291,7 +343,7 @@
 //!
 //! | crate built against | accepts |
 //! |---|---|
-//! | ABI 2 | a library reporting ABI 2 that exports every function the crate calls; a library without `oxi_abi_version` only at the crate's own release version |
+//! | ABI 3 | a library reporting ABI 3 that exports every function the crate calls; a library without `oxi_abi_version` only at the crate's own release version |
 //!
 //! On Linux the library's `SONAME` is `liboxicrypt_ffi.so.<ABI>` and on macOS
 //! its install name is `@rpath/liboxicrypt_ffi.<ABI>.dylib`: the loader asks
@@ -312,14 +364,16 @@ mod tests;
 
 pub use error::{DetailError, Error, InitError, Site};
 pub use module::{Fingerprint, IntegrityStatus, Module, Profile};
-pub use ops::{Aes256Key, Drbg, DrbgKind};
+pub use ops::{
+    AesCbcKey, AesCcmKey, AesCmacKey, AesCtrKey, AesGcmKey, AesKwKey, Drbg, DrbgKind, GcmSealed,
+};
 pub use secret::{
     HkdfPrk, MlDsa87KeySeed, MlDsa87SecretKey, MlKem1024DecapsulationKey, MlKem1024EncapsSeed,
     MlKem1024KeySeedD, MlKem1024KeySeedZ, Okm, SharedSecret,
 };
 
 /// The ABI number of the C interface this crate was built against.
-pub const OXI_ABI_VERSION: i32 = 2;
+pub const OXI_ABI_VERSION: i32 = 3;
 
 /// SHA-384 digest length.
 pub const SHA384_LEN: usize = 48;
@@ -327,12 +381,11 @@ pub const SHA384_LEN: usize = 48;
 pub const HKDF_SHA384_PRK_LEN: usize = 48;
 /// The longest HKDF-SHA384 output, 255 × 48 bytes (RFC 5869 §2.3).
 pub const HKDF_SHA384_MAX_OKM_LEN: usize = 12_240;
-/// AES-256 key length.
-pub const AES256_KEY_LEN: usize = 32;
-/// AES-256-GCM nonce length.
-pub const AES256_GCM_NONCE_LEN: usize = 12;
-/// AES-256-GCM tag length.
-pub const AES256_GCM_TAG_LEN: usize = 16;
+/// AES-GCM IV length, the 96 bits the module draws for each encryption
+/// (SP 800-38D §8.2.2).
+pub const AES_GCM_IV_LEN: usize = 12;
+/// AES-GCM tag length.
+pub const AES_GCM_TAG_LEN: usize = 16;
 /// The module's bound on the bytes HMAC_DRBG combines in one seeding call:
 /// the size of the buffer `oxicrypt-drbg` assembles them in, far below
 /// SP 800-90A's own limits. The module supplies 48 of them at instantiate,

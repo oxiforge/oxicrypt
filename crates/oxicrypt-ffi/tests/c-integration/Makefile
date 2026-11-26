@@ -61,7 +61,62 @@ TESTS := test_init test_aes_gcm test_aes_modes test_handles \
          test_ml_dsa_44_smoke test_ml_dsa_65_smoke test_ml_dsa_87_smoke \
          test_slh_dsa_sha2_256s_smoke test_slh_dsa_shake_128f_smoke \
          test_lms_sha256_m32_h5_w4_smoke test_lms_shake_m32_h10_w4_smoke \
-         test_lms_verify test_drbg_smoke
+         test_lms_verify test_drbg_smoke \
+         test_kw_fail_writes_nothing test_ccm_decrypt_code_is_22 test_buffer_contract \
+         test_gcm_key_count_ops test_key_handle_kind_checked
+
+# Prints one row=<name> line per oxi_aes_* function it drives and
+# enumerated=<n>; the sorted row names are compared, as a list, with the
+# int-returning oxi_aes_* functions oxicrypt.h declares, in test-cdylib and
+# test-staticlib. A missing, extra or duplicated row, or a header with no
+# such function, fails the run and prints the difference.
+AES_CONTRACT_TEST := test_buffer_contract
+AES_SYMBOL_NAME_PATTERN := '^int oxi_aes_[a-z0-9_]+'
+# Run inside a test loop after $$t passed, with its output in $$out.
+AES_CONTRACT_CHECK = if [ $$t = $(AES_CONTRACT_TEST) ]; then \
+	    cmp_dir=$$(mktemp -d); \
+	    echo "$$out" | sed -n 's/^row=\(oxi_aes_[a-z0-9_]*\)$$/\1/p' | sort > "$$cmp_dir/got"; \
+	    grep -oE $(AES_SYMBOL_NAME_PATTERN) $(INCLUDE_DIR)/oxicrypt.h | sed 's/^int //' | sort > "$$cmp_dir/want"; \
+	    if [ ! -s "$$cmp_dir/want" ]; then \
+	      echo "FAILED: $$t: oxicrypt.h declares no int oxi_aes_* function"; \
+	      failed=$$((failed + 1)); \
+	    elif ! cmp -s "$$cmp_dir/got" "$$cmp_dir/want"; then \
+	      echo "FAILED: $$t: its rows differ from the oxi_aes_* functions in oxicrypt.h (< rows, > header):"; \
+	      diff "$$cmp_dir/got" "$$cmp_dir/want" | grep '^[<>]'; \
+	      failed=$$((failed + 1)); \
+	    else \
+	      echo "$$t: $$(wc -l < "$$cmp_dir/want") rows match the oxi_aes_* functions oxicrypt.h declares"; \
+	    fi; \
+	    rm -f "$$cmp_dir/got" "$$cmp_dir/want"; \
+	    rmdir "$$cmp_dir"; \
+	  fi
+
+# Prints one kind_row=<name> line per oxi_aes_* function it drives with a
+# key handle of another mode; the sorted row names are compared, as a list,
+# with the oxi_aes_* functions oxicrypt.h declares whose first parameter is
+# a key handle, in test-cdylib and test-staticlib. A missing, extra or
+# duplicated row, or a header with no such function, fails the run and
+# prints the difference.
+AES_KIND_TEST := test_key_handle_kind_checked
+AES_KEY_TAKING_PATTERN := '^(int|void) oxi_aes_[a-z0-9_]+\((const )?OxiAes[A-Za-z]+Key \*'
+# Run inside a test loop after $$t passed, with its output in $$out.
+AES_KIND_CHECK = if [ $$t = $(AES_KIND_TEST) ]; then \
+	    cmp_dir=$$(mktemp -d); \
+	    echo "$$out" | sed -n 's/^kind_row=\(oxi_aes_[a-z0-9_]*\)$$/\1/p' | sort > "$$cmp_dir/got"; \
+	    grep -oE $(AES_KEY_TAKING_PATTERN) $(INCLUDE_DIR)/oxicrypt.h | sed -E 's/^(int|void) //; s/\(.*//' | sort > "$$cmp_dir/want"; \
+	    if [ ! -s "$$cmp_dir/want" ]; then \
+	      echo "FAILED: $$t: oxicrypt.h declares no oxi_aes_* function taking a key handle"; \
+	      failed=$$((failed + 1)); \
+	    elif ! cmp -s "$$cmp_dir/got" "$$cmp_dir/want"; then \
+	      echo "FAILED: $$t: its rows differ from the key-taking oxi_aes_* functions in oxicrypt.h (< rows, > header):"; \
+	      diff "$$cmp_dir/got" "$$cmp_dir/want" | grep '^[<>]'; \
+	      failed=$$((failed + 1)); \
+	    else \
+	      echo "$$t: $$(wc -l < "$$cmp_dir/want") rows match the key-taking oxi_aes_* functions oxicrypt.h declares"; \
+	    fi; \
+	    rm -f "$$cmp_dir/got" "$$cmp_dir/want"; \
+	    rmdir "$$cmp_dir"; \
+	  fi
 
 # Passes only against an artifact that was NOT signed.
 REFUSAL_TEST := test_integrity_unsigned
@@ -115,11 +170,17 @@ help:
 all: test-cdylib test-staticlib test-unsigned test-fault
 
 # Runs every test even after a failure, so one run reports all of them.
+# Both link modes also fail when the AES contract test's row names differ
+# from the int-returning oxi_aes_* functions oxicrypt.h declares.
 test-cdylib: $(addprefix $(OUT_DIR)/cdylib/,$(TESTS)) $(SIGNED_SO)
 	@failed=0; \
 	for t in $(TESTS); do \
 	  echo "Running $$t (cdylib, signed)..."; \
-	  LD_LIBRARY_PATH=$(dir $(SIGNED_SO)) $(OUT_DIR)/cdylib/$$t || { echo "FAILED: $$t"; failed=$$((failed + 1)); }; \
+	  out=$$(LD_LIBRARY_PATH=$(dir $(SIGNED_SO)) $(OUT_DIR)/cdylib/$$t); rc=$$?; \
+	  [ -n "$$out" ] && echo "$$out"; \
+	  if [ $$rc -ne 0 ]; then echo "FAILED: $$t (exit $$rc)"; failed=$$((failed + 1)); continue; fi; \
+	  $(AES_CONTRACT_CHECK); \
+	  $(AES_KIND_CHECK); \
 	done; \
 	echo "cdylib: $$(( $(words $(TESTS)) - failed )) passed, $$failed failed"; \
 	[ $$failed -eq 0 ]
@@ -128,7 +189,11 @@ test-staticlib: $(STATICLIB_BINS)
 	@failed=0; \
 	for t in $(TESTS); do \
 	  echo "Running $$t (staticlib, signed)..."; \
-	  $(OUT_DIR)/staticlib/$$t || { echo "FAILED: $$t"; failed=$$((failed + 1)); }; \
+	  out=$$($(OUT_DIR)/staticlib/$$t); rc=$$?; \
+	  [ -n "$$out" ] && echo "$$out"; \
+	  if [ $$rc -ne 0 ]; then echo "FAILED: $$t (exit $$rc)"; failed=$$((failed + 1)); continue; fi; \
+	  $(AES_CONTRACT_CHECK); \
+	  $(AES_KIND_CHECK); \
 	done; \
 	echo "staticlib: $$(( $(words $(TESTS)) - failed )) passed, $$failed failed"; \
 	[ $$failed -eq 0 ]

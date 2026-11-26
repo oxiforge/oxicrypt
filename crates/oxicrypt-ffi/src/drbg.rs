@@ -79,9 +79,8 @@
 //!
 //! # Handle lifecycle invariant
 //!
-//! `OxiHmacDrbgSha256` follows the same opaque-handle pattern as
-//! `OxiAes256Key` (see `aes.rs`). The internal state lives on the
-//! heap; the caller holds a `*mut OxiHmacDrbgSha256` and MUST pair
+//! `OxiHmacDrbgSha256` is an opaque handle. The internal state lives on
+//! the heap; the caller holds a `*mut OxiHmacDrbgSha256` and MUST pair
 //! every `_new` with a `_free`.
 
 use crate::error::{OxiResult as R, status_module};

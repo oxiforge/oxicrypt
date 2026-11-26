@@ -7,10 +7,11 @@
 //!
 //! A `let` that starts its line is counted when its declared type is
 //! `[u8; N]`, or its initialiser contains a `u8` array literal such as
-//! `[0u8; N]`, starts with `self.v`, `self.key` or `*`, or contains
-//! `.finalize(` or `SeedDraw::new(`. A counted initialiser must start with
-//! `Zeroizing::new(`, `oxicrypt_zeroize::Zeroizing::new(` or
-//! `SeedDraw::new(`, the seed-draw type that wraps `Zeroizing`. Two further
+//! `[0u8; N]`, starts with `self.v`, `self.key`, `*` or `Wiped::<`, or
+//! contains `.finalize(` or `SeedDraw::new(`. A counted initialiser must
+//! start with `Zeroizing::new(`, `oxicrypt_zeroize::Zeroizing::new(`,
+//! `SeedDraw::new(`, the seed-draw type that wraps `Zeroizing`, or
+//! `Wiped::<`, the generate temporary that wipes on drop. Two further
 //! checks cover the source as a whole: no function returns `-> [u8;`, and
 //! no `Zeroizing::new(self.` copies a state field.
 //!
@@ -24,6 +25,7 @@ const WRAPPED: &[&str] = &[
     "Zeroizing::new(",
     "oxicrypt_zeroize::Zeroizing::new(",
     "SeedDraw::new(",
+    "Wiped::<",
 ];
 
 /// Declarations of public byte arrays, exempt in one file only, by their
@@ -39,7 +41,7 @@ const PUBLIC: &[(&str, &str, &str)] = &[
     (
         "src/hmac.rs",
         "let sep1 = [0x01u8];",
-        "let mut v_slice2 = oxicrypt_zeroize::Zeroizing::new([0u8; MAX_OUTLEN]);",
+        "let mut v_slice2 = Wiped::<MAX_OUTLEN>::new(WipedBuffer::HmacUpdateV);",
     ),
     (
         "src/ctr.rs",
@@ -109,6 +111,7 @@ fn is_counted(text: &str) -> bool {
         || init.starts_with("self.v")
         || init.starts_with("self.key")
         || init.starts_with('*')
+        || init.starts_with("Wiped::<")
         || init.contains(".finalize(")
         || init.contains("SeedDraw::new(")
 }

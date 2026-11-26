@@ -64,20 +64,28 @@ fn init_module(profile: oxicrypt::Profile) -> Option<oxicrypt::Module> {
 }
 
 /// After a successful initialisation: the live operational state, then an
-/// AES-256-GCM encryption into a buffer filled with 0xAA, and what the buffer
-/// holds after it.
+/// AES-256-GCM encryption under an HMAC_DRBG-SHA-512 into a buffer filled
+/// with 0xAA, and what the buffer holds after it.
 #[cfg(any(oxicrypt_pinned, oxicrypt_unpinned))]
 fn services(profile: oxicrypt::Profile) -> bool {
     let Some(module) = init_module(profile) else {
         return false;
     };
     println!("is_operational: {}", module.is_operational());
-    let Ok(key) = module.aes256_key(&[7; 32]) else {
-        println!("aes256_key: failed");
+    let Ok(key) = module.aes_gcm_key(&[7; 32]) else {
+        println!("aes_gcm_key: failed");
         return false;
     };
+    let Ok(mut drbg) = module.drbg(oxicrypt::DrbgKind::HmacSha512) else {
+        println!("drbg: failed");
+        return false;
+    };
+    if drbg.instantiate(b"probe").is_err() {
+        println!("drbg instantiate: failed");
+        return false;
+    }
     let mut out = [0xAAu8; 16];
-    let result = module.aes256_gcm_encrypt(&key, &[1; 12], b"", &[2; 16], &mut out);
+    let result = module.aes_gcm_seal(&key, &mut drbg, b"", &[2; 16], &mut out);
     let held = if out.iter().all(|b| *b == 0) {
         "zeroed"
     } else if out.iter().all(|b| *b == 0xAA) {

@@ -22,9 +22,7 @@
 //! `accel-aes` feature (default OFF) dispatches the single-block
 //! boundary to `oxicrypt-aes-accel` — AES-NI, runtime-detected via
 //! CPUID, fail-portable — whose rounds run in hardware with no table
-//! lookups. Bitsliced
-//! hardening of the portable path remains Phase 4 work per the
-//! project plan.
+//! lookups.
 
 #![allow(
     clippy::indexing_slicing,
@@ -35,10 +33,36 @@
     clippy::many_single_char_names
 )]
 
+use core::mem::MaybeUninit;
+
 use oxicrypt_module::{
     Error, SelfTestStarted, Service, require_allowed, require_operational,
     require_self_test_started, require_self_test_started_token,
 };
+
+use crate::wipe::{WipedBuffer, wipe};
+
+/// The ECB services, indexed AES-128, AES-192, AES-256.
+pub(crate) const ECB_SERVICES: [Service; 3] =
+    [Service::Aes128Ecb, Service::Aes192Ecb, Service::Aes256Ecb];
+/// The CBC services, indexed AES-128, AES-192, AES-256.
+pub(crate) const CBC_SERVICES: [Service; 3] =
+    [Service::Aes128Cbc, Service::Aes192Cbc, Service::Aes256Cbc];
+/// The CTR services, indexed AES-128, AES-192, AES-256.
+pub(crate) const CTR_SERVICES: [Service; 3] =
+    [Service::Aes128Ctr, Service::Aes192Ctr, Service::Aes256Ctr];
+/// The GCM services, indexed AES-128, AES-192, AES-256.
+pub(crate) const GCM_SERVICES: [Service; 3] =
+    [Service::Aes128Gcm, Service::Aes192Gcm, Service::Aes256Gcm];
+/// The CCM services, indexed AES-128, AES-192, AES-256.
+pub(crate) const CCM_SERVICES: [Service; 3] =
+    [Service::Aes128Ccm, Service::Aes192Ccm, Service::Aes256Ccm];
+/// The KW services, indexed AES-128, AES-192, AES-256.
+pub(crate) const KW_SERVICES: [Service; 3] =
+    [Service::Aes128Kw, Service::Aes192Kw, Service::Aes256Kw];
+/// The KWP services, indexed AES-128, AES-192, AES-256.
+pub(crate) const KWP_SERVICES: [Service; 3] =
+    [Service::Aes128Kwp, Service::Aes192Kwp, Service::Aes256Kwp];
 
 /// AES block size in bytes. Rijndael allows other sizes; AES fixes
 /// `Nb = 4` (128-bit block).
@@ -92,32 +116,30 @@ const RCON: [u8; 11] = [
 ];
 
 /// Multiply `a` by `b` in GF(2^8) with the AES reduction polynomial
-/// `0x11b`. Small enough to be OK here since only used for MixColumns
-/// constant 2/3/9/11/13/14 multiplications.
+/// `0x11b` (FIPS 197 §4.2), for the MixColumns and InvMixColumns
+/// constants.
+///
+/// `a` is a byte of the cipher state, so the XOR of `x` into the product
+/// and the reduction of `xtime` on the high bit of `x` are applied under
+/// masks of all ones or all zeros, so that no branch depends on the
+/// state byte.
 #[inline]
-const fn gmul(a: u8, b: u8) -> u8 {
+fn gmul(a: u8, b: u8) -> u8 {
     let mut r: u8 = 0;
     let mut x = a;
     let mut y = b;
     let mut i = 0;
     while i < 8 {
-        if y & 1 != 0 {
-            r ^= x;
-        }
-        let hi = x & 0x80;
-        x = x.wrapping_shl(1);
-        if hi != 0 {
-            x ^= 0x1b;
-        }
+        r ^= x & 0u8.wrapping_sub(y & 1);
+        let reduce = core::hint::black_box(0u8.wrapping_sub(x >> 7));
+        x = x.wrapping_shl(1) ^ (0x1b & reduce);
         y >>= 1;
         i += 1;
     }
     r
 }
 
-// ----------------------------------------------------------------------
-// Round primitives (FIPS 197 §5.1)
-// ----------------------------------------------------------------------
+// Round primitives, FIPS 197 §5.1.
 
 #[inline]
 fn sub_bytes(state: &mut [u8; 16]) {
@@ -205,6 +227,44 @@ fn inv_mix_columns(s: &mut [u8; 16]) {
     }
 }
 
+/// MixColumns (FIPS 197 §5.1.3) of `state`, for the constant-time
+/// harness.
+///
+/// Not a service of the module: it is reachable only so that the timing
+/// of the round step can be measured directly, and it is hidden from the
+/// documented API.
+///
+/// # Errors
+///
+/// Returns [`Error::NotOperational`] unless [`require_self_test_started`]
+/// admits the call: in `Operational`, or in `SelfTest` on the thread
+/// running the power-up self-tests.
+#[doc(hidden)]
+pub fn mix_columns_internal(state: &mut [u8; 16]) -> Result<(), Error> {
+    require_self_test_started()?;
+    mix_columns(state);
+    Ok(())
+}
+
+/// InvMixColumns (FIPS 197 §5.3.3) of `state`, for the constant-time
+/// harness.
+///
+/// Not a service of the module: it is reachable only so that the timing
+/// of the round step can be measured directly, and it is hidden from the
+/// documented API.
+///
+/// # Errors
+///
+/// Returns [`Error::NotOperational`] unless [`require_self_test_started`]
+/// admits the call: in `Operational`, or in `SelfTest` on the thread
+/// running the power-up self-tests.
+#[doc(hidden)]
+pub fn inv_mix_columns_internal(state: &mut [u8; 16]) -> Result<(), Error> {
+    require_self_test_started()?;
+    inv_mix_columns(state);
+    Ok(())
+}
+
 #[inline]
 fn add_round_key(state: &mut [u8; 16], rk: &[u8; 16]) {
     for i in 0..16 {
@@ -212,33 +272,24 @@ fn add_round_key(state: &mut [u8; 16], rk: &[u8; 16]) {
     }
 }
 
-// ----------------------------------------------------------------------
-// Key schedule (FIPS 197 §5.2)
-// ----------------------------------------------------------------------
+// Key expansion, FIPS 197 §5.2.
 
 /// Expand a key of `Nk` 32-bit words (`key`) into `(Nr+1)` round
 /// keys of 16 bytes each, written into `out`. `out.len()` must equal
 /// `16 * (nr + 1)`.
 fn expand_key(key: &[u8], nk: usize, nr: usize, out: &mut [u8]) {
-    // Total bytes in expanded key: 4 * Nb * (Nr+1) = 16 * (Nr+1).
     let total_words = 4 * (nr + 1);
-    // Copy the original key as the first Nk words.
     let key_bytes = 4 * nk;
     out[..key_bytes].copy_from_slice(&key[..key_bytes]);
 
     let mut i = nk;
     while i < total_words {
-        // Grab word i-1.
         let off = (i - 1) * 4;
         let mut t = [out[off], out[off + 1], out[off + 2], out[off + 3]];
 
         if i % nk == 0 {
             // RotWord
-            let t0 = t[0];
-            t[0] = t[1];
-            t[1] = t[2];
-            t[2] = t[3];
-            t[3] = t0;
+            t.rotate_left(1);
             // SubWord
             t[0] = SBOX[t[0] as usize];
             t[1] = SBOX[t[1] as usize];
@@ -260,30 +311,272 @@ fn expand_key(key: &[u8], nk: usize, nr: usize, out: &mut [u8]) {
         out[cur + 1] = out[prev + 1] ^ t[1];
         out[cur + 2] = out[prev + 2] ^ t[2];
         out[cur + 3] = out[prev + 3] ^ t[3];
+        wipe(WipedBuffer::KeyExpansionWord, &mut t);
         i += 1;
     }
 }
 
-// ----------------------------------------------------------------------
-// Public typed keys
-// ----------------------------------------------------------------------
-
 /// AES-128 expanded key (11 round keys * 16 bytes).
-#[derive(Clone)]
-pub struct Aes128Key {
+pub(crate) struct Aes128Key {
     rk: [u8; 16 * 11],
 }
 
 /// AES-192 expanded key (13 round keys * 16 bytes).
-#[derive(Clone)]
-pub struct Aes192Key {
+pub(crate) struct Aes192Key {
     rk: [u8; 16 * 13],
 }
 
 /// AES-256 expanded key (15 round keys * 16 bytes).
-#[derive(Clone)]
-pub struct Aes256Key {
+pub(crate) struct Aes256Key {
     rk: [u8; 16 * 15],
+}
+
+/// The round-key schedule of one AES key, at one of the three approved
+/// key sizes. Every mode-bound key type holds one.
+pub(crate) enum KeySchedule {
+    Aes128(Aes128Key),
+    Aes192(Aes192Key),
+    Aes256(Aes256Key),
+}
+
+impl KeySchedule {
+    /// An all-zero schedule for a key of `len` bytes, which
+    /// [`Self::expand`] then fills where it lies.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::InvalidInput`] unless `len` is 16, 24 or 32.
+    pub(crate) const fn zeroed(len: usize) -> Result<Self, Error> {
+        match len {
+            16 => Ok(Self::Aes128(Aes128Key { rk: [0u8; 16 * 11] })),
+            24 => Ok(Self::Aes192(Aes192Key { rk: [0u8; 16 * 13] })),
+            32 => Ok(Self::Aes256(Aes256Key { rk: [0u8; 16 * 15] })),
+            _ => Err(Error::InvalidInput),
+        }
+    }
+
+    /// The gates of an approved service, followed by [`Self::zeroed`]:
+    /// [`require_operational`], the key length, then [`require_allowed`]
+    /// for the entry of `services` that matches the key size.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::NotOperational`] unless the module is
+    /// `Operational`, [`Error::InvalidInput`] unless `len` is 16, 24 or
+    /// 32, and [`Error::AlgorithmRestricted`] when the active profile does
+    /// not permit the service.
+    pub(crate) fn admit(len: usize, services: [Service; 3]) -> Result<Self, Error> {
+        require_operational()?;
+        let schedule = Self::zeroed(len)?;
+        require_allowed(schedule.service(services))?;
+        Ok(schedule)
+    }
+
+    /// Expands `key` into this schedule in place (FIPS 197 §5.2).
+    ///
+    /// `key` has the length the schedule was made for by [`Self::zeroed`].
+    pub(crate) fn expand(&mut self, key: &[u8]) {
+        match self {
+            Self::Aes128(k) => expand_key(key, 4, 10, &mut k.rk),
+            Self::Aes192(k) => expand_key(key, 6, 12, &mut k.rk),
+            Self::Aes256(k) => expand_key(key, 8, 14, &mut k.rk),
+        }
+    }
+
+    /// The entry of `services` (ordered AES-128, AES-192, AES-256) for
+    /// this key's size.
+    pub(crate) const fn service(&self, services: [Service; 3]) -> Service {
+        match self {
+            Self::Aes128(_) => services[0],
+            Self::Aes192(_) => services[1],
+            Self::Aes256(_) => services[2],
+        }
+    }
+
+    /// The expanded round keys and the round count `Nr`.
+    pub(crate) fn round_keys(&self) -> (&[u8], usize) {
+        match self {
+            Self::Aes128(k) => (&k.rk, 10),
+            Self::Aes192(k) => (&k.rk, 12),
+            Self::Aes256(k) => (&k.rk, 14),
+        }
+    }
+
+    /// Encrypts a single 16-byte block in place.
+    ///
+    /// The module state is checked again on every call, so a proof
+    /// obtained before the module entered the error state drives no
+    /// further blocks.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::NotOperational`] unless
+    /// [`require_self_test_started`] admits the call: in `Operational`, or
+    /// in `SelfTest` on the thread running the power-up self-tests.
+    pub(crate) fn encrypt_block_with(
+        &self,
+        _started: &SelfTestStarted,
+        block: &mut [u8; 16],
+    ) -> Result<(), Error> {
+        require_self_test_started()?;
+        let (rk, nr) = self.round_keys();
+        #[cfg(feature = "accel-aes")]
+        if oxicrypt_aes_accel::encrypt_block(rk, nr, block) {
+            return Ok(());
+        }
+        encrypt_block_generic(block, rk, nr);
+        Ok(())
+    }
+
+    /// Decrypts a single 16-byte block in place, with the state check of
+    /// [`Self::encrypt_block_with`].
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::NotOperational`] unless
+    /// [`require_self_test_started`] admits the call.
+    pub(crate) fn decrypt_block_with(
+        &self,
+        _started: &SelfTestStarted,
+        block: &mut [u8; 16],
+    ) -> Result<(), Error> {
+        require_self_test_started()?;
+        let (rk, nr) = self.round_keys();
+        #[cfg(feature = "accel-aes")]
+        if oxicrypt_aes_accel::decrypt_block(rk, nr, block) {
+            return Ok(());
+        }
+        decrypt_block_generic(block, rk, nr);
+        Ok(())
+    }
+}
+
+/// An AES key for the raw block cipher (FIPS 197), with no mode.
+///
+/// This is the block cipher the power-up self-tests, CTR_DRBG and CMAC
+/// run on, and the key of [`crate::ecb_encrypt`] and
+/// [`crate::ecb_decrypt`]. Its constructor is a non-service interface: it
+/// applies no algorithm-profile gate and admits the self-test state.
+///
+/// ```compile_fail,E0599
+/// let k = oxicrypt_aes::EcbKey::new(&[0u8; 16]).unwrap();
+/// let k2 = k.clone();
+/// ```
+#[doc(hidden)]
+pub struct EcbKey {
+    pub(crate) schedule: KeySchedule,
+}
+
+impl EcbKey {
+    /// Builds the key schedule of a 16-, 24- or 32-byte AES key.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::NotOperational`] unless [`require_self_test_started`]
+    /// admits the call: in `Operational`, or in `SelfTest` on the thread
+    /// running the power-up self-tests. Returns [`Error::InvalidInput`]
+    /// unless `key` is 16, 24 or 32 bytes.
+    ///
+    /// The key is returned by value; a copy of the schedule that the move
+    /// leaves behind is not zeroized.
+    #[doc(hidden)]
+    pub fn new(key: &[u8]) -> Result<Self, Error> {
+        require_self_test_started()?;
+        let mut k = Self {
+            schedule: KeySchedule::zeroed(key.len())?,
+        };
+        k.schedule.expand(key);
+        Ok(k)
+    }
+
+    /// Builds the key as [`Self::new`] does, in `slot`, and returns a
+    /// reference to it there: the schedule is expanded where the key will
+    /// stay, so the key is never moved.
+    ///
+    /// `slot` is treated as uninitialised; a value already in it is
+    /// overwritten without being dropped. On success the caller owns the
+    /// initialised value and must run its destructor in place, which
+    /// zeroizes the schedule. A `MaybeUninit` runs no destructor of its
+    /// own, so the caller embeds the slot in a type whose `Drop` runs the
+    /// value's, as the C key handle does, or calls
+    /// `MaybeUninit::assume_init_drop`; a slot left without its destructor
+    /// run leaves the schedule unwiped. On an error `slot` has not been
+    /// written.
+    ///
+    /// # Errors
+    ///
+    /// The errors of [`Self::new`].
+    #[doc(hidden)]
+    pub fn new_in_place<'a>(
+        slot: &'a mut MaybeUninit<Self>,
+        key: &[u8],
+    ) -> Result<&'a mut Self, Error> {
+        require_self_test_started()?;
+        let k = slot.write(Self {
+            schedule: KeySchedule::zeroed(key.len())?,
+        });
+        k.schedule.expand(key);
+        Ok(k)
+    }
+
+    /// An all-zero schedule for a key of `len` bytes, which
+    /// [`Self::expand_in_place`] then fills where it lies, so that a key
+    /// held inside another value is expanded without being moved there.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::InvalidInput`] unless `len` is 16, 24 or 32.
+    #[doc(hidden)]
+    pub fn zeroed(len: usize) -> Result<Self, Error> {
+        Ok(Self {
+            schedule: KeySchedule::zeroed(len)?,
+        })
+    }
+
+    /// Expands `key` into this schedule in place (FIPS 197 §5.2).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::NotOperational`] unless [`require_self_test_started`]
+    /// admits the call: in `Operational`, or in `SelfTest` on the thread
+    /// running the power-up self-tests. Returns [`Error::InvalidInput`]
+    /// unless `key` has the length [`Self::zeroed`] was given.
+    #[doc(hidden)]
+    pub fn expand_in_place(&mut self, key: &[u8]) -> Result<(), Error> {
+        require_self_test_started()?;
+        if !matches!(
+            (&self.schedule, key.len()),
+            (KeySchedule::Aes128(_), 16)
+                | (KeySchedule::Aes192(_), 24)
+                | (KeySchedule::Aes256(_), 32)
+        ) {
+            return Err(Error::InvalidInput);
+        }
+        self.schedule.expand(key);
+        Ok(())
+    }
+
+    /// Encrypts a single 16-byte block in place (ECB on one block).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::NotOperational`] unless [`require_self_test_started`]
+    /// admits the call.
+    pub(crate) fn encrypt_block(&self, block: &mut [u8; 16]) -> Result<(), Error> {
+        let started = require_self_test_started_token()?;
+        self.schedule.encrypt_block_with(&started, block)
+    }
+
+    /// Decrypts a single 16-byte block in place (ECB on one block).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::NotOperational`] unless [`require_self_test_started`]
+    /// admits the call.
+    pub(crate) fn decrypt_block(&self, block: &mut [u8; 16]) -> Result<(), Error> {
+        let started = require_self_test_started_token()?;
+        self.schedule.decrypt_block_with(&started, block)
+    }
 }
 
 /// Encrypt a single 16-byte AES block under `rk` (pre-expanded round
@@ -333,248 +626,50 @@ fn round_key(rk: &[u8], round: usize) -> &[u8; 16] {
     }
 }
 
-impl Aes128Key {
-    /// Construct from a 16-byte key, enforcing the module boundary
-    /// and algorithm-profile restriction.
-    ///
-    /// Returns [`Error::NotOperational`] if the module has not
-    /// completed its power-up self-tests, or
-    /// [`Error::AlgorithmRestricted`] if the active profile does not
-    /// permit AES-128.
-    pub fn new(key: &[u8; 16]) -> Result<Self, Error> {
-        require_operational()?;
-        require_allowed(Service::Aes128)?;
-        Self::new_internal(key)
-    }
-    /// Constructor without the operational and profile gates.
-    ///
-    /// Returns [`Error::NotOperational`] unless [`require_self_test_started`]
-    /// admits the call: in `Operational`, or in `SelfTest` on the thread
-    /// running the power-up self-tests.
-    ///
-    /// Used by power-up KATs and downstream crates (CMAC, CTR_DRBG)
-    /// that run during `SelfTest`.
-    #[doc(hidden)]
-    pub fn new_internal(key: &[u8; 16]) -> Result<Self, Error> {
-        require_self_test_started()?;
-        let mut rk = [0u8; 16 * 11];
-        expand_key(key, 4, 10, &mut rk);
-        Ok(Self { rk })
-    }
-    /// Encrypt a single 16-byte block in place (ECB on one block).
-    ///
-    /// # Errors
-    ///
-    /// Returns [`Error::NotOperational`] unless
-    /// [`oxicrypt_module::require_self_test_started`] admits the call (in
-    /// `Operational`, or in `SelfTest` on the thread running the power-up
-    /// self-tests), so a key built before a failure produces no output after it.
-    pub fn encrypt_block(&self, block: &mut [u8; 16]) -> Result<(), Error> {
-        let started = require_self_test_started_token()?;
-        self.encrypt_block_with(&started, block);
-        Ok(())
-    }
-    /// [`Self::encrypt_block`] for a mode function or another algorithm
-    /// crate that checked the module state once at its own entry point
-    /// and holds the proof.
-    #[doc(hidden)]
-    pub fn encrypt_block_with(&self, _started: &SelfTestStarted, block: &mut [u8; 16]) {
-        #[cfg(feature = "accel-aes")]
-        if oxicrypt_aes_accel::encrypt_block(&self.rk, 10, block) {
-            return;
-        }
-        encrypt_block_generic(block, &self.rk, 10);
-    }
-    /// Decrypt a single 16-byte block in place (ECB on one block).
-    ///
-    /// # Errors
-    ///
-    /// Returns [`Error::NotOperational`] unless
-    /// [`oxicrypt_module::require_self_test_started`] admits the call (in
-    /// `Operational`, or in `SelfTest` on the thread running the power-up
-    /// self-tests), so a key built before a failure produces no output after it.
-    pub fn decrypt_block(&self, block: &mut [u8; 16]) -> Result<(), Error> {
-        let started = require_self_test_started_token()?;
-        self.decrypt_block_with(&started, block);
-        Ok(())
-    }
-    /// [`Self::decrypt_block`] for a mode function or another algorithm
-    /// crate that checked the module state once at its own entry point
-    /// and holds the proof.
-    #[doc(hidden)]
-    pub fn decrypt_block_with(&self, _started: &SelfTestStarted, block: &mut [u8; 16]) {
-        #[cfg(feature = "accel-aes")]
-        if oxicrypt_aes_accel::decrypt_block(&self.rk, 10, block) {
-            return;
-        }
-        decrypt_block_generic(block, &self.rk, 10);
-    }
-}
-
 impl Drop for Aes128Key {
     fn drop(&mut self) {
-        oxicrypt_zeroize::zeroize(&mut self.rk);
-    }
-}
-
-impl Aes192Key {
-    /// Construct from a 24-byte key, enforcing the module boundary
-    /// and algorithm-profile restriction.
-    pub fn new(key: &[u8; 24]) -> Result<Self, Error> {
-        require_operational()?;
-        require_allowed(Service::Aes192)?;
-        Self::new_internal(key)
-    }
-    /// Constructor without the operational and profile gates.
-    ///
-    /// Returns [`Error::NotOperational`] unless [`require_self_test_started`]
-    /// admits the call: in `Operational`, or in `SelfTest` on the thread
-    /// running the power-up self-tests.
-    #[doc(hidden)]
-    pub fn new_internal(key: &[u8; 24]) -> Result<Self, Error> {
-        require_self_test_started()?;
-        let mut rk = [0u8; 16 * 13];
-        expand_key(key, 6, 12, &mut rk);
-        Ok(Self { rk })
-    }
-    /// Encrypt a single 16-byte block in place (ECB on one block).
-    ///
-    /// # Errors
-    ///
-    /// Returns [`Error::NotOperational`] unless
-    /// [`oxicrypt_module::require_self_test_started`] admits the call (in
-    /// `Operational`, or in `SelfTest` on the thread running the power-up
-    /// self-tests), so a key built before a failure produces no output after it.
-    pub fn encrypt_block(&self, block: &mut [u8; 16]) -> Result<(), Error> {
-        let started = require_self_test_started_token()?;
-        self.encrypt_block_with(&started, block);
-        Ok(())
-    }
-    /// [`Self::encrypt_block`] for a mode function or another algorithm
-    /// crate that checked the module state once at its own entry point
-    /// and holds the proof.
-    #[doc(hidden)]
-    pub fn encrypt_block_with(&self, _started: &SelfTestStarted, block: &mut [u8; 16]) {
-        #[cfg(feature = "accel-aes")]
-        if oxicrypt_aes_accel::encrypt_block(&self.rk, 12, block) {
-            return;
-        }
-        encrypt_block_generic(block, &self.rk, 12);
-    }
-    /// Decrypt a single 16-byte block in place (ECB on one block).
-    ///
-    /// # Errors
-    ///
-    /// Returns [`Error::NotOperational`] unless
-    /// [`oxicrypt_module::require_self_test_started`] admits the call (in
-    /// `Operational`, or in `SelfTest` on the thread running the power-up
-    /// self-tests), so a key built before a failure produces no output after it.
-    pub fn decrypt_block(&self, block: &mut [u8; 16]) -> Result<(), Error> {
-        let started = require_self_test_started_token()?;
-        self.decrypt_block_with(&started, block);
-        Ok(())
-    }
-    /// [`Self::decrypt_block`] for a mode function or another algorithm
-    /// crate that checked the module state once at its own entry point
-    /// and holds the proof.
-    #[doc(hidden)]
-    pub fn decrypt_block_with(&self, _started: &SelfTestStarted, block: &mut [u8; 16]) {
-        #[cfg(feature = "accel-aes")]
-        if oxicrypt_aes_accel::decrypt_block(&self.rk, 12, block) {
-            return;
-        }
-        decrypt_block_generic(block, &self.rk, 12);
+        wipe(WipedBuffer::RoundKeys, &mut self.rk);
     }
 }
 
 impl Drop for Aes192Key {
     fn drop(&mut self) {
-        oxicrypt_zeroize::zeroize(&mut self.rk);
-    }
-}
-
-impl Aes256Key {
-    /// Construct from a 32-byte key, enforcing the module boundary
-    /// and algorithm-profile restriction.
-    pub fn new(key: &[u8; 32]) -> Result<Self, Error> {
-        require_operational()?;
-        require_allowed(Service::Aes256)?;
-        Self::new_internal(key)
-    }
-    /// Constructor without the operational and profile gates.
-    ///
-    /// Returns [`Error::NotOperational`] unless [`require_self_test_started`]
-    /// admits the call: in `Operational`, or in `SelfTest` on the thread
-    /// running the power-up self-tests.
-    #[doc(hidden)]
-    pub fn new_internal(key: &[u8; 32]) -> Result<Self, Error> {
-        require_self_test_started()?;
-        let mut rk = [0u8; 16 * 15];
-        expand_key(key, 8, 14, &mut rk);
-        Ok(Self { rk })
-    }
-    /// Encrypt a single 16-byte block in place (ECB on one block).
-    ///
-    /// # Errors
-    ///
-    /// Returns [`Error::NotOperational`] unless
-    /// [`oxicrypt_module::require_self_test_started`] admits the call (in
-    /// `Operational`, or in `SelfTest` on the thread running the power-up
-    /// self-tests), so a key built before a failure produces no output after it.
-    pub fn encrypt_block(&self, block: &mut [u8; 16]) -> Result<(), Error> {
-        let started = require_self_test_started_token()?;
-        self.encrypt_block_with(&started, block);
-        Ok(())
-    }
-    /// [`Self::encrypt_block`] for a mode function or another algorithm
-    /// crate that checked the module state once at its own entry point
-    /// and holds the proof.
-    #[doc(hidden)]
-    pub fn encrypt_block_with(&self, _started: &SelfTestStarted, block: &mut [u8; 16]) {
-        #[cfg(feature = "accel-aes")]
-        if oxicrypt_aes_accel::encrypt_block(&self.rk, 14, block) {
-            return;
-        }
-        encrypt_block_generic(block, &self.rk, 14);
-    }
-    /// Decrypt a single 16-byte block in place (ECB on one block).
-    ///
-    /// # Errors
-    ///
-    /// Returns [`Error::NotOperational`] unless
-    /// [`oxicrypt_module::require_self_test_started`] admits the call (in
-    /// `Operational`, or in `SelfTest` on the thread running the power-up
-    /// self-tests), so a key built before a failure produces no output after it.
-    pub fn decrypt_block(&self, block: &mut [u8; 16]) -> Result<(), Error> {
-        let started = require_self_test_started_token()?;
-        self.decrypt_block_with(&started, block);
-        Ok(())
-    }
-    /// [`Self::decrypt_block`] for a mode function or another algorithm
-    /// crate that checked the module state once at its own entry point
-    /// and holds the proof.
-    #[doc(hidden)]
-    pub fn decrypt_block_with(&self, _started: &SelfTestStarted, block: &mut [u8; 16]) {
-        #[cfg(feature = "accel-aes")]
-        if oxicrypt_aes_accel::decrypt_block(&self.rk, 14, block) {
-            return;
-        }
-        decrypt_block_generic(block, &self.rk, 14);
+        wipe(WipedBuffer::RoundKeys, &mut self.rk);
     }
 }
 
 impl Drop for Aes256Key {
     fn drop(&mut self) {
-        oxicrypt_zeroize::zeroize(&mut self.rk);
+        wipe(WipedBuffer::RoundKeys, &mut self.rk);
     }
 }
 
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::panic, clippy::indexing_slicing)]
 mod tests {
-    use super::{Aes128Key, Aes192Key, Aes256Key};
+    use super::{EcbKey, inv_mix_columns_internal, mix_columns_internal};
 
-    // NIST AES example vectors — AES-128.
+    /// The MixColumns columns `db 13 53 45 -> 8e 4d a1 bc`,
+    /// `f2 0a 22 5c -> 9f dc 58 9d`, `01 01 01 01` fixed and
+    /// `d4 d4 d4 d5 -> d5 d5 d7 d6`, and InvMixColumns taking each back.
+    #[test]
+    fn mix_columns_known_columns_and_inverse() {
+        crate::test_support::start_module();
+        let input = [
+            0xdb, 0x13, 0x53, 0x45, 0xf2, 0x0a, 0x22, 0x5c, 0x01, 0x01, 0x01, 0x01, 0xd4, 0xd4,
+            0xd4, 0xd5,
+        ];
+        let mixed = [
+            0x8e, 0x4d, 0xa1, 0xbc, 0x9f, 0xdc, 0x58, 0x9d, 0x01, 0x01, 0x01, 0x01, 0xd5, 0xd5,
+            0xd7, 0xd6,
+        ];
+        let mut state = input;
+        mix_columns_internal(&mut state).unwrap();
+        assert_eq!(state, mixed);
+        inv_mix_columns_internal(&mut state).unwrap();
+        assert_eq!(state, input);
+    }
+
     #[test]
     fn fips197_appendix_c1_aes128() {
         crate::test_support::start_module();
@@ -590,7 +685,7 @@ mod tests {
             0x69, 0xc4, 0xe0, 0xd8, 0x6a, 0x7b, 0x04, 0x30, 0xd8, 0xcd, 0xb7, 0x80, 0x70, 0xb4,
             0xc5, 0x5a,
         ];
-        let k = Aes128Key::new_internal(&key).unwrap();
+        let k = EcbKey::new(&key).unwrap();
         let mut buf = pt;
         k.encrypt_block(&mut buf).unwrap();
         assert_eq!(buf, ct_expected);
@@ -598,7 +693,6 @@ mod tests {
         assert_eq!(buf, pt);
     }
 
-    // NIST AES example vectors — AES-192.
     #[test]
     fn fips197_appendix_c2_aes192() {
         crate::test_support::start_module();
@@ -614,7 +708,7 @@ mod tests {
             0xdd, 0xa9, 0x7c, 0xa4, 0x86, 0x4c, 0xdf, 0xe0, 0x6e, 0xaf, 0x70, 0xa0, 0xec, 0x0d,
             0x71, 0x91,
         ];
-        let k = Aes192Key::new_internal(&key).unwrap();
+        let k = EcbKey::new(&key).unwrap();
         let mut buf = pt;
         k.encrypt_block(&mut buf).unwrap();
         assert_eq!(buf, ct_expected);
@@ -622,7 +716,6 @@ mod tests {
         assert_eq!(buf, pt);
     }
 
-    // NIST AES example vectors — AES-256.
     #[test]
     fn fips197_appendix_c3_aes256() {
         crate::test_support::start_module();
@@ -639,7 +732,7 @@ mod tests {
             0x8e, 0xa2, 0xb7, 0xca, 0x51, 0x67, 0x45, 0xbf, 0xea, 0xfc, 0x49, 0x90, 0x4b, 0x49,
             0x60, 0x89,
         ];
-        let k = Aes256Key::new_internal(&key).unwrap();
+        let k = EcbKey::new(&key).unwrap();
         let mut buf = pt;
         k.encrypt_block(&mut buf).unwrap();
         assert_eq!(buf, ct_expected);
@@ -648,14 +741,12 @@ mod tests {
     }
 }
 
-// ── Cross-path oracle: AES-NI dispatch ≡ portable (accel-aes) ───────
-//
-// The accel crate cannot host the FIPS 197 correctness KATs itself —
+// The accel crate cannot host the FIPS 197 correctness KATs itself:
 // an AES block KAT needs the expanded key schedule, which is private
-// to this crate by design. So the equivalence proof lives here: with
-// `accel-aes` enabled, the public block methods (which dispatch to
-// AES-NI when CPUID allows) must agree byte-for-byte with the portable
-// generic cipher AND with the the NIST AES example vectors known answers.
+// to this crate. With `accel-aes` enabled, the public block methods
+// (which dispatch to AES-NI when CPUID allows) must agree byte-for-byte
+// with the portable generic cipher and with the FIPS 197 Appendix C
+// known answers.
 #[cfg(all(test, feature = "accel-aes"))]
 #[allow(
     clippy::unwrap_used,
@@ -681,7 +772,7 @@ mod accel_cross_path_tests {
             0x69, 0xc4, 0xe0, 0xd8, 0x6a, 0x7b, 0x04, 0x30, 0xd8, 0xcd, 0xb7, 0x80, 0x70, 0xb4,
             0xc5, 0x5a,
         ];
-        let k = Aes128Key::new_internal(&key128).unwrap();
+        let k = EcbKey::new(&key128).unwrap();
         let mut b = PT;
         k.encrypt_block(&mut b).unwrap();
         assert_eq!(b, expect128, "AES-128 App C.1 ciphertext");
@@ -694,7 +785,7 @@ mod accel_cross_path_tests {
             0xdd, 0xa9, 0x7c, 0xa4, 0x86, 0x4c, 0xdf, 0xe0, 0x6e, 0xaf, 0x70, 0xa0, 0xec, 0x0d,
             0x71, 0x91,
         ];
-        let k = Aes192Key::new_internal(&key192).unwrap();
+        let k = EcbKey::new(&key192).unwrap();
         let mut b = PT;
         k.encrypt_block(&mut b).unwrap();
         assert_eq!(b, expect192, "AES-192 App C.2 ciphertext");
@@ -707,7 +798,7 @@ mod accel_cross_path_tests {
             0x8e, 0xa2, 0xb7, 0xca, 0x51, 0x67, 0x45, 0xbf, 0xea, 0xfc, 0x49, 0x90, 0x4b, 0x49,
             0x60, 0x89,
         ];
-        let k = Aes256Key::new_internal(&key256).unwrap();
+        let k = EcbKey::new(&key256).unwrap();
         let mut b = PT;
         k.encrypt_block(&mut b).unwrap();
         assert_eq!(b, expect256, "AES-256 App C.3 ciphertext");
@@ -718,38 +809,38 @@ mod accel_cross_path_tests {
     #[test]
     fn dispatch_equals_portable_generic_across_many_blocks() {
         crate::test_support::start_module();
-        let k128 = Aes128Key::new_internal(&[0x13; 16]).unwrap();
-        let k192 = Aes192Key::new_internal(&[0x37; 24]).unwrap();
-        let k256 = Aes256Key::new_internal(&[0x42; 32]).unwrap();
+        let k128 = EcbKey::new(&[0x13; 16]).unwrap();
+        let k192 = EcbKey::new(&[0x37; 24]).unwrap();
+        let k256 = EcbKey::new(&[0x42; 32]).unwrap();
+        let (rk128, _) = k128.schedule.round_keys();
+        let (rk192, _) = k192.schedule.round_keys();
+        let (rk256, _) = k256.schedule.round_keys();
         for i in 0..512u32 {
             let x: [u8; 16] =
                 core::array::from_fn(|j| (i as usize).wrapping_mul(31).wrapping_add(j * 7) as u8);
 
-            // AES-128.
             let (mut a, mut b) = (x, x);
             k128.encrypt_block(&mut a).unwrap();
-            encrypt_block_generic(&mut b, &k128.rk, 10);
+            encrypt_block_generic(&mut b, rk128, 10);
             assert_eq!(a, b, "AES-128 dispatch≡portable encrypt, block {i}");
             let (mut da, mut db) = (a, b);
             k128.decrypt_block(&mut da).unwrap();
-            decrypt_block_generic(&mut db, &k128.rk, 10);
+            decrypt_block_generic(&mut db, rk128, 10);
             assert_eq!(da, x, "AES-128 dispatch decrypt inverts, block {i}");
             assert_eq!(db, x, "AES-128 portable decrypt inverts, block {i}");
 
-            // AES-192.
             let (mut a, mut b) = (x, x);
             k192.encrypt_block(&mut a).unwrap();
-            encrypt_block_generic(&mut b, &k192.rk, 12);
+            encrypt_block_generic(&mut b, rk192, 12);
             assert_eq!(a, b, "AES-192 dispatch≡portable encrypt, block {i}");
 
-            // AES-256.
             let (mut a, mut b) = (x, x);
             k256.encrypt_block(&mut a).unwrap();
-            encrypt_block_generic(&mut b, &k256.rk, 14);
+            encrypt_block_generic(&mut b, rk256, 14);
             assert_eq!(a, b, "AES-256 dispatch≡portable encrypt, block {i}");
             let (mut da, mut db) = (a, b);
             k256.decrypt_block(&mut da).unwrap();
-            decrypt_block_generic(&mut db, &k256.rk, 14);
+            decrypt_block_generic(&mut db, rk256, 14);
             assert_eq!(da, x, "AES-256 dispatch decrypt inverts, block {i}");
             assert_eq!(db, x, "AES-256 portable decrypt inverts, block {i}");
         }

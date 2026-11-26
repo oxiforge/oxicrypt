@@ -72,6 +72,7 @@ use crate::ctr::{
     DrbgError, Gate, MODULE_DRAW_LEN, MODULE_NONCE_LEN, MODULE_SEED_LEN, SeedDraw,
     draw_instantiate_seed, draw_reseed_entropy, rbg_error,
 };
+use crate::wipe::{Wiped, WipedBuffer};
 
 /// Maximum HMAC output length across supported algorithms (SHA-512).
 const MAX_OUTLEN: usize = 64;
@@ -141,8 +142,9 @@ impl HmacAlg for HmacSha256Alg {
         for p in parts {
             h.update(p);
         }
-        let tag = oxicrypt_zeroize::Zeroizing::new(h.finalize()?);
-        out[..32].copy_from_slice(&tag[..]);
+        let mut tag = Wiped::<32>::new(WipedBuffer::HmacTag);
+        tag.bytes = h.finalize()?;
+        out[..32].copy_from_slice(&tag.bytes);
         Ok(())
     }
 }
@@ -155,8 +157,9 @@ impl HmacAlg for HmacSha384Alg {
         for p in parts {
             h.update(p);
         }
-        let tag = oxicrypt_zeroize::Zeroizing::new(h.finalize()?);
-        out[..48].copy_from_slice(&tag[..]);
+        let mut tag = Wiped::<48>::new(WipedBuffer::HmacTag);
+        tag.bytes = h.finalize()?;
+        out[..48].copy_from_slice(&tag.bytes);
         Ok(())
     }
 }
@@ -169,8 +172,9 @@ impl HmacAlg for HmacSha512Alg {
         for p in parts {
             h.update(p);
         }
-        let tag = oxicrypt_zeroize::Zeroizing::new(h.finalize()?);
-        out[..64].copy_from_slice(&tag[..]);
+        let mut tag = Wiped::<64>::new(WipedBuffer::HmacTag);
+        tag.bytes = h.finalize()?;
+        out[..64].copy_from_slice(&tag.bytes);
         Ok(())
     }
 }
@@ -309,13 +313,13 @@ impl<H: HmacAlg> HmacDrbg<H> {
         // Step 1: K = HMAC(K, V || 0x00 || provided_data)
         let sep0 = [0x00u8];
         let mut new_key = oxicrypt_zeroize::Zeroizing::new([0u8; MAX_OUTLEN]);
-        let mut v_slice = oxicrypt_zeroize::Zeroizing::new([0u8; MAX_OUTLEN]);
-        v_slice[..outlen].copy_from_slice(&self.v[..outlen]);
+        let mut v_slice = Wiped::<MAX_OUTLEN>::new(WipedBuffer::HmacUpdateV);
+        v_slice.bytes[..outlen].copy_from_slice(&self.v[..outlen]);
         let pd_empty: &[u8] = &[];
         let pd = provided_data.unwrap_or(pd_empty);
         H::mac(
             &self.key[..outlen],
-            &[&v_slice[..outlen], &sep0, pd],
+            &[&v_slice.bytes[..outlen], &sep0, pd],
             &mut new_key[..outlen],
         )?;
         self.key[..outlen].copy_from_slice(&new_key[..outlen]);
@@ -324,7 +328,7 @@ impl<H: HmacAlg> HmacDrbg<H> {
         let mut new_v = oxicrypt_zeroize::Zeroizing::new([0u8; MAX_OUTLEN]);
         H::mac(
             &self.key[..outlen],
-            &[&v_slice[..outlen]],
+            &[&v_slice.bytes[..outlen]],
             &mut new_v[..outlen],
         )?;
         self.v[..outlen].copy_from_slice(&new_v[..outlen]);
@@ -336,11 +340,11 @@ impl<H: HmacAlg> HmacDrbg<H> {
 
         // Step 4: K = HMAC(K, V || 0x01 || provided_data)
         let sep1 = [0x01u8];
-        let mut v_slice2 = oxicrypt_zeroize::Zeroizing::new([0u8; MAX_OUTLEN]);
-        v_slice2[..outlen].copy_from_slice(&self.v[..outlen]);
+        let mut v_slice2 = Wiped::<MAX_OUTLEN>::new(WipedBuffer::HmacUpdateV);
+        v_slice2.bytes[..outlen].copy_from_slice(&self.v[..outlen]);
         H::mac(
             &self.key[..outlen],
-            &[&v_slice2[..outlen], &sep1, pd],
+            &[&v_slice2.bytes[..outlen], &sep1, pd],
             &mut new_key[..outlen],
         )?;
         self.key[..outlen].copy_from_slice(&new_key[..outlen]);
@@ -348,7 +352,7 @@ impl<H: HmacAlg> HmacDrbg<H> {
         // Step 5: V = HMAC(K, V)
         H::mac(
             &self.key[..outlen],
-            &[&v_slice2[..outlen]],
+            &[&v_slice2.bytes[..outlen]],
             &mut new_v[..outlen],
         )?;
         self.v[..outlen].copy_from_slice(&new_v[..outlen]);
@@ -513,7 +517,7 @@ impl<H: HmacAlg> HmacDrbg<H> {
 
     /// Runs `entry`, then the generate body with `output` as its re-check
     /// before writing, and wipes `out` on any error.
-    fn generate_gated(
+    pub(crate) fn generate_gated(
         &mut self,
         entry: Gate,
         output: Gate,
@@ -560,19 +564,19 @@ impl<H: HmacAlg> HmacDrbg<H> {
         // Step 3/4: produce bytes by V = HMAC(K, V).
         let outlen = H::OUTLEN;
         let mut produced = 0usize;
-        let mut v_tmp = oxicrypt_zeroize::Zeroizing::new([0u8; MAX_OUTLEN]);
+        let mut v_tmp = Wiped::<MAX_OUTLEN>::new(WipedBuffer::HmacGenerateInput);
         #[cfg(any(test, feature = "fault-injection"))]
         crate::seam::output_checkpoint();
         output()?;
         while produced < out.len() {
-            v_tmp[..outlen].copy_from_slice(&self.v[..outlen]);
-            let mut new_v = oxicrypt_zeroize::Zeroizing::new([0u8; MAX_OUTLEN]);
+            v_tmp.bytes[..outlen].copy_from_slice(&self.v[..outlen]);
+            let mut new_v = Wiped::<MAX_OUTLEN>::new(WipedBuffer::HmacGenerateBlock);
             H::mac(
                 &self.key[..outlen],
-                &[&v_tmp[..outlen]],
-                &mut new_v[..outlen],
+                &[&v_tmp.bytes[..outlen]],
+                &mut new_v.bytes[..outlen],
             )?;
-            self.v[..outlen].copy_from_slice(&new_v[..outlen]);
+            self.v[..outlen].copy_from_slice(&new_v.bytes[..outlen]);
             let take = core::cmp::min(outlen, out.len() - produced);
             out[produced..produced + take].copy_from_slice(&self.v[..take]);
             produced += take;

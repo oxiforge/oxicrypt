@@ -42,6 +42,7 @@ fn frozen(abi: i32) -> Option<(usize, u64)> {
     match abi {
         1 => Some((316, 0xe5b4_7830_6154_6473)),
         2 => Some((327, 0x5735_146b_5c28_b336)),
+        3 => Some((348, 0xdd18_7fce_24d5_bce7)),
         _ => None,
     }
 }
@@ -159,7 +160,10 @@ fn the_frozen_lines_of_the_inventory_are_unchanged() {
     // Positive controls: an edited line, a removed line and a reordering are
     // each caught; an appended line is not.
     let mut edited = lines.clone();
-    edited[120] = edited[120].replace("-> int", "-> int64_t");
+    let target = (120..lines.len())
+        .find(|&i| lines[i].ends_with("-> int"))
+        .expect("a function returning int past line 120");
+    edited[target] = edited[target].replace("-> int", "-> int64_t");
     assert_ne!(edited, lines, "the control edit changed nothing");
     assert!(!frozen_prefix_holds(crate::OXI_ABI_VERSION, &edited));
     let mut removed = lines.clone();

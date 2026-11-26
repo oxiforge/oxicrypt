@@ -288,6 +288,8 @@ checksum = "460fbee9c2c2f33933d720630a6a0bac33ba7053db5344fac858d4b8952d77d5"
 name = "ct-validation"
 version = "0.26.1"
 dependencies = [
+ "oxicrypt-aes",
+ "oxicrypt-cmac",
  "oxicrypt-drbg",
  "oxicrypt-ecdh",
  "oxicrypt-ecdsa",
@@ -612,6 +614,7 @@ version = "0.26.1"
 dependencies = [
  "oxicrypt-aes",
  "oxicrypt-module",
+ "oxicrypt-zeroize",
 ]
 
 [[package]]

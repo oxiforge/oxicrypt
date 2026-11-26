@@ -27,6 +27,9 @@ oxicrypt-aes-accel = { workspace = true, optional = true }
 # else the portable path runs. Default builds carry no accel dependency
 # and are byte-for-byte the portable baseline.
 accel-aes = ["dep:oxicrypt-aes-accel"]
+# Test seams counting each wipe of a named intermediate buffer or key
+# schedule and each write to a CCM decryption's output, default OFF.
+fault-injection = []
 
 [package.metadata.lama]
 # Registry discovery (LAMA SPEC.md, "Package registry discovery"). Must be a

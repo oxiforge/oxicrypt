@@ -30,25 +30,52 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Every shipped shared library's run-time imports, Android included, are checked against a committed allow-list in `scripts/release-imports/`; an import the list does not name fails the release build.
 - `scripts/android-device-check.sh` loads a release's Android library on a connected device and requires the unsigned copy refused, the signed copy operational and the tampered copy refused. (#302)
 - The CI `c-integration` job runs the unsigned, signed and tampered Linux x86_64 library through `release-load-check.sh library`, requiring integrity statuses 3, 1 and 2.
+- `oxicrypt-aes` provides one key type per mode, `GcmKey`, `CcmKey`, `CbcKey`, `CtrKey`, `KwKey` and `CmacKey`, each built from 16, 24 or 32 key bytes, not `Clone`, and gated on its own service at construction and on every call.
+- `gcm_encrypt` takes a caller-owned DRBG, generates the whole 96-bit IV from it (FIPS 140-3 IG C.H Scenario 2) and returns the IV with the tag in `GcmSealed`; `gcm_decrypt` takes the IV the encrypting party returned. (#295)
+- A `GcmKey` counts its encryptions and refuses the one after 2^32 with `KeyExhausted` (C code 34), writing nothing and drawing no IV; `GcmKey::new_with_count` preloads the count, `GcmKey::new_with_limit` sets a smaller per-instance limit, and `GcmKey::invocations` reads it.
+- AES-GCM encryption and decryption refuse a payload above 2^36 − 32 bytes with `InvalidPayloadLength` and associated data above 2^61 − 1 bytes with `InvalidAadLength` before any work. (#296)
+- A `CcmKey` fixes its tag length at construction, one of 8, 10, 12, 14 or 16 bytes, counts its block-cipher invocations, preloads them with `CcmKey::new_with_count`, and returns `KeyExhausted` at 2^61.
+- CCM decryption verifies the tag before writing any plaintext and returns the one error `TagMismatch` for every invalid input, including a nonce length outside 7 to 13.
+- `cmac_verify` compares a received MAC with no early exit over the key's MAC length, and a `CmacKey` fixes its MAC length at construction, 8 to 16 bytes.
+- Per-mode C key handles `OxiAesGcmKey`, `OxiAesCcmKey`, `OxiAesCbcKey`, `OxiAesCtrKey`, `OxiAesKwKey` and `OxiAesCmacKey`, and 34 `oxi_aes_*` functions: `_key_new` and `_key_free` per mode, the GCM `_with_count`, `_with_limit` and `_invocations` forms, `oxi_aes_gcm_seal` taking an `OxiDrbg`, and `oxi_aes_cmac_verify`. (#295)
+- Every AES and CMAC key handle created through the C interface is constructed inside its own allocation, so the key schedule is expanded where it lives and the key is not moved by the module's code.
+- The AES C functions refuse a NULL pointer with a non-zero length with `NullPointer = 10`, and a length above `isize::MAX` and overlapping buffers with `InvalidInput = 5`, write outputs only on success, and write nothing when a KW or KWP call fails.
+- Eight AES power-up self-tests, among them three that require `TagMismatch` for a flipped GCM tag, CCM tag and KW check value; the AES group holds 31 entries and `oxi selftest` reports `aes (31)`.
+- The constant-time harness `tools/ct-validation` takes `--strict`, which measures a `Warn` once more at 500,000 samples or more and exits 1 on a second `Warn`, and has five AES targets: `ghash`, `aes_gmul`, `cmac_subkey`, `kwp_unwrap` and `cmac_verify`.
+- `tools/ct-validation` exits 2 with a message on a `--samples`, `--warmup` or `--seed` value that is not an unsigned integer, and on one of those flags given with no value.
+- With the `fixture` feature the harness adds two controls, `cmac_verify_leaky`, which must report a leak, and `aa`, which verifies the same tag in both classes as a baseline.
+- The `oxicrypt` binding crate provides `AesGcmKey`, `AesCcmKey`, `AesCbcKey`, `AesCtrKey`, `AesKwKey`, `AesCmacKey` and `GcmSealed`, and the `Module` methods `aes_gcm_key`, `aes_gcm_seal`, `aes_gcm_open`, `aes_ccm_key`, `aes_ccm_seal`, `aes_ccm_open`, `aes_cbc_key`, `aes_ctr_key`, `aes_kw_key`, the KW and KWP wrap and unwrap methods, `aes_cmac_key`, `aes_cmac` and `aes_cmac_verify`, with `Error::KeyExhausted`.
+- The `oxicrypt` binding crate's `aes_ccm_open` and `aes_cmac_verify` return `Error::InvalidTagLength` for a tag or MAC slice whose length differs from the key's.
 
 ### Changed
 
-- The shared library's file names are `liboxicrypt_ffi.so.2` on Linux and `liboxicrypt_ffi.2.dylib` on macOS, and the `oxicrypt` crate requires a library reporting ABI 2.
+- **Breaking:** `oxicrypt_aes::ModeError` is `#[non_exhaustive]`.
 - A DRBG's `generate` reseeds from the module at the SP 800-90A reseed interval, so `ReseedRequired = 9` is not returned.
 - ECDSA P-256 and P-384 key generation and signing, ECDH and finite-field DH key generation, RSA key generation, OAEP encryption and PSS signing, and Ed25519 key generation take any `Rbg` where they took an `HmacDrbgSha256`.
 - `oxi rand` draws from a DRBG the module seeds from its own seed path.
 - `oxicrypt-integrity-sign` key generation seeds its DRBG from the module's seed path.
 - `scripts/git-hooks/pre-push` run with nothing on stdin scans `HEAD`, and runs no scan when every pushed ref is a deletion. (#299)
 - Once a self-test places the module in its error state, `oxi selftest` reports every later self-test as not run (the rest of its group by name, later groups by count), leaves them out of the count, and exits 1.
+- The shared library's file names are `liboxicrypt_ffi.so.3` on Linux and `liboxicrypt_ffi.3.dylib` on macOS, `oxi_abi_version()` returns 3, and the `oxicrypt` crate requires a library reporting ABI 3.
+- KW and KWP wrap and unwrap leave nothing in the output on failure: on an error after the service gates, Rust zeroizes every byte written to the caller's buffer and the C functions leave it unwritten.
+- ECB, CBC and GCM decryption and CTR zeroize the caller's output when the module enters its error state during the operation, so no partial plaintext remains.
+- CCM encryption refuses an invalid nonce, associated-data or payload length before charging the key's invocation count.
+- The CTR counter block increments as one 128-bit big-endian integer, carrying across all 128 bits; the caller keeps counter blocks unique under a key and makes each CBC IV unpredictable (SP 800-38A Appendix B, Appendix C).
+- `CCM_MAX_AAD_LEN` is the largest associated-data length CCM accepts, 2^64 - 2^16 - 1.
+- GHASH, the MixColumns multiplication and the CMAC subkey derivation run without secret-dependent branches on the portable path.
 
 ### Removed
 
-- **Breaking:** the C DRBG instantiate and reseed functions that took caller-supplied entropy are removed: `oxi_hmac_drbg_*_instantiate` and `_reseed`, `oxi_hash_drbg_*_instantiate` and `_reseed`, and the CTR_DRBG `_instantiate_no_df`, `_instantiate_df`, `_reseed_no_df`, `_reseed_df` and `_generate_no_df` functions. The module seeds every DRBG itself; the `OxiDrbg` handle and the `_from_module` functions replace them, and `oxi_abi_version()` returns 2.
+- **Breaking:** the C DRBG instantiate and reseed functions that took caller-supplied entropy are removed: `oxi_hmac_drbg_*_instantiate` and `_reseed`, `oxi_hash_drbg_*_instantiate` and `_reseed`, and the CTR_DRBG `_instantiate_no_df`, `_instantiate_df`, `_reseed_no_df`, `_reseed_df` and `_generate_no_df` functions. The module seeds every DRBG itself; the `OxiDrbg` handle and the `_from_module` functions replace them.
 - **Breaking:** the `oxicrypt` Rust binding crate does not provide `HmacDrbgSha256`, `Module::hmac_drbg_sha256` or `DrbgSeed`; use `Drbg` through `Module::drbg`.
+- **Breaking:** the fourteen `oxi_aes256_*` C functions and `OxiAes256Key`; `oxi_aes_<mode>_key_new` with the per-mode handles replaces them, so an object built against the earlier header fails to link, and `oxi_abi_version()` returns 3.
+- **Breaking:** the `oxicrypt` binding's `Aes256Key`, `aes256_key`, `aes256_gcm_encrypt`, `aes256_gcm_decrypt` and the `AES256_*` constants; the per-mode key types and the `aes_*` methods replace them, and `aes_gcm_seal` takes a `Drbg` and returns the IV. (#295)
+- **Breaking:** GCM encryption under a caller-supplied IV, in Rust and in C; `gcm_encrypt` and `oxi_aes_gcm_seal` replace it. (#295)
 
 ### Fixed
 
 - `oxicrypt-hmac` wipes its copy of the inner digest after the outer hash consumes it.
+- `oxicrypt_aes::ctr` refuses an output shorter than its input with `LengthMismatch`.
 
 ## [0.26.1] - 2026-11-14
 

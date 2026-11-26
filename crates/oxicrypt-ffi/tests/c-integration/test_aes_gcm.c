@@ -1,24 +1,18 @@
-/* AES-256-GCM C ABI test — verifiable KAT + decrypt roundtrip + tag tamper.
+/* AES-256-GCM through oxi_aes_gcm_key_new, oxi_aes_gcm_seal and
+ * oxi_aes_gcm_open.
  *
- * Vector source: McGrew & Viega "The Galois/Counter Mode of Operation
- *   (GCM)" reference document, Test Case 15 (AES-256, no AAD).
- *   Same vector used by `oxicrypt-aes::kat::self_test_gcm_aes256`,
- *   so this test exercises the C ABI against a value the underlying
- *   primitive's power-up KAT already validates.
+ * Vector: McGrew and Viega, "The Galois/Counter Mode of Operation (GCM)",
+ * Test Case 15 (AES-256, empty AAD).
  *
- * - K:  fe ff e9 92 86 65 73 1c 6d 6a 8f 94 67 30 83 08
- *       fe ff e9 92 86 65 73 1c 6d 6a 8f 94 67 30 83 08
- * - IV: ca fe ba be fa ce db ad de ca f8 88
- * - P:  64 bytes (see GCM_PT below)
- * - C:  64 bytes (see GCM256_CT below)
- * - T:  b0 94 da c5 d9 34 71 bd ec 1a 50 22 70 e3 cc 6c
- * - AAD: empty
+ * The seal draws its IV from the caller's DRBG (SP 800-38D §8.2.2), so the
+ * vector's ciphertext is checked through decryption only: opening the
+ * vector's ciphertext under its IV and tag yields its plaintext. The seal
+ * is checked by round trip.
  */
 
 #include "oxicrypt.h"
 #include <stdint.h>
 #include <stdio.h>
-#include <stdlib.h>
 #include <string.h>
 
 static const uint8_t KEY[32] = {
@@ -56,67 +50,85 @@ static const uint8_t EXPECTED_TAG[16] = {
     0xec, 0x1a, 0x50, 0x22, 0x70, 0xe3, 0xcc, 0x6c,
 };
 
-/* OxiResult::TagMismatch (per crates/oxicrypt-ffi/src/error.rs). */
-#define OXI_TAG_MISMATCH 22
+static int failures;
+
+static void expect(const char *check, int rc, int want) {
+    if (rc != want) {
+        fprintf(stderr, "test_aes_gcm, %s: rc=%d, expected %d\n", check, rc, want);
+        failures++;
+    }
+}
+
+static void expect_bytes(const char *check, const uint8_t *got, const uint8_t *want, size_t n) {
+    if (memcmp(got, want, n) != 0) {
+        fprintf(stderr, "test_aes_gcm, %s: bytes differ\n", check);
+        failures++;
+    }
+}
 
 int main(void) {
     if (oxi_init(0) != 0) {
         fprintf(stderr, "oxi_init failed\n");
         return 1;
     }
+    OxiDrbg *drbg = NULL;
+    OxiAesGcmKey *key = NULL;
+    if (oxi_hmac_drbg_sha256_new_rbg(&drbg) != 0 || oxi_drbg_instantiate(drbg, NULL, 0) != 0 ||
+        oxi_aes_gcm_key_new(KEY, sizeof(KEY), &key) != 0) {
+        fprintf(stderr, "test_aes_gcm: setup failed\n");
+        return 1;
+    }
 
-    OxiAes256Key *key = NULL;
-    if (oxi_aes256_new(&key, KEY) != 0) {
-        fprintf(stderr, "oxi_aes256_new failed\n");
+    uint8_t back[64];
+    memset(back, 0xA5, sizeof(back));
+    expect("open the Case 15 ciphertext",
+           oxi_aes_gcm_open(key, IV, NULL, 0, EXPECTED_CT, sizeof(EXPECTED_CT), EXPECTED_TAG,
+                            back),
+           0);
+    expect_bytes("Case 15 plaintext", back, PT, sizeof(PT));
+
+    uint8_t bad_tag[16];
+    memcpy(bad_tag, EXPECTED_TAG, sizeof(bad_tag));
+    bad_tag[0] ^= 0x01;
+    /* Under each fill, so that a written byte equal to one fill is caught
+     * by the other. */
+    static const uint8_t FILLS[2] = { 0xA5, 0x5A };
+    for (size_t f = 0; f < sizeof(FILLS); f++) {
+        memset(back, FILLS[f], sizeof(back));
+        expect("open under a flipped tag is TagMismatch",
+               oxi_aes_gcm_open(key, IV, NULL, 0, EXPECTED_CT, sizeof(EXPECTED_CT), bad_tag,
+                                back),
+               OXI_RESULT_TAG_MISMATCH);
+        for (size_t i = 0; i < sizeof(back); i++) {
+            if (back[i] != FILLS[f]) {
+                fprintf(stderr, "test_aes_gcm, flipped tag (fill 0x%02X): byte %zu written\n",
+                        FILLS[f], i);
+                failures++;
+                break;
+            }
+        }
+    }
+
+    uint8_t ct[64], iv[12], tag[16];
+    uint8_t ct2[64], iv2[12], tag2[16];
+    expect("seal", oxi_aes_gcm_seal(key, drbg, NULL, 0, PT, sizeof(PT), ct, iv, tag), 0);
+    expect("second seal", oxi_aes_gcm_seal(key, drbg, NULL, 0, PT, sizeof(PT), ct2, iv2, tag2),
+           0);
+    if (memcmp(iv, iv2, sizeof(iv)) == 0) {
+        fprintf(stderr, "test_aes_gcm, two seals: the same IV twice\n");
+        failures++;
+    }
+    memset(back, 0, sizeof(back));
+    expect("open the sealed ciphertext under the returned IV",
+           oxi_aes_gcm_open(key, iv, NULL, 0, ct, sizeof(ct), tag, back), 0);
+    expect_bytes("round trip plaintext", back, PT, sizeof(PT));
+
+    oxi_aes_gcm_key_free(key);
+    oxi_drbg_free(drbg);
+    if (failures != 0) {
+        fprintf(stderr, "test_aes_gcm: %d checks failed\n", failures);
         return 2;
     }
-
-    uint8_t ct[64];
-    uint8_t tag[16];
-    int rc = oxi_aes256_gcm_encrypt(key, IV, NULL, 0, PT, sizeof(PT), ct, tag);
-    if (rc != 0) {
-        fprintf(stderr, "encrypt failed: rc=%d\n", rc);
-        oxi_aes256_free(key);
-        return 3;
-    }
-    if (memcmp(ct, EXPECTED_CT, sizeof(EXPECTED_CT)) != 0) {
-        fprintf(stderr, "ciphertext mismatch vs McGrew/Viega Case 15\n");
-        oxi_aes256_free(key);
-        return 4;
-    }
-    if (memcmp(tag, EXPECTED_TAG, sizeof(EXPECTED_TAG)) != 0) {
-        fprintf(stderr, "tag mismatch vs McGrew/Viega Case 15\n");
-        oxi_aes256_free(key);
-        return 5;
-    }
-
-    /* Decrypt round-trip recovers the plaintext. */
-    uint8_t pt_back[64];
-    rc = oxi_aes256_gcm_decrypt(key, IV, NULL, 0, ct, sizeof(ct), pt_back, tag);
-    if (rc != 0) {
-        fprintf(stderr, "decrypt failed: rc=%d\n", rc);
-        oxi_aes256_free(key);
-        return 6;
-    }
-    if (memcmp(pt_back, PT, sizeof(PT)) != 0) {
-        fprintf(stderr, "decrypt roundtrip plaintext mismatch\n");
-        oxi_aes256_free(key);
-        return 7;
-    }
-
-    /* Tamper with the tag: must return OxiResult::TagMismatch=22. */
-    uint8_t bad_tag[16];
-    memcpy(bad_tag, tag, sizeof(bad_tag));
-    bad_tag[0] ^= 0x01;
-    rc = oxi_aes256_gcm_decrypt(key, IV, NULL, 0, ct, sizeof(ct), pt_back, bad_tag);
-    if (rc != OXI_TAG_MISMATCH) {
-        fprintf(stderr, "tag tamper not rejected as TagMismatch: rc=%d (expected %d)\n",
-                rc, OXI_TAG_MISMATCH);
-        oxi_aes256_free(key);
-        return 8;
-    }
-
-    oxi_aes256_free(key);
-    printf("test_aes_gcm: OK (McGrew/Viega Case 15 + roundtrip + tag-tamper)\n");
+    printf("test_aes_gcm: OK\n");
     return 0;
 }

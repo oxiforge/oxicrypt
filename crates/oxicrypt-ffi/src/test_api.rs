@@ -85,10 +85,11 @@ pub extern "C" fn oxi_test_fail_next_on_demand() {
     oxicrypt_drbg::seam::fail_next(oxicrypt_drbg::seam::FaultClass::OnDemand);
 }
 
-/// `1` when the last freed DRBG handle, from `oxi_drbg_free` or a typed
-/// DRBG `_free`, read as all zero after its wipe and before its memory was
-/// released, `0` when it did not, `-1` when no handle has been freed since
-/// the last call. Each call clears the record.
+/// `1` when the last allocation `wipe_and_free` released, a DRBG handle
+/// from `oxi_drbg_free` or a typed DRBG `_free` or an AES key handle, read
+/// as all zero after its wipe and before its memory was released, `0` when
+/// it did not, `-1` when none has been released since the last call. Each
+/// call clears the record.
 #[unsafe(no_mangle)]
 pub extern "C" fn oxi_test_last_freed_bytes_zero() -> c_int {
     crate::rbg::last_freed_bytes_zero()

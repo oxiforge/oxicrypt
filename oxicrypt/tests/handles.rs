@@ -110,14 +110,14 @@ fn handles_are_freed_when_dropped() {
     let in_use = || census::in_use(mallinfo2);
     let m = common::init(oxicrypt::Profile::Cnsa2).unwrap();
     // Warm up anything allocated once per process.
-    drop(m.aes256_key(&[1; 32]).unwrap());
+    drop(m.aes_gcm_key(&[1; 32]).unwrap());
     drop(m.drbg(oxicrypt::DrbgKind::HmacSha512).unwrap());
 
     let before = in_use();
     let kept: Vec<_> = (0..N)
         .map(|_| {
             (
-                m.aes256_key(&[2; 32]).unwrap(),
+                m.aes_gcm_key(&[2; 32]).unwrap(),
                 m.drbg(oxicrypt::DrbgKind::HmacSha512).unwrap(),
             )
         })
@@ -132,7 +132,7 @@ fn handles_are_freed_when_dropped() {
 
     drop(kept);
     for _ in 0..N {
-        drop(m.aes256_key(&[3; 32]).unwrap());
+        drop(m.aes_gcm_key(&[3; 32]).unwrap());
         drop(m.drbg(oxicrypt::DrbgKind::HmacSha512).unwrap());
     }
     let leaked = in_use() - before;

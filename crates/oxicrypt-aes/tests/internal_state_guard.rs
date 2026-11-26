@@ -1,5 +1,5 @@
-//! A representative `*_internal` function of `oxicrypt-aes` refuses in every
-//! module state other than `SelfTest` and `Operational`.
+//! The non-service constructor of `oxicrypt-aes` refuses in every module
+//! state other than `SelfTest` and `Operational`.
 //!
 //! The module state is process-global and each transition is one-way, so
 //! every test here runs in a fresh process of its own (see [`isolated`]),
@@ -43,9 +43,9 @@ const UNSIGNED_TEST_BINARY: &[KatEntry] = &[KatEntry {
     run: || Ok(()),
 }];
 
-/// Calls a representative `*_internal` function.
+/// Calls the non-service constructor.
 fn probe() -> Result<(), Error> {
-    oxicrypt_aes::Aes128Key::new_internal(&[0u8; 16]).map(|_| ())
+    oxicrypt_aes::EcbKey::new(&[0u8; 16]).map(|_| ())
 }
 
 fn assert_refused(expected: State) {
@@ -111,20 +111,30 @@ fn live_object_refuses_output_after_error() {
     isolated("live_object_refuses_output_after_error", || {
         initialize_with_tests(UNSIGNED_TEST_BINARY, &[]).unwrap_or_else(|e| panic!("{e}"));
         assert_eq!(state(), State::Operational);
-        let key = oxicrypt_aes::Aes128Key::new(&[0x0b; 16]).unwrap();
+        let key = oxicrypt_aes::GcmKey::new(&[0x0b; 16]).unwrap();
         oxicrypt_module::enter_error_state("live-object refusal test");
-        let refused = Err(Error::NotOperational {
+        let refused: Result<(), Error> = Err(Error::NotOperational {
             current: State::Error,
         });
-        let mut block = [0u8; 16];
-        assert_eq!(key.encrypt_block(&mut block), refused);
-        assert_eq!(block, [0u8; 16]);
         let mut ct = [0u8; 16];
-        let mut tag = [0u8; 16];
         assert_eq!(
-            oxicrypt_aes::gcm_encrypt(&key, &[0u8; 12], b"", &[1u8; 16], &mut ct, &mut tag),
+            oxicrypt_aes::gcm_encrypt(&key, &mut FixedRbg, b"", &[1u8; 16], &mut ct).map(|_| ()),
             refused.map_err(oxicrypt_aes::ModeError::Module)
         );
-        assert_eq!((ct, tag), ([0u8; 16], [0u8; 16]));
+        assert_eq!(ct, [0u8; 16]);
     });
+}
+
+/// A generator of one fixed byte value, reporting 256 bits.
+struct FixedRbg;
+
+impl oxicrypt_module::Rbg for FixedRbg {
+    fn fill(&mut self, out: &mut [u8]) -> Result<(), oxicrypt_module::RbgError> {
+        out.fill(0x5a);
+        Ok(())
+    }
+
+    fn strength_bits(&self) -> u32 {
+        256
+    }
 }

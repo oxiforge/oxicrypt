@@ -12,7 +12,7 @@ use crate::module::{Fingerprint, IntegrityStatus, Profile};
 /// it called, so it maps the code by site.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Site {
-    /// An AEAD decryption (`oxi_aes256_gcm_decrypt`).
+    /// An AEAD decryption (`oxi_aes_gcm_open`, `oxi_aes_ccm_open`).
     AeadDecrypt,
     /// A signature verification (`oxi_ml_dsa_87_verify`).
     SignatureVerify,
@@ -48,7 +48,7 @@ pub enum Error {
     /// Code 8: a DRBG handle was used before it was instantiated.
     Uninstantiated,
     /// Code 9: a DRBG passed its reseed interval and cannot reseed itself.
-    /// The library returns no code 9 at ABI 2, because every DRBG it
+    /// The library returns no code 9 at ABI 3, because every DRBG it
     /// exposes is seeded by the module and reseeds itself; the variant is
     /// kept so the code keeps its meaning.
     ReseedRequired,
@@ -72,7 +72,9 @@ pub enum Error {
     LengthMismatch,
     /// Code 24: a nonce length was not the mode's.
     InvalidNonceLength,
-    /// Code 25: a tag length was not the mode's.
+    /// Code 25: a tag length was not the mode's. Also returned by the crate,
+    /// without calling the library, when a tag or MAC slice is not the key's
+    /// fixed length.
     InvalidTagLength,
     /// Code 26: a payload was longer than the mode permits.
     InvalidPayloadLength,
@@ -94,6 +96,11 @@ pub enum Error {
     /// Code 33: the entropy source failed while seeding or testing, and the
     /// module has entered its error state.
     EntropyUnavailable,
+    /// Code 34: the key has reached the number of invocations its mode
+    /// permits under one key (2^32 AES-GCM encryptions, SP 800-38D §8.3;
+    /// 2^61 AES-CCM block-cipher invocations, SP 800-38C §5.1). The output
+    /// slice is zeroed and the key stays exhausted; replace the key.
+    KeyExhausted,
     /// Code 255: an internal error of the library.
     Internal,
     /// Code 22 from a signature verification: the signature did not verify,
@@ -171,6 +178,7 @@ impl Error {
             31 => Self::RbgTooWeak,
             32 => Self::Busy,
             33 => Self::EntropyUnavailable,
+            34 => Self::KeyExhausted,
             255 => Self::Internal,
             other => Self::Unknown(other),
         }
@@ -231,6 +239,7 @@ impl fmt::Display for Error {
             }
             Self::Busy => f.write_str("DRBG handle or seed path busy; retry after a pause"),
             Self::EntropyUnavailable => f.write_str("entropy source failed"),
+            Self::KeyExhausted => f.write_str("key has reached its mode's invocation limit"),
             Self::Internal => f.write_str("internal error in the library"),
             Self::SignatureInvalid => f.write_str("signature did not verify"),
             Self::Unknown(code) => write!(f, "unknown status code {code}"),

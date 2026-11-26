@@ -15,19 +15,42 @@ const UNSIGNED_TEST_BINARY: &[oxicrypt_module::KatEntry] = &[oxicrypt_module::Ka
     run: || Ok(()),
 }];
 
+/// A demonstration generator. It is not a random bit generator and not an
+/// approved source.
+///
+/// Its output is a counter, so the IV repeats on every run, and the 256
+/// bits it reports exist only to pass the strength check. `oxicrypt-drbg`
+/// depends on this crate, so this crate's examples cannot use it. A
+/// program uses an `oxicrypt-drbg` type instead, such as
+/// `HmacDrbgSha256::instantiate_from_module(b"")`.
+struct DemoRbg(u8);
+
+impl oxicrypt_module::Rbg for DemoRbg {
+    fn fill(&mut self, out: &mut [u8]) -> Result<(), oxicrypt_module::RbgError> {
+        for b in out {
+            *b = self.0;
+            self.0 = self.0.wrapping_add(1);
+        }
+        Ok(())
+    }
+
+    fn strength_bits(&self) -> u32 {
+        256
+    }
+}
+
 fn main() {
     oxicrypt_module::initialize_with_tests(UNSIGNED_TEST_BINARY, &[]).expect("module init");
 
     let key = [0x42u8; 32]; // 256-bit key (demo only!)
-    let iv = [0x01u8; 12]; // 96-bit IV (use DRBG in production!)
+    let mut drbg = DemoRbg(1);
     let aad = b"additional authenticated data";
     let plaintext = b"Secrets worth protecting";
 
-    // Encrypt:
-    let cipher = oxicrypt_aes::Aes256Key::new(&key).expect("valid key");
+    let cipher = oxicrypt_aes::GcmKey::new(&key).expect("valid key");
     let mut ciphertext = vec![0u8; plaintext.len()];
-    let mut tag = [0u8; 16];
-    oxicrypt_aes::gcm_encrypt(&cipher, &iv, aad, plaintext, &mut ciphertext, &mut tag)
+    // The IV is drawn from the generator passed in and returned with the tag.
+    let sealed = oxicrypt_aes::gcm_encrypt(&cipher, &mut drbg, aad, plaintext, &mut ciphertext)
         .expect("gcm encrypt");
 
     println!(
@@ -35,12 +58,19 @@ fn main() {
         std::str::from_utf8(plaintext).expect("utf8")
     );
     println!("Ciphertext: {}", hex(&ciphertext));
-    println!("Tag:        {}", hex(&tag));
+    println!("IV:         {}", hex(&sealed.iv));
+    println!("Tag:        {}", hex(&sealed.tag));
 
-    // Decrypt and verify:
     let mut recovered = vec![0u8; ciphertext.len()];
-    oxicrypt_aes::gcm_decrypt(&cipher, &iv, aad, &ciphertext, &tag, &mut recovered)
-        .expect("gcm decrypt");
+    oxicrypt_aes::gcm_decrypt(
+        &cipher,
+        &sealed.iv,
+        aad,
+        &ciphertext,
+        &sealed.tag,
+        &mut recovered,
+    )
+    .expect("gcm decrypt");
 
     assert_eq!(plaintext.as_slice(), recovered.as_slice());
     println!(

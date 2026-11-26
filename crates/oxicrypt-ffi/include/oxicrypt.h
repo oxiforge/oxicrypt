@@ -20,6 +20,35 @@
 #include <stdint.h>
 
 /*
+ * Buffer contract of every oxi_aes_* function.
+ *
+ * In an operational module, every oxi_aes_* function that returns int
+ * refuses its pointer and length arguments as follows, before any work:
+ *
+ * - a NULL key handle, a NULL pointer with a non-zero length, or a NULL
+ *   fixed-size pointer (an IV, counter, tag, MAC, `written`, the DRBG
+ *   handle, or the `out` of a `_key_new` or `_key_invocations`) returns
+ *   OXI_RESULT_NULL_POINTER (10);
+ * - a length above SIZE_MAX / 2, or a range that runs past the top of the
+ *   address space, returns OXI_RESULT_INVALID_INPUT (5);
+ * - an output range that shares a byte with an input, with another output
+ *   or with a handle, and an input that shares a byte with a handle,
+ *   return OXI_RESULT_INVALID_INPUT (5), so in-place operation is refused;
+ * - a key handle of another mode returns OXI_RESULT_INVALID_INPUT (5).
+ *
+ * A module not in the operational state returns OXI_RESULT_NOT_OPERATIONAL
+ * (1) after the NULL key handle and NULL output-pointer checks and before
+ * the other pointer checks.
+ *
+ * On any refusal every output buffer is left unwritten, except that when a
+ * function has several outputs and a later copy is refused, the outputs
+ * already copied are zeroed. On a KW or KWP
+ * unwrap failure, in either cipher direction, `out` and `written` are left
+ * unwritten.
+ */
+
+
+/*
  C ABI status code returned by every `oxi_*` function that returns an `int`
  status: `Ok = 0` is success, and non-zero values are distinct failure
  modes.
@@ -72,7 +101,7 @@ typedef enum {
   /*
    The DRBG's reseed counter passed the SP 800-90A Table 3 reseed
    interval and the DRBG cannot reseed itself. No exported function
-   returns it at ABI 2: every C DRBG handle is seeded by the module and
+   returns it at ABI 3: every C DRBG handle is seeded by the module and
    reseeds itself at the interval. It is returned by `generate` on an
    `oxicrypt_drbg` instance instantiated through the testing interface
    with a caller-supplied entropy input, which does not reseed itself at
@@ -112,8 +141,8 @@ typedef enum {
    cryptographic verification primitive ran cleanly but the result
    disagrees with the claimed value." Distinct from
    [`OxiResult::InvalidInput`] (= 5), which signals input that failed
-   to decode BEFORE any cryptographic comparison. AEAD plaintext
-   output buffer contents are UNDEFINED when this code is returned.
+   to decode BEFORE any cryptographic comparison. The AES mode
+   symbols write no output when they return this code.
    */
   OXI_RESULT_TAG_MISMATCH = 22,
   /*
@@ -145,7 +174,7 @@ typedef enum {
   /*
    A DRBG instantiate or reseed was given an entropy input shorter than
    the minimum for the instantiated security strength (SP 800-90A Rev. 1
-   Tables 2 and 3). No exported function returns it at ABI 2: the C
+   Tables 2 and 3). No exported function returns it at ABI 3: the C
    interface takes no entropy input, and the module's seed path supplies
    a full-length one. It is returned by the `oxicrypt_drbg` testing
    interface's caller-entropy forms: HMAC_DRBG and Hash_DRBG
@@ -160,7 +189,7 @@ typedef enum {
    instantiated security strength, the module's nonce floor
    (permitted by SP 800-90A Rev. 1 §9.1 step 8; a shorter nonce that
    would meet only the uniqueness condition of §8.6.7 is refused). No
-   exported function returns it at ABI 2: the C interface takes no
+   exported function returns it at ABI 3: the C interface takes no
    nonce, and the module's seed path supplies a full-length one. It is
    returned by the `oxicrypt_drbg` testing interface's caller-nonce
    forms: HMAC_DRBG and Hash_DRBG `instantiate`, and CTR_DRBG
@@ -185,6 +214,13 @@ typedef enum {
    */
   OXI_RESULT_ENTROPY_UNAVAILABLE = 33,
   /*
+   The key has reached the number of invocations its mode permits under
+   one key (2^32 AES-GCM encryptions, SP 800-38D §8.3; 2^61 AES-CCM
+   block-cipher invocations, SP 800-38C §5.1). Nothing was written and
+   no IV was generated; the key stays exhausted, so establish a new key.
+   */
+  OXI_RESULT_KEY_EXHAUSTED = 34,
+  /*
    Catch-all for "should-never-happen" cases, including an error variant
    this mapping does not name.
    */
@@ -192,12 +228,93 @@ typedef enum {
 } OxiResult;
 
 /*
- Opaque AES-256 key handle. The internal layout
- (`OxiHandle<Aes256Key>`) is implementation detail and not part
- of the C ABI; cbindgen renders this as an opaque struct.
+ Opaque AES-CBC key handle: a key of 16, 24 or 32 bytes. Built by
+ [`oxi_aes_cbc_key_new`], released by [`oxi_aes_cbc_key_free`], and
+ refused with `InvalidInput = 5` by the symbols of every other mode,
+ which read the allocation's leading `OxiKeyHeader` (a mode kind and a
+ magic the module writes at construction) before any typed access.
 
+ Any number of threads may call the mode's functions with the same handle
+ at the same time: every function takes the handle shared, and no call
+ changes any state through it. [`oxi_aes_cbc_key_free`] alone requires
+ that no other thread is using the handle.
  */
-typedef struct OxiAes256Key OxiAes256Key;
+typedef struct OxiAesCbcKey OxiAesCbcKey;
+
+/*
+ Opaque AES-CCM key handle: a key of 16, 24 or 32 bytes, its tag length
+ and its count of block-cipher invocations. Built by the
+ `oxi_aes_ccm_key_new` functions, released by [`oxi_aes_ccm_key_free`],
+ and refused with `InvalidInput = 5` by the symbols of every other mode,
+ which read the allocation's leading `OxiKeyHeader` (a mode kind and a
+ magic the module writes at construction) before any typed access.
+
+ Any number of threads may call the mode's functions with the same handle
+ at the same time: every function takes the handle shared, and the only
+ state a call changes through it is the CCM invocation count, which is
+ atomic. [`oxi_aes_ccm_key_free`] alone requires that no other thread is
+ using the handle.
+ */
+typedef struct OxiAesCcmKey OxiAesCcmKey;
+
+/*
+ Opaque CMAC key handle: a key of 16, 24 or 32 bytes and its MAC length.
+ Built by [`oxi_aes_cmac_key_new`], released by [`oxi_aes_cmac_key_free`],
+ and refused with `InvalidInput = 5` by the symbols of every other mode,
+ which read the allocation's leading `OxiKeyHeader` (a mode kind and a
+ magic the module writes at construction) before any typed access.
+
+ Any number of threads may call the mode's functions with the same handle
+ at the same time: every function takes the handle shared, and no call
+ changes any state through it. [`oxi_aes_cmac_key_free`] alone requires
+ that no other thread is using the handle.
+ */
+typedef struct OxiAesCmacKey OxiAesCmacKey;
+
+/*
+ Opaque AES-CTR key handle: a key of 16, 24 or 32 bytes. Built by
+ [`oxi_aes_ctr_key_new`], released by [`oxi_aes_ctr_key_free`], and
+ refused with `InvalidInput = 5` by the symbols of every other mode,
+ which read the allocation's leading `OxiKeyHeader` (a mode kind and a
+ magic the module writes at construction) before any typed access.
+
+ Any number of threads may call the mode's functions with the same handle
+ at the same time: every function takes the handle shared, and no call
+ changes any state through it. [`oxi_aes_ctr_key_free`] alone requires
+ that no other thread is using the handle.
+ */
+typedef struct OxiAesCtrKey OxiAesCtrKey;
+
+/*
+ Opaque AES-GCM key handle: a key of 16, 24 or 32 bytes and its count of
+ encryptions. Built by the `oxi_aes_gcm_key_new` functions, released by
+ [`oxi_aes_gcm_key_free`], and refused with `InvalidInput = 5` by the
+ symbols of every other mode, which read the allocation's leading
+ `OxiKeyHeader` (a mode kind and a magic the module writes at
+ construction) before any typed access.
+
+ Any number of threads may call the mode's functions with the same handle
+ at the same time: every function takes the handle shared, and the only
+ state a call changes through it is the GCM invocation count, which is
+ atomic. [`oxi_aes_gcm_key_free`] alone requires that no other thread is
+ using the handle.
+ */
+typedef struct OxiAesGcmKey OxiAesGcmKey;
+
+/*
+ Opaque AES key-wrap key handle: a key of 16, 24 or 32 bytes for KW and
+ KWP, in both the forward and the inverse-cipher variants. Built by
+ [`oxi_aes_kw_key_new`], released by [`oxi_aes_kw_key_free`], and refused
+ with `InvalidInput = 5` by the symbols of every other mode, which read
+ the allocation's leading `OxiKeyHeader` (a mode kind and a magic the
+ module writes at construction) before any typed access.
+
+ Any number of threads may call the mode's functions with the same handle
+ at the same time: every function takes the handle shared, and no call
+ changes any state through it. [`oxi_aes_kw_key_free`] alone requires
+ that no other thread is using the handle.
+ */
+typedef struct OxiAesKwKey OxiAesKwKey;
 
 /*
  Opaque CTR_DRBG-AES-128 handle. See `OxiHmacDrbgSha256` for the
@@ -4854,301 +4971,696 @@ int oxi_rsa_4096_oaep_decrypt_sha256(const OxiRsaPrivateKey4096 *key,
                                      uintptr_t *out_actual_len);
 
 /*
- Allocate a new AES-256 key handle from raw 32-byte key material.
+ Construct an AES-GCM key handle from `key_len` bytes of key material,
+ with a count of 0 and a limit of 2^32 encryptions (SP 800-38D §8.3).
 
- On success, writes a heap-allocated handle pointer through
- `out_handle` and returns `OxiResult::Ok = 0`. The caller owns the
- handle and MUST release it with [`oxi_aes256_free`].
+ `key_len` is 16, 24 or 32; any other returns `InvalidInput = 5`. On
+ success the handle is written to `*out`; release it with
+ [`oxi_aes_gcm_key_free`]. `out` must not overlap `key`. A NULL `out`, or
+ a NULL `key` with a non-zero `key_len`, returns 10; a module that is not
+ operational returns 1. A failed allocation returns `Internal = 255`. On
+ any failure `*out` is unchanged. The buffer contract of every
+ `oxi_aes_*` function, this one included, is stated at the top of this
+ header.
 
  # Safety
 
- - `out_handle` must be a valid pointer to a writable
-   `*mut OxiAes256Key`.
- - `key` must point to at least 32 readable bytes.
+ `key` must be NULL or valid for reads of `key_len` bytes; `out` must be
+ NULL or valid for a write of one pointer.
  */
-int oxi_aes256_new(OxiAes256Key **out_handle, const uint8_t *key);
+int oxi_aes_gcm_key_new(const uint8_t *key, uintptr_t key_len, OxiAesGcmKey **out);
 
 /*
- Free an AES-256 key handle. NULL-safe.
+ Construct an AES-GCM key handle as [`oxi_aes_gcm_key_new`] does, with
+ its count preloaded to `used`: the encryptions earlier instances of the
+ same key bytes performed, as read from [`oxi_aes_gcm_key_invocations`].
 
- After this call the caller's pointer is dangling; the caller
- SHOULD set their pointer to NULL to avoid use-after-free. A
- double-free of the same non-NULL pointer is undefined behaviour
- (matches malloc/free semantics — the shim cannot detect it).
+ A `used` above 2^32 returns `InvalidInput = 5`; a `used` of 2^32 builds
+ a key that is already exhausted. The operator sums the counts of every
+ instance of one key and establishes a new key before the sum reaches
+ 2^32; the module sees one instance only. A NULL `out`, or a NULL `key`
+ with a non-zero `key_len`, returns 10; a module that is not operational
+ returns 1. A failed allocation returns `Internal = 255`. On any failure
+ `*out` is unchanged.
 
  # Safety
 
- `handle` must be either NULL or a pointer previously returned by
- [`oxi_aes256_new`] that has not yet been freed.
+ As for [`oxi_aes_gcm_key_new`].
  */
-void oxi_aes256_free(OxiAes256Key *handle);
+int oxi_aes_gcm_key_new_with_count(const uint8_t *key,
+                                   uintptr_t key_len,
+                                   uint64_t used,
+                                   OxiAesGcmKey **out);
 
 /*
- AES-256-GCM authenticated encryption (one-shot).
+ Construct an AES-GCM key handle as [`oxi_aes_gcm_key_new`] does, with
+ a count of 0 and a limit of `limit` encryptions: this instance's share
+ of the 2^32 permitted under the key bytes.
 
- Buffer requirements:
- - `iv` — exactly 12 readable bytes (96-bit nonce).
- - `aad` — `aad_len` readable bytes if `aad_len > 0`; may be NULL
-   when `aad_len == 0`.
- - `plaintext` — `pt_len` readable bytes; may be NULL when
-   `pt_len == 0`.
- - `ciphertext` — `pt_len` writable bytes.
- - `tag` — exactly 16 writable bytes (128-bit authentication tag).
-
- Returns `OxiResult::Ok = 0` on success or a non-zero discriminant
- per the [`crate::OxiResult`] mapping. `OxiResult::AlgorithmRestricted = 6`
- is returned when AES-256-GCM is blocked by the active profile.
+ A `limit` of 0 or above 2^32 returns `InvalidInput = 5`. The operator
+ keeps the sum of the shares of one key at or below 2^32; the module does
+ not see the other instances. A NULL `out`, or a NULL `key` with a
+ non-zero `key_len`, returns 10; a module that is not operational
+ returns 1. A failed allocation returns `Internal = 255`. On any failure
+ `*out` is unchanged.
 
  # Safety
 
- All pointer/length pairs must be valid as documented above.
- `key` must be a live handle from [`oxi_aes256_new`].
+ As for [`oxi_aes_gcm_key_new`].
  */
-int oxi_aes256_gcm_encrypt(const OxiAes256Key *key,
-                           const uint8_t *iv,
-                           const uint8_t *aad,
-                           uintptr_t aad_len,
-                           const uint8_t *plaintext,
-                           uintptr_t pt_len,
-                           uint8_t *ciphertext,
-                           uint8_t *tag);
+int oxi_aes_gcm_key_new_with_limit(const uint8_t *key,
+                                   uintptr_t key_len,
+                                   uint64_t limit,
+                                   OxiAesGcmKey **out);
 
 /*
- AES-256-GCM authenticated decryption (one-shot).
+ Write to `*out` the number of encryptions reserved under the handle,
+ including any preloaded by [`oxi_aes_gcm_key_new_with_count`].
 
- Returns `OxiResult::TagMismatch = 22` on authentication failure.
- On any non-Ok return, `TagMismatch` included, the `plaintext`
- contents are undefined and MUST NOT be used.
-
- Buffer requirements identical to [`oxi_aes256_gcm_encrypt`] with
- `ciphertext`/`plaintext` directions swapped and `tag` as input.
+ A handle of another mode returns `InvalidInput = 5`. `out` must not
+ overlap the handle. A NULL `key` returns 10; a module that is not
+ operational returns 1.
 
  # Safety
 
- All pointer/length pairs must be valid as documented above.
- `key` must be a live handle from [`oxi_aes256_new`].
+ `key` must be NULL or a live key handle; `out` must be NULL or valid for
+ a write of one `uint64_t`.
  */
-int oxi_aes256_gcm_decrypt(const OxiAes256Key *key,
-                           const uint8_t *iv,
-                           const uint8_t *aad,
-                           uintptr_t aad_len,
-                           const uint8_t *ciphertext,
-                           uintptr_t ct_len,
-                           uint8_t *plaintext,
-                           const uint8_t *tag);
+int oxi_aes_gcm_key_invocations(const OxiAesGcmKey *key, uint64_t *out);
 
 /*
- AES-256-CBC encryption (one-shot).
-
- Buffer requirements:
- - `iv` — exactly 16 readable bytes.
- - `input` — `input_len` readable bytes; must be a positive multiple of 16.
- - `output` — `input_len` writable bytes.
-
- Returns `OxiResult::NotBlockAligned = 20` when `input_len` is not
- a multiple of 16, `OxiResult::LengthMismatch = 23` when the output
- buffer length doesn't match.
+ Free an AES-GCM key handle, zeroizing its key schedule. NULL frees
+ nothing. A handle of another mode frees nothing and stays live, to be
+ freed by its own mode's `_key_free`.
 
  # Safety
 
- All pointer/length pairs must be valid as documented above.
- `key` must be a live handle from [`oxi_aes256_new`].
+ `key` must be NULL or a live key handle that no other thread is using.
+ An AES-GCM handle is dangling once the call returns.
  */
-int oxi_aes256_cbc_encrypt(const OxiAes256Key *key,
-                           const uint8_t *iv,
-                           const uint8_t *input,
-                           uintptr_t input_len,
-                           uint8_t *output);
+void oxi_aes_gcm_key_free(OxiAesGcmKey *key);
 
 /*
- AES-256-CBC decryption (one-shot).
+ AES-GCM authenticated encryption (SP 800-38D §7.1) under a 96-bit IV the
+ module draws from the caller's DRBG handle (SP 800-38D §8.2.2).
 
- Buffer requirements identical to [`oxi_aes256_cbc_encrypt`] with
- input/output directions reversed.
+ Buffers: `aad`, `aad_len` bytes; `plaintext`, `pt_len` bytes;
+ `ciphertext`, `pt_len` writable bytes; `iv_out`, 12 writable bytes;
+ `tag_out`, 16 writable bytes. `aad` and `plaintext` may be NULL with a
+ length of 0. No range may overlap a writable range or either handle,
+ and the DRBG handle may not be the key handle: an overlap, in-place
+ encryption included, returns `InvalidInput = 5`. A handle of another
+ mode returns `InvalidInput = 5`. A NULL `key` returns 10; a module that
+ is not operational returns 1.
+
+ The DRBG handle is taken as `oxi_drbg_generate` takes it, with its codes:
+ `Uninstantiated = 8` for a handle never instantiated, `Busy = 32` for one
+ in use, `InvalidInput = 5` for one inherited from another process.
+ Plaintext longer than 2^36 − 32 bytes returns
+ `InvalidPayloadLength = 26`, AAD longer than 2^61 − 1 bytes
+ `InvalidAadLength = 27`. A key that has reached its limit returns
+ `KeyExhausted = 34` before any IV is drawn, and stays exhausted; an
+ encryption whose IV draw fails still spends one invocation. On success
+ the ciphertext, the IV and the tag are written. On any failure nothing
+ of them survives in the caller's buffers: an output copied before a
+ later copy is refused is zeroed.
 
  # Safety
 
- All pointer/length pairs must be valid as documented above.
- `key` must be a live handle from [`oxi_aes256_new`].
+ `key` must be NULL or a live key handle, `drbg` NULL or a live handle
+ from a `_new_rbg` function, and every non-NULL buffer valid for its
+ stated length.
  */
-int oxi_aes256_cbc_decrypt(const OxiAes256Key *key,
-                           const uint8_t *iv,
-                           const uint8_t *input,
-                           uintptr_t input_len,
-                           uint8_t *output);
+int oxi_aes_gcm_seal(const OxiAesGcmKey *key,
+                     OxiDrbg *drbg,
+                     const uint8_t *aad,
+                     uintptr_t aad_len,
+                     const uint8_t *plaintext,
+                     uintptr_t pt_len,
+                     uint8_t *ciphertext,
+                     uint8_t *iv_out,
+                     uint8_t *tag_out);
 
 /*
- AES-256-CTR XOR (one-shot).
+ AES-GCM authenticated decryption (SP 800-38D §7.2).
 
- Buffer requirements:
- - `icb` — exactly 16 readable bytes (initial counter block).
- - `input` — `len` readable bytes (any length).
- - `output` — `len` writable bytes.
+ Buffers: `iv`, 12 bytes; `aad`, `aad_len` bytes; `ciphertext`, `ct_len`
+ bytes; `tag`, 16 bytes; `plaintext`, `ct_len` writable bytes. `aad` and
+ `ciphertext` may be NULL with a length of 0. No range may overlap
+ `plaintext` or the handle: an overlap returns `InvalidInput = 5`. A
+ handle of another mode returns `InvalidInput = 5`. A NULL `key` returns
+ 10; a module that is not operational returns 1.
 
- CTR is symmetric: encrypt and decrypt are the same operation.
- Same `(key, icb)` pair MUST NOT be reused — the caller is
- responsible for nonce uniqueness within a key (SP 800-38A
- Appendix B).
+ A tag that does not verify returns `TagMismatch = 22`. The length bounds
+ of [`oxi_aes_gcm_seal`] apply to `ct_len` and `aad_len`. Decryption
+ does not count against the key's limit. The plaintext is written only on
+ success; on any failure nothing is.
 
  # Safety
 
- All pointer/length pairs must be valid as documented above.
- `key` must be a live handle from [`oxi_aes256_new`].
+ `key` must be NULL or a live key handle, and every non-NULL buffer valid
+ for its stated length.
  */
-int oxi_aes256_ctr(const OxiAes256Key *key,
-                   const uint8_t *icb,
-                   const uint8_t *input,
-                   uintptr_t len,
-                   uint8_t *output);
+int oxi_aes_gcm_open(const OxiAesGcmKey *key,
+                     const uint8_t *iv,
+                     const uint8_t *aad,
+                     uintptr_t aad_len,
+                     const uint8_t *ciphertext,
+                     uintptr_t ct_len,
+                     const uint8_t *tag,
+                     uint8_t *plaintext);
 
 /*
- AES-256-CCM authenticated encryption (one-shot).
+ Construct an AES-CCM key handle from `key_len` bytes of key material
+ with a tag length of `tag_len` bytes, fixed for the key (SP 800-38C
+ §5.3), and an invocation count of 0.
 
- Buffer requirements:
- - `nonce` — `nonce_len` readable bytes; valid range 7..=13 per SP 800-38C.
- - `aad` — `aad_len` readable bytes if `aad_len > 0`; may be NULL
-   when `aad_len == 0` (AAD is defined by its length).
- - `plaintext` — `pt_len` readable bytes; may be NULL when `pt_len == 0`.
- - `tlen` — tag length in bytes; valid set {4, 6, 8, 10, 12, 14, 16}.
- - `out` — exactly `pt_len + tlen` writable bytes; layout `C || T`.
+ `key_len` is 16, 24 or 32 and `tag_len` one of 8, 10, 12, 14 or 16; any
+ other returns `InvalidInput = 5`. On success the handle is written to
+ `*out`; release it with [`oxi_aes_ccm_key_free`]. `out` must not overlap
+ `key`. A NULL `out`, or a NULL `key` with a non-zero `key_len`, returns
+ 10; a module that is not operational returns 1. A failed allocation
+ returns `Internal = 255`. On any failure `*out` is unchanged.
 
  # Safety
 
- All pointer/length pairs must be valid as documented above.
- `key` must be a live handle from [`oxi_aes256_new`].
+ `key` must be NULL or valid for reads of `key_len` bytes; `out` must be
+ NULL or valid for a write of one pointer.
  */
-int oxi_aes256_ccm_encrypt(const OxiAes256Key *key,
-                           const uint8_t *nonce,
-                           uintptr_t nonce_len,
-                           const uint8_t *aad,
-                           uintptr_t aad_len,
-                           const uint8_t *plaintext,
-                           uintptr_t pt_len,
-                           uintptr_t tlen,
-                           uint8_t *out);
+int oxi_aes_ccm_key_new(const uint8_t *key,
+                        uintptr_t key_len,
+                        uintptr_t tag_len,
+                        OxiAesCcmKey **out);
 
 /*
- AES-256-CCM authenticated decryption (one-shot).
+ Construct an AES-CCM key handle as [`oxi_aes_ccm_key_new`] does, with
+ its count preloaded to `used`: the block-cipher invocations earlier
+ instances of the same key bytes performed, as read from
+ [`oxi_aes_ccm_key_invocations`].
 
- `ciphertext` is the full `C || T` buffer of length
- `ct_len = pt_len + tlen`. On success writes the recovered plaintext
- (length `ct_len - tlen`) into `out`.
-
- On tag-verification failure returns `OxiResult::TagMismatch = 22`
- and the upstream zeroises the output buffer so unverified plaintext
- is never exposed.
+ A `used` above 2^61 returns `InvalidInput = 5`. A NULL `out`, or a NULL
+ `key` with a non-zero `key_len`, returns 10; a module that is not
+ operational returns 1. A failed allocation returns `Internal = 255`. On
+ any failure `*out` is unchanged.
 
  # Safety
 
- All pointer/length pairs must be valid as documented above.
- `key` must be a live handle from [`oxi_aes256_new`].
+ As for [`oxi_aes_ccm_key_new`].
  */
-int oxi_aes256_ccm_decrypt(const OxiAes256Key *key,
-                           const uint8_t *nonce,
-                           uintptr_t nonce_len,
-                           const uint8_t *aad,
-                           uintptr_t aad_len,
-                           const uint8_t *ciphertext,
-                           uintptr_t ct_len,
-                           uintptr_t tlen,
-                           uint8_t *out);
+int oxi_aes_ccm_key_new_with_count(const uint8_t *key,
+                                   uintptr_t key_len,
+                                   uintptr_t tag_len,
+                                   uint64_t used,
+                                   OxiAesCcmKey **out);
 
 /*
- CMAC-AES-256 (one-shot).
+ Write to `*out` the number of block-cipher invocations reserved under the
+ handle, including any preloaded by [`oxi_aes_ccm_key_new_with_count`].
 
- Buffer requirements:
- - `msg` — `msg_len` readable bytes; may be NULL when `msg_len == 0`.
- - `tag` — exactly 16 writable bytes.
+ A handle of another mode returns `InvalidInput = 5`. `out` must not
+ overlap the handle. A NULL `key` returns 10; a module that is not
+ operational returns 1.
 
  # Safety
 
- All pointer/length pairs must be valid as documented above.
- `key` must be a live handle from [`oxi_aes256_new`].
+ `key` must be NULL or a live key handle; `out` must be NULL or valid for
+ a write of one `uint64_t`.
  */
-int oxi_aes256_cmac(const OxiAes256Key *key, const uint8_t *msg, uintptr_t msg_len, uint8_t *tag);
+int oxi_aes_ccm_key_invocations(const OxiAesCcmKey *key, uint64_t *out);
 
 /*
- AES-256-KW wrap (SP 800-38F §6.2 KW-AE).
-
- Buffer requirements:
- - `plaintext` — `pt_len` readable bytes; must be a positive
-   multiple of 8 and at least 16.
- - `out` — exactly `pt_len + 8` writable bytes.
+ Free an AES-CCM key handle, zeroizing its key schedule. NULL frees
+ nothing. A handle of another mode frees nothing and stays live, to be
+ freed by its own mode's `_key_free`.
 
  # Safety
 
- All pointer/length pairs must be valid as documented above.
- `key` must be a live handle from [`oxi_aes256_new`].
+ `key` must be NULL or a live key handle that no other thread is using.
+ An AES-CCM handle is dangling once the call returns.
  */
-int oxi_aes256_kw_wrap(const OxiAes256Key *key,
-                       const uint8_t *plaintext,
-                       uintptr_t pt_len,
-                       uint8_t *out);
+void oxi_aes_ccm_key_free(OxiAesCcmKey *key);
 
 /*
- AES-256-KW unwrap (SP 800-38F §6.2 KW-AD).
+ AES-CCM authenticated encryption (SP 800-38C §6.1) under a caller's
+ nonce, which must be unique under the key.
 
- Buffer requirements:
- - `ciphertext` — `ct_len` readable bytes; must be a positive
-   multiple of 8 and at least 24.
- - `out` — exactly `ct_len - 8` writable bytes.
+ Buffers: `nonce`, `nonce_len` bytes, 7 to 13; `aad`, `aad_len` bytes;
+ `pt`, `pt_len` bytes; `ct`, `pt_len` writable bytes; `tag`, the key's
+ tag length in writable bytes. `aad` and `pt` may be NULL with a length
+ of 0. No range may overlap a writable range or the handle: an overlap,
+ in-place encryption included, returns `InvalidInput = 5`. A handle of
+ another mode returns `InvalidInput = 5`. A NULL `key` returns 10; a
+ module that is not operational returns 1.
 
- Returns `OxiResult::TagMismatch = 22` if the integrity check
- value did not verify.
+ A nonce length outside 7 to 13 returns `InvalidNonceLength = 24`, a
+ payload the nonce's length field cannot represent
+ `InvalidPayloadLength = 26`, AAD above the SP 800-38C bound
+ `InvalidAadLength = 27`, and an encryption that would take the key's
+ count past 2^61 block-cipher invocations `KeyExhausted = 34`. A payload
+ the length field cannot represent is refused before the key's count is
+ charged. The ciphertext and tag are written only on success. On any
+ failure nothing of them survives in the caller's buffers: a ciphertext
+ copied before the tag's copy is refused is zeroed.
 
  # Safety
 
- All pointer/length pairs must be valid as documented above.
- `key` must be a live handle from [`oxi_aes256_new`].
+ `key` must be NULL or a live key handle, and every non-NULL buffer valid
+ for its stated length.
  */
-int oxi_aes256_kw_unwrap(const OxiAes256Key *key,
-                         const uint8_t *ciphertext,
-                         uintptr_t ct_len,
-                         uint8_t *out);
+int oxi_aes_ccm_seal(const OxiAesCcmKey *key,
+                     const uint8_t *nonce,
+                     uintptr_t nonce_len,
+                     const uint8_t *aad,
+                     uintptr_t aad_len,
+                     const uint8_t *pt,
+                     uintptr_t pt_len,
+                     uint8_t *ct,
+                     uint8_t *tag);
 
 /*
- AES-256-KWP wrap (SP 800-38F §6.3 KWP-AE / RFC 5649).
+ AES-CCM authenticated decryption (SP 800-38C §6.2).
 
- Buffer requirements:
- - `plaintext` — `pt_len` readable bytes; must be `1..=2^32-1`.
- - `out` — exactly `((pt_len + 7) / 8) * 8 + 8` writable bytes
-   (padded plaintext + 8-byte AIV).
+ Buffers: `nonce`, `nonce_len` bytes; `aad`, `aad_len` bytes; `ct`,
+ `ct_len` bytes, the ciphertext without its tag; `tag`, the key's tag
+ length in bytes; `pt`, `ct_len` writable bytes. `nonce`, `aad` and `ct`
+ may be NULL with a length of 0. No range may overlap `pt` or the
+ handle: an overlap returns `InvalidInput = 5`. A handle of another mode
+ returns `InvalidInput = 5`. A NULL `key` returns 10; a module that is
+ not operational returns 1.
+
+ Every invalid input returns `TagMismatch = 22`: a nonce length outside 7
+ to 13, a payload length the nonce's length field cannot represent, and a
+ tag that does not verify. The tag is verified before any plaintext
+ exists outside the module, and `pt` is written only on success. A
+ decryption that would take the key's count past 2^61 returns
+ `KeyExhausted = 34`. A failed decryption is counted in full, except a
+ `ct_len` the nonce's length field cannot represent, which is refused
+ before the count is charged.
 
  # Safety
 
- All pointer/length pairs must be valid as documented above.
- `key` must be a live handle from [`oxi_aes256_new`].
+ `key` must be NULL or a live key handle, and every non-NULL buffer valid
+ for its stated length.
  */
-int oxi_aes256_kwp_wrap(const OxiAes256Key *key,
-                        const uint8_t *plaintext,
-                        uintptr_t pt_len,
+int oxi_aes_ccm_open(const OxiAesCcmKey *key,
+                     const uint8_t *nonce,
+                     uintptr_t nonce_len,
+                     const uint8_t *aad,
+                     uintptr_t aad_len,
+                     const uint8_t *ct,
+                     uintptr_t ct_len,
+                     const uint8_t *tag,
+                     uint8_t *pt);
+
+/*
+ Construct an AES-CBC key handle from `key_len` bytes of key material.
+
+ `key_len` is 16, 24 or 32; any other returns `InvalidInput = 5`. On
+ success the handle is written to `*out`; release it with
+ [`oxi_aes_cbc_key_free`]. `out` must not overlap `key`. A NULL `out`, or
+ a NULL `key` with a non-zero `key_len`, returns 10; a module that is not
+ operational returns 1. A failed allocation returns `Internal = 255`. On
+ any failure `*out` is unchanged.
+
+ # Safety
+
+ `key` must be NULL or valid for reads of `key_len` bytes; `out` must be
+ NULL or valid for a write of one pointer.
+ */
+int oxi_aes_cbc_key_new(const uint8_t *key, uintptr_t key_len, OxiAesCbcKey **out);
+
+/*
+ Free an AES-CBC key handle, zeroizing its key schedule. NULL frees
+ nothing. A handle of another mode frees nothing and stays live, to be
+ freed by its own mode's `_key_free`.
+
+ # Safety
+
+ `key` must be NULL or a live key handle that no other thread is using.
+ An AES-CBC handle is dangling once the call returns.
+ */
+void oxi_aes_cbc_key_free(OxiAesCbcKey *key);
+
+/*
+ AES-CBC encryption (SP 800-38A §6.2), confidentiality only.
+
+ Buffers: `iv`, 16 bytes, which must be unpredictable (SP 800-38A
+ Appendix C); `in`, `len` bytes, a positive multiple of 16; `out`, `len`
+ writable bytes. No range may overlap `out` or the handle: an overlap,
+ in-place encryption included, returns `InvalidInput = 5`. A handle of
+ another mode returns `InvalidInput = 5`. A NULL `key` returns 10; a
+ module that is not operational returns 1.
+
+ A `len` that is not a multiple of 16 returns `NotBlockAligned = 20`, a
+ `len` of 0 `InvalidPayloadLength = 26`. `out` is written only on success.
+
+ # Safety
+
+ `key` must be NULL or a live key handle, and every non-NULL buffer valid
+ for its stated length.
+ */
+int oxi_aes_cbc_encrypt(const OxiAesCbcKey *key,
+                        const uint8_t *iv,
+                        const uint8_t *in,
+                        uintptr_t len,
                         uint8_t *out);
 
 /*
- AES-256-KWP unwrap (SP 800-38F §6.3 KWP-AD / RFC 5649).
+ AES-CBC decryption (SP 800-38A §6.2).
 
- Buffer requirements:
- - `ciphertext` — `ct_len` readable bytes; must be a positive
-   multiple of 8 and at least 16.
- - `out_scratch` — exactly `ct_len - 8` writable bytes (padded
-   plaintext buffer; only the first `*out_len` bytes are the
-   recovered message after success).
- - `out_len` — pointer to a `size_t` that receives the recovered
-   plaintext length (≤ `ct_len - 8`) on success.
-
- Returns `OxiResult::TagMismatch = 22` on AIV / padding mismatch.
- `*out_len` is unmodified on any non-Ok return.
+ The buffers and codes of [`oxi_aes_cbc_encrypt`], with `in` the
+ ciphertext and `out` the plaintext. A NULL `key` returns 10; a module
+ that is not operational returns 1.
 
  # Safety
 
- All pointer/length pairs must be valid as documented above.
- `key` must be a live handle from [`oxi_aes256_new`].
+ `key` must be NULL or a live key handle, and every non-NULL buffer valid
+ for its stated length.
  */
-int oxi_aes256_kwp_unwrap(const OxiAes256Key *key,
-                          const uint8_t *ciphertext,
-                          uintptr_t ct_len,
-                          uint8_t *out_scratch,
-                          uintptr_t *out_len);
+int oxi_aes_cbc_decrypt(const OxiAesCbcKey *key,
+                        const uint8_t *iv,
+                        const uint8_t *in,
+                        uintptr_t len,
+                        uint8_t *out);
+
+/*
+ Construct an AES-CTR key handle from `key_len` bytes of key material.
+
+ `key_len` is 16, 24 or 32; any other returns `InvalidInput = 5`. On
+ success the handle is written to `*out`; release it with
+ [`oxi_aes_ctr_key_free`]. `out` must not overlap `key`. A NULL `out`, or
+ a NULL `key` with a non-zero `key_len`, returns 10; a module that is not
+ operational returns 1. A failed allocation returns `Internal = 255`. On
+ any failure `*out` is unchanged.
+
+ # Safety
+
+ `key` must be NULL or valid for reads of `key_len` bytes; `out` must be
+ NULL or valid for a write of one pointer.
+ */
+int oxi_aes_ctr_key_new(const uint8_t *key, uintptr_t key_len, OxiAesCtrKey **out);
+
+/*
+ Free an AES-CTR key handle, zeroizing its key schedule. NULL frees
+ nothing. A handle of another mode frees nothing and stays live, to be
+ freed by its own mode's `_key_free`.
+
+ # Safety
+
+ `key` must be NULL or a live key handle that no other thread is using.
+ An AES-CTR handle is dangling once the call returns.
+ */
+void oxi_aes_ctr_key_free(OxiAesCtrKey *key);
+
+/*
+ AES-CTR (SP 800-38A §6.5): XORs `in` with the keystream from the
+ 16-byte initial counter block `counter`, which the module increments as
+ one 128-bit big-endian integer. Encryption and decryption are the same
+ operation.
+
+ Buffers: `counter`, 16 bytes; `in`, `len` bytes, any length; `out`, `len`
+ writable bytes. No range may overlap `out` or the handle: an overlap,
+ in-place operation included, returns `InvalidInput = 5`. A handle of
+ another mode returns `InvalidInput = 5`. A NULL `key` returns 10; a
+ module that is not operational returns 1. No counter block may repeat
+ under one key (SP 800-38A Appendix B); that is the caller's duty. `out`
+ is written only on success.
+
+ # Safety
+
+ `key` must be NULL or a live key handle, and every non-NULL buffer valid
+ for its stated length.
+ */
+int oxi_aes_ctr(const OxiAesCtrKey *key,
+                const uint8_t *counter,
+                const uint8_t *in,
+                uintptr_t len,
+                uint8_t *out);
+
+/*
+ Construct an AES key-wrap key handle from `key_len` bytes of key
+ material, for KW and KWP (SP 800-38F) in both the forward and the
+ inverse-cipher variants.
+
+ `key_len` is 16, 24 or 32; any other returns `InvalidInput = 5`. On
+ success the handle is written to `*out`; release it with
+ [`oxi_aes_kw_key_free`]. `out` must not overlap `key`. A NULL `out`, or
+ a NULL `key` with a non-zero `key_len`, returns 10; a module that is not
+ operational returns 1. A failed allocation returns `Internal = 255`. On
+ any failure `*out` is unchanged.
+
+ # Safety
+
+ `key` must be NULL or valid for reads of `key_len` bytes; `out` must be
+ NULL or valid for a write of one pointer.
+ */
+int oxi_aes_kw_key_new(const uint8_t *key, uintptr_t key_len, OxiAesKwKey **out);
+
+/*
+ Free an AES key-wrap key handle, zeroizing its key schedule. NULL frees
+ nothing. A handle of another mode frees nothing and stays live, to be
+ freed by its own mode's `_key_free`.
+
+ # Safety
+
+ `key` must be NULL or a live key handle that no other thread is using.
+ An AES key-wrap handle is dangling once the call returns.
+ */
+void oxi_aes_kw_key_free(OxiAesKwKey *key);
+
+/*
+ AES-KW wrap (SP 800-38F §6.2 Algorithm 3, KW-AE).
+
+ Buffers: `pt`, `pt_len` bytes, a multiple of 8 of at least 16 and fewer
+ than 2^54 semiblocks; `out`, `pt_len + 8` writable bytes. No range may
+ overlap `out` or the handle: an overlap, in-place wrapping included,
+ returns `InvalidInput = 5`. A handle of another mode returns
+ `InvalidInput = 5`. A NULL `key` returns 10; a module that is not
+ operational returns 1. A length KW does not accept returns
+ `LengthMismatch = 23` or `InvalidPayloadLength = 26`. `out` is written
+ only on success.
+
+ # Safety
+
+ `key` must be NULL or a live key handle, and every non-NULL buffer valid
+ for its stated length.
+ */
+int oxi_aes_kw_wrap(const OxiAesKwKey *key, const uint8_t *pt, uintptr_t pt_len, uint8_t *out);
+
+/*
+ AES-KW unwrap (SP 800-38F §6.2 Algorithm 4, KW-AD).
+
+ Buffers: `ct`, `ct_len` bytes, a multiple of 8 of at least 24; `out`,
+ `ct_len - 8` writable bytes. No range may overlap `out` or the handle:
+ an overlap returns `InvalidInput = 5`. A handle of another mode returns
+ `InvalidInput = 5`. A NULL `key` returns 10; a module that is not
+ operational returns 1. An integrity check value that does not verify
+ returns `TagMismatch = 22`, a length KW does not accept
+ `LengthMismatch = 23` or `InvalidPayloadLength = 26`. On any failure
+ nothing is written to `out`: the unwrapped key is copied out only once
+ it has verified.
+
+ # Safety
+
+ `key` must be NULL or a live key handle, and every non-NULL buffer valid
+ for its stated length.
+ */
+int oxi_aes_kw_unwrap(const OxiAesKwKey *key, const uint8_t *ct, uintptr_t ct_len, uint8_t *out);
+
+/*
+ AES-KWP wrap (SP 800-38F §6.3 Algorithm 5, KWP-AE).
+
+ Buffers: `pt`, `pt_len` bytes, 1 to 2^32 − 1; `out`, `out_cap` writable
+ bytes, at least the wrapped length `((pt_len + 7) / 8) * 8 + 8`;
+ `written`, one writable `uintptr_t`, set to the wrapped length on
+ success. No range may overlap `out`, `written` or the handle: an
+ overlap returns `InvalidInput = 5`. A handle of another mode returns
+ `InvalidInput = 5`. A NULL `key` or `written` returns 10; a module that
+ is not operational returns 1. An `out_cap` below the wrapped length
+ returns `BufferTooSmall = 11`, and a `pt_len` KWP does not accept
+ `LengthMismatch = 23`. `out` and `written` are written only on success.
+ On any failure nothing of them survives in the caller's buffers: an
+ `out` copied before the copy of `written` is refused is zeroed.
+
+ # Safety
+
+ `key` must be NULL or a live key handle, every non-NULL buffer valid for
+ its stated length, and `written` NULL or valid for a write of one
+ `uintptr_t`.
+ */
+int oxi_aes_kwp_wrap(const OxiAesKwKey *key,
+                     const uint8_t *pt,
+                     uintptr_t pt_len,
+                     uint8_t *out,
+                     uintptr_t out_cap,
+                     uintptr_t *written);
+
+/*
+ AES-KWP unwrap (SP 800-38F §6.3 Algorithm 6, KWP-AD).
+
+ Buffers: `ct`, `ct_len` bytes, a multiple of 8 of at least 16; `out`,
+ `out_cap` writable bytes, at least the unwrapped length; `written`, one
+ writable `uintptr_t`, set to the unwrapped length on success. No range
+ may overlap `out`, `written` or the handle: an overlap returns
+ `InvalidInput = 5`. A handle of another mode returns
+ `InvalidInput = 5`. A NULL `key` or `written` returns 10; a module that
+ is not operational returns 1. An integrity check value or padding that
+ does not verify returns `TagMismatch = 22`, a length KWP does not
+ accept `LengthMismatch = 23`, and an `out_cap` below the unwrapped
+ length `BufferTooSmall = 11`. `out_cap` is compared with the unwrapped
+ length only after verification, so `TagMismatch = 22` takes precedence
+ over `BufferTooSmall = 11`. The unwrapped key is copied out only once it
+ has verified, and on any failure nothing of `out` or `written` survives
+ in the caller's buffers: an `out` copied before the copy of `written`
+ is refused is zeroed.
+
+ # Safety
+
+ `key` must be NULL or a live key handle, every non-NULL buffer valid for
+ its stated length, and `written` NULL or valid for a write of one
+ `uintptr_t`.
+ */
+int oxi_aes_kwp_unwrap(const OxiAesKwKey *key,
+                       const uint8_t *ct,
+                       uintptr_t ct_len,
+                       uint8_t *out,
+                       uintptr_t out_cap,
+                       uintptr_t *written);
+
+/*
+ AES-KW wrap with the inverse cipher (SP 800-38F §6.4, KW-AE with
+ CIPH⁻¹). The buffers and codes of [`oxi_aes_kw_wrap`]. A NULL `key`
+ returns 10; a module that is not operational returns 1.
+
+ # Safety
+
+ As for [`oxi_aes_kw_wrap`].
+ */
+int oxi_aes_kw_wrap_inverse(const OxiAesKwKey *key,
+                            const uint8_t *pt,
+                            uintptr_t pt_len,
+                            uint8_t *out);
+
+/*
+ AES-KW unwrap with the forward cipher (SP 800-38F §6.4, the inverse of
+ [`oxi_aes_kw_wrap_inverse`]). The buffers and codes of
+ [`oxi_aes_kw_unwrap`]; on any failure nothing is written to `out`. A
+ NULL `key` returns 10; a module that is not operational returns 1.
+
+ # Safety
+
+ As for [`oxi_aes_kw_unwrap`].
+ */
+int oxi_aes_kw_unwrap_inverse(const OxiAesKwKey *key,
+                              const uint8_t *ct,
+                              uintptr_t ct_len,
+                              uint8_t *out);
+
+/*
+ AES-KWP wrap with the inverse cipher (SP 800-38F §6.4, KWP-AE with
+ CIPH⁻¹). The buffers and codes of [`oxi_aes_kwp_wrap`]. A NULL `key`
+ returns 10; a module that is not operational returns 1.
+
+ # Safety
+
+ As for [`oxi_aes_kwp_wrap`].
+ */
+int oxi_aes_kwp_wrap_inverse(const OxiAesKwKey *key,
+                             const uint8_t *pt,
+                             uintptr_t pt_len,
+                             uint8_t *out,
+                             uintptr_t out_cap,
+                             uintptr_t *written);
+
+/*
+ AES-KWP unwrap with the forward cipher (SP 800-38F §6.4, the inverse of
+ [`oxi_aes_kwp_wrap_inverse`]). The buffers and codes of
+ [`oxi_aes_kwp_unwrap`], including its precedence of `TagMismatch = 22`
+ over `BufferTooSmall = 11`; on any failure nothing of `out` or `written`
+ survives in the caller's buffers. A NULL `key` returns 10; a module that
+ is not operational returns 1.
+
+ # Safety
+
+ As for [`oxi_aes_kwp_unwrap`].
+ */
+int oxi_aes_kwp_unwrap_inverse(const OxiAesKwKey *key,
+                               const uint8_t *ct,
+                               uintptr_t ct_len,
+                               uint8_t *out,
+                               uintptr_t out_cap,
+                               uintptr_t *written);
+
+/*
+ Construct a CMAC key handle (SP 800-38B) from `key_len` bytes of key
+ material with a MAC length of `mac_len` bytes, fixed for the key.
+
+ `key_len` is 16, 24 or 32 and `mac_len` 8 to 16; any other returns
+ `InvalidInput = 5`. On success the handle is written to `*out`; release
+ it with [`oxi_aes_cmac_key_free`]. `out` must not overlap `key`. A NULL
+ `out`, or a NULL `key` with a non-zero `key_len`, returns 10; a module
+ that is not operational returns 1. A failed allocation returns
+ `Internal = 255`. On any failure `*out` is unchanged. SP 800-38B
+ Appendix B recommends at most 2^48 messages under one key.
+
+ # Safety
+
+ `key` must be NULL or valid for reads of `key_len` bytes; `out` must be
+ NULL or valid for a write of one pointer.
+ */
+int oxi_aes_cmac_key_new(const uint8_t *key,
+                         uintptr_t key_len,
+                         uintptr_t mac_len,
+                         OxiAesCmacKey **out);
+
+/*
+ Free a CMAC key handle, zeroizing its key schedule and subkeys. NULL
+ frees nothing. A handle of another mode frees nothing and stays live, to
+ be freed by its own mode's `_key_free`.
+
+ # Safety
+
+ `key` must be NULL or a live key handle that no other thread is using.
+ A CMAC handle is dangling once the call returns.
+ */
+void oxi_aes_cmac_key_free(OxiAesCmacKey *key);
+
+/*
+ Compute the CMAC (SP 800-38B §6.2) of `msg` into `mac`.
+
+ Buffers: `msg`, `msg_len` bytes, NULL with a length of 0 allowed; `mac`,
+ the key's MAC length in writable bytes. No range may overlap `mac` or
+ the handle: an overlap returns `InvalidInput = 5`. A handle of another
+ mode returns `InvalidInput = 5`. A NULL `key` returns 10; a module that
+ is not operational returns 1. `mac` is written only on success.
+
+ # Safety
+
+ `key` must be NULL or a live key handle, and every non-NULL buffer valid
+ for its stated length.
+ */
+int oxi_aes_cmac(const OxiAesCmacKey *key, const uint8_t *msg, uintptr_t msg_len, uint8_t *mac);
+
+/*
+ Verify `mac` as the CMAC of `msg` (SP 800-38B §6.3), comparing every
+ byte of the key's MAC length without an early exit.
+
+ Buffers: `msg`, `msg_len` bytes, NULL with a length of 0 allowed; `mac`,
+ the key's MAC length in bytes. No range may overlap the handle: an
+ overlap returns `InvalidInput = 5`. A handle of another mode returns
+ `InvalidInput = 5`. A NULL `key` returns 10; a module that is not
+ operational returns 1. A MAC that does not verify returns
+ `TagMismatch = 22`. Nothing is written.
+
+ # Safety
+
+ `key` must be NULL or a live key handle, and every non-NULL buffer valid
+ for its stated length.
+ */
+int oxi_aes_cmac_verify(const OxiAesCmacKey *key,
+                        const uint8_t *msg,
+                        uintptr_t msg_len,
+                        const uint8_t *mac);
 
 /*
  Allocate a new, **uninstantiated** HMAC_DRBG-SHA-256 handle.

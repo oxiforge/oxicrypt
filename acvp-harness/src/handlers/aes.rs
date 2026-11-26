@@ -12,12 +12,12 @@
 //! `(algorithm, None, "1.0")` — ACVP-AES-* is a single-field family
 //! in the three-tuple `(algorithm, Option<mode>, revision)` axis.
 //!
-//! Phase-1 scope notes:
+//! Scope:
 //!
 //! - CTR only receives byte-aligned payloads. The vendored slice
 //!   filters tests whose `payloadLen` is a multiple of 8.
-//! - GCM requires 96-bit IV and 128-bit tag (Phase-1 constraint).
-//!   The vendored slice filters for these at generation time.
+//! - The vendored GCM slice holds only 96-bit IV, 128-bit tag groups;
+//!   the generator filters for these.
 //! - AEAD decrypt / KW unwrap tests include `testPassed` cases
 //!   where tag/ICV verification is expected to fail — the handler
 //!   returns `{tcId, testPassed: false}` for those.
@@ -31,10 +31,10 @@ use crate::dispatch::{AlgorithmHandler, DispatchError};
 use crate::hex;
 use crate::json::JsonValue;
 use oxicrypt_aes::{
-    Aes128Key, Aes192Key, Aes256Key, BLOCK_SIZE, BlockCipher, ModeError, cbc_decrypt, cbc_encrypt,
-    ccm_decrypt, ccm_encrypt, ctr_xor, ecb_decrypt, ecb_encrypt, gcm_decrypt, gcm_encrypt,
-    kw_unwrap, kw_unwrap_inverse_cipher, kw_wrap, kw_wrap_inverse_cipher, kwp_unwrap,
-    kwp_unwrap_inverse_cipher, kwp_wrap, kwp_wrap_inverse_cipher,
+    BLOCK_SIZE, CbcKey, CcmKey, CtrKey, EcbKey, GcmKey, KwKey, ModeError, cbc_decrypt, cbc_encrypt,
+    ccm_decrypt, ccm_encrypt, ctr, ecb_decrypt, ecb_encrypt, gcm_decrypt, gcm_encrypt, kw_unwrap,
+    kw_unwrap_inverse, kw_wrap, kw_wrap_inverse, kwp_unwrap, kwp_unwrap_inverse, kwp_wrap,
+    kwp_wrap_inverse,
 };
 
 /// AES block-cipher mode tag for dispatch.
@@ -58,7 +58,7 @@ pub struct AesCbcHandler;
 /// AES-CTR AFT dispatcher.
 pub struct AesCtrHandler;
 
-/// AES-GCM AFT dispatcher (Phase-1: 96-bit IV, 128-bit tag only).
+/// AES-GCM AFT dispatcher.
 pub struct AesGcmHandler;
 
 /// AES-CCM AFT dispatcher.
@@ -192,8 +192,8 @@ enum KwCipher {
     Inverse,
 }
 
-/// Walk an AES AFT group, dispatching each test to the mode-specific
-/// one-shot routine. MCT groups are rejected explicitly.
+/// Walk an AES group: an ECB or CBC MCT group goes to the MCT engine,
+/// and each test of any other group to the mode-specific one-shot routine.
 fn handle_aes_group(group: &JsonValue, mode: AesMode) -> Result<JsonValue, DispatchError> {
     let tg_id = group
         .get("tgId")
@@ -209,7 +209,6 @@ fn handle_aes_group(group: &JsonValue, mode: AesMode) -> Result<JsonValue, Dispa
         .and_then(JsonValue::as_u64)
         .ok_or(DispatchError::MissingField("keyLen"))?;
     if test_type == "MCT" {
-        // MCT is supported for ECB and CBC only.
         match mode {
             AesMode::Ecb | AesMode::Cbc => {
                 return handle_aes_mct_group(group, mode, direction, tg_id, key_len_bits);
@@ -247,11 +246,14 @@ fn handle_aes_group(group: &JsonValue, mode: AesMode) -> Result<JsonValue, Dispa
 /// For ECB/CBC/CTR all fields are `None`; for AEAD/wrap modes the
 /// relevant lengths are populated.
 struct GroupMeta {
-    /// GCM: tag size in bytes (Phase-1: always 16).
+    /// GCM: tag size in bytes.
     gcm_tag: Option<usize>,
+    /// GCM: the group's `ivGen` is `internal`, so the implementation
+    /// generates each encryption's IV and returns it.
+    gcm_iv_internal: bool,
     /// CCM: nonce size in bytes (7..=13).
     ccm_nonce: Option<usize>,
-    /// CCM: tag size in bytes (4,6,8,10,12,14,16).
+    /// CCM: tag size in bytes (8,10,12,14,16).
     ccm_tag: Option<usize>,
     /// KW/KWP: which AES cipher direction drives the W function.
     kw_cipher: Option<KwCipher>,
@@ -272,6 +274,8 @@ impl GroupMeta {
                 }
                 Ok(Self {
                     gcm_tag: Some((tag_bits / 8) as usize),
+                    gcm_iv_internal: group.get("ivGen").and_then(JsonValue::as_str)
+                        == Some("internal"),
                     ccm_nonce: None,
                     ccm_tag: None,
                     kw_cipher: None,
@@ -293,6 +297,7 @@ impl GroupMeta {
                 }
                 Ok(Self {
                     gcm_tag: None,
+                    gcm_iv_internal: false,
                     ccm_nonce: Some((iv_bits / 8) as usize),
                     ccm_tag: Some((tag_bits / 8) as usize),
                     kw_cipher: None,
@@ -314,6 +319,7 @@ impl GroupMeta {
                 };
                 Ok(Self {
                     gcm_tag: None,
+                    gcm_iv_internal: false,
                     ccm_nonce: None,
                     ccm_tag: None,
                     kw_cipher: Some(kw_cipher),
@@ -321,6 +327,7 @@ impl GroupMeta {
             }
             _ => Ok(Self {
                 gcm_tag: None,
+                gcm_iv_internal: false,
                 ccm_nonce: None,
                 ccm_tag: None,
                 kw_cipher: None,
@@ -346,7 +353,7 @@ fn parse_direction(group: &JsonValue) -> Result<Direction, DispatchError> {
 /// Execute a single AFT test case and return its response object.
 ///
 /// For simple modes (ECB/CBC/CTR): `{tcId, ct}` or `{tcId, pt}`.
-/// For GCM encrypt: `{tcId, ct, tag}`.
+/// For GCM encrypt: `{tcId, iv, ct, tag}`, with the IV the module drew.
 /// For GCM/CCM/KW/KWP decrypt: `{tcId, testPassed}` (+ `pt` if passed).
 /// For CCM encrypt: `{tcId, ct}` (ct includes appended tag).
 /// For KW/KWP encrypt: `{tcId, ct}`.
@@ -372,7 +379,6 @@ fn run_aes_test(
         ));
     }
 
-    // AEAD / wrap modes have mode-specific response shapes.
     match mode {
         AesMode::Gcm => {
             return run_gcm_test(tc_id, &key_bytes, key_len_bits, direction, t, meta);
@@ -411,7 +417,6 @@ fn run_aes_test(
         _ => {}
     }
 
-    // Simple modes: ECB / CBC / CTR.
     let (input_field, output_field) = match direction {
         Direction::Encrypt => ("pt", "ct"),
         Direction::Decrypt => ("ct", "pt"),
@@ -449,22 +454,19 @@ fn dispatch_one_shot(
             let key_arr: [u8; 16] = key_bytes.try_into().map_err(|_| {
                 DispatchError::Crypto("AES AFT: 128-bit key decoded to wrong length")
             })?;
-            let cipher = Aes128Key::new_internal(&key_arr)?;
-            run_mode(&cipher, mode, direction, t, input)
+            run_mode(&key_arr, mode, direction, t, input)
         }
         192 => {
             let key_arr: [u8; 24] = key_bytes.try_into().map_err(|_| {
                 DispatchError::Crypto("AES AFT: 192-bit key decoded to wrong length")
             })?;
-            let cipher = Aes192Key::new_internal(&key_arr)?;
-            run_mode(&cipher, mode, direction, t, input)
+            run_mode(&key_arr, mode, direction, t, input)
         }
         256 => {
             let key_arr: [u8; 32] = key_bytes.try_into().map_err(|_| {
                 DispatchError::Crypto("AES AFT: 256-bit key decoded to wrong length")
             })?;
-            let cipher = Aes256Key::new_internal(&key_arr)?;
-            run_mode(&cipher, mode, direction, t, input)
+            run_mode(&key_arr, mode, direction, t, input)
         }
         _ => Err(DispatchError::Crypto(
             "AES AFT: unsupported keyLen (expected 128, 192, or 256)",
@@ -472,10 +474,10 @@ fn dispatch_one_shot(
     }
 }
 
-/// Mode-level one-shot: takes a keyed cipher and runs ECB/CBC/CTR
-/// in the requested direction. Shared by all three keyLens.
-fn run_mode<B: BlockCipher>(
-    cipher: &B,
+/// Mode-level one-shot: builds the mode's key from `key` and runs
+/// ECB/CBC/CTR in the requested direction. Shared by all three keyLens.
+fn run_mode(
+    key: &[u8],
     mode: AesMode,
     direction: Direction,
     t: &JsonValue,
@@ -483,9 +485,9 @@ fn run_mode<B: BlockCipher>(
 ) -> Result<Vec<u8>, DispatchError> {
     let mut out = vec![0u8; input.len()];
     match mode {
-        AesMode::Ecb => run_ecb(cipher, direction, input, &mut out)?,
-        AesMode::Cbc => run_cbc(cipher, direction, t, input, &mut out)?,
-        AesMode::Ctr => run_ctr(cipher, t, input, &mut out)?,
+        AesMode::Ecb => run_ecb(&EcbKey::new(key)?, direction, input, &mut out)?,
+        AesMode::Cbc => run_cbc(&CbcKey::new(key)?, direction, t, input, &mut out)?,
+        AesMode::Ctr => run_ctr(&CtrKey::new(key)?, t, input, &mut out)?,
         // AEAD / wrap modes are dispatched directly from run_aes_test
         // and never reach run_mode.
         AesMode::Gcm | AesMode::Ccm | AesMode::Kw | AesMode::Kwp => {
@@ -495,8 +497,8 @@ fn run_mode<B: BlockCipher>(
     Ok(out)
 }
 
-fn run_ecb<B: BlockCipher>(
-    cipher: &B,
+fn run_ecb(
+    cipher: &EcbKey,
     direction: Direction,
     input: &[u8],
     out: &mut [u8],
@@ -513,8 +515,8 @@ fn run_ecb<B: BlockCipher>(
     r.map_err(|_| DispatchError::Crypto("oxicrypt_aes::ecb_* returned Err"))
 }
 
-fn run_cbc<B: BlockCipher>(
-    cipher: &B,
+fn run_cbc(
+    cipher: &CbcKey,
     direction: Direction,
     t: &JsonValue,
     input: &[u8],
@@ -528,8 +530,8 @@ fn run_cbc<B: BlockCipher>(
     r.map_err(|_| DispatchError::Crypto("oxicrypt_aes::cbc_* returned Err"))
 }
 
-fn run_ctr<B: BlockCipher>(
-    cipher: &B,
+fn run_ctr(
+    cipher: &CtrKey,
     t: &JsonValue,
     input: &[u8],
     out: &mut [u8],
@@ -547,11 +549,9 @@ fn run_ctr<B: BlockCipher>(
         }
     }
     let icb = decode_iv16(t)?;
-    ctr_xor(cipher, &icb, input, out)
-        .map_err(|_| DispatchError::Crypto("oxicrypt_aes::ctr_xor returned Err"))
+    ctr(cipher, &icb, input, out)
+        .map_err(|_| DispatchError::Crypto("oxicrypt_aes::ctr returned Err"))
 }
-
-// ---- GCM -----------------------------------------------------------
 
 fn run_gcm_test(
     tc_id: i64,
@@ -564,16 +564,23 @@ fn run_gcm_test(
     let tag_len = meta
         .gcm_tag
         .ok_or(DispatchError::Crypto("AES-GCM: missing gcm_tag in meta"))?;
-    let iv = decode_iv_var(t)?;
     let aad = decode_aad(t)?;
 
     match direction {
         Direction::Encrypt => {
+            // The module generates every GCM encryption IV (SP 800-38D
+            // §8.2.2); it has no encryption under a supplied IV.
+            if !meta.gcm_iv_internal {
+                return Err(DispatchError::Unsupported(
+                    "AES-GCM encrypt: only `ivGen: internal` is supported",
+                ));
+            }
             let pt = decode_hex_field(t, "pt")?;
-            let ct_tag = dispatch_gcm_encrypt(key_len_bits, key_bytes, &iv, &aad, &pt, tag_len)?;
+            let (iv, ct_tag) = dispatch_gcm_encrypt(key_len_bits, key_bytes, &aad, &pt, tag_len)?;
             let (ct_part, tag_part) = ct_tag.split_at(ct_tag.len() - tag_len);
             Ok(JsonValue::Object(vec![
                 ("tcId".to_string(), JsonValue::Number(tc_id)),
+                ("iv".to_string(), JsonValue::String(hex::encode_upper(&iv))),
                 (
                     "ct".to_string(),
                     JsonValue::String(hex::encode_upper(ct_part)),
@@ -585,6 +592,7 @@ fn run_gcm_test(
             ]))
         }
         Direction::Decrypt => {
+            let iv = decode_iv_var(t)?;
             let ct = decode_hex_field(t, "ct")?;
             let tag = decode_hex_field(t, "tag")?;
             if tag.len() != tag_len {
@@ -608,44 +616,46 @@ fn run_gcm_test(
     }
 }
 
+/// Encrypts under an IV the module draws from a module-seeded DRBG and
+/// returns the IV with `ct || tag`.
 fn dispatch_gcm_encrypt(
     key_len_bits: u64,
     key_bytes: &[u8],
-    iv: &[u8],
     aad: &[u8],
     pt: &[u8],
     tag_len: usize,
-) -> Result<Vec<u8>, DispatchError> {
+) -> Result<([u8; 12], Vec<u8>), DispatchError> {
     // gcm_encrypt always produces a 16-byte tag; we truncate if tagLen < 16.
     let mut ct = vec![0u8; pt.len()];
-    let mut tag_buf = [0u8; 16];
+    let mut drbg = oxicrypt_drbg::HmacDrbgSha256::instantiate_from_module(b"")?;
     let result = match key_len_bits {
         128 => {
             let k: [u8; 16] = key_bytes
                 .try_into()
                 .map_err(|_| DispatchError::Crypto("AES-GCM: 128-bit key wrong length"))?;
-            let c = Aes128Key::new_internal(&k)?;
-            gcm_encrypt(&c, iv, aad, pt, &mut ct, &mut tag_buf)
+            let c = GcmKey::new(&k)?;
+            gcm_encrypt(&c, &mut drbg, aad, pt, &mut ct)
         }
         192 => {
             let k: [u8; 24] = key_bytes
                 .try_into()
                 .map_err(|_| DispatchError::Crypto("AES-GCM: 192-bit key wrong length"))?;
-            let c = Aes192Key::new_internal(&k)?;
-            gcm_encrypt(&c, iv, aad, pt, &mut ct, &mut tag_buf)
+            let c = GcmKey::new(&k)?;
+            gcm_encrypt(&c, &mut drbg, aad, pt, &mut ct)
         }
         256 => {
             let k: [u8; 32] = key_bytes
                 .try_into()
                 .map_err(|_| DispatchError::Crypto("AES-GCM: 256-bit key wrong length"))?;
-            let c = Aes256Key::new_internal(&k)?;
-            gcm_encrypt(&c, iv, aad, pt, &mut ct, &mut tag_buf)
+            let c = GcmKey::new(&k)?;
+            gcm_encrypt(&c, &mut drbg, aad, pt, &mut ct)
         }
         _ => return Err(DispatchError::Crypto("AES-GCM: unsupported keyLen")),
     };
-    result.map_err(|_| DispatchError::Crypto("oxicrypt_aes::gcm_encrypt returned Err"))?;
-    ct.extend_from_slice(&tag_buf[..tag_len]);
-    Ok(ct)
+    let sealed =
+        result.map_err(|_| DispatchError::Crypto("oxicrypt_aes::gcm_encrypt returned Err"))?;
+    ct.extend_from_slice(&sealed.tag[..tag_len]);
+    Ok((sealed.iv, ct))
 }
 
 fn dispatch_gcm_decrypt(
@@ -665,21 +675,21 @@ fn dispatch_gcm_decrypt(
             let k: [u8; 16] = key_bytes
                 .try_into()
                 .map_err(|_| DispatchError::Crypto("AES-GCM: 128-bit key wrong length"))?;
-            let c = Aes128Key::new_internal(&k)?;
+            let c = GcmKey::new(&k)?;
             gcm_decrypt(&c, iv, aad, ct, &tag16, &mut pt)
         }
         192 => {
             let k: [u8; 24] = key_bytes
                 .try_into()
                 .map_err(|_| DispatchError::Crypto("AES-GCM: 192-bit key wrong length"))?;
-            let c = Aes192Key::new_internal(&k)?;
+            let c = GcmKey::new(&k)?;
             gcm_decrypt(&c, iv, aad, ct, &tag16, &mut pt)
         }
         256 => {
             let k: [u8; 32] = key_bytes
                 .try_into()
                 .map_err(|_| DispatchError::Crypto("AES-GCM: 256-bit key wrong length"))?;
-            let c = Aes256Key::new_internal(&k)?;
+            let c = GcmKey::new(&k)?;
             gcm_decrypt(&c, iv, aad, ct, &tag16, &mut pt)
         }
         _ => return Err(DispatchError::Crypto("AES-GCM: unsupported keyLen")),
@@ -692,8 +702,6 @@ fn dispatch_gcm_decrypt(
         )),
     }
 }
-
-// ---- CCM -----------------------------------------------------------
 
 fn run_ccm_test(
     tc_id: i64,
@@ -764,22 +772,25 @@ fn dispatch_ccm_encrypt(
             let k: [u8; 16] = key_bytes
                 .try_into()
                 .map_err(|_| DispatchError::Crypto("AES-CCM: key length"))?;
-            let c = Aes128Key::new_internal(&k)?;
-            ccm_encrypt(&c, nonce, aad, pt, tlen, &mut out)
+            let c = CcmKey::new(&k, tlen)?;
+            let (ct, tag) = out.split_at_mut(pt.len());
+            ccm_encrypt(&c, nonce, aad, pt, ct, tag)
         }
         192 => {
             let k: [u8; 24] = key_bytes
                 .try_into()
                 .map_err(|_| DispatchError::Crypto("AES-CCM: key length"))?;
-            let c = Aes192Key::new_internal(&k)?;
-            ccm_encrypt(&c, nonce, aad, pt, tlen, &mut out)
+            let c = CcmKey::new(&k, tlen)?;
+            let (ct, tag) = out.split_at_mut(pt.len());
+            ccm_encrypt(&c, nonce, aad, pt, ct, tag)
         }
         256 => {
             let k: [u8; 32] = key_bytes
                 .try_into()
                 .map_err(|_| DispatchError::Crypto("AES-CCM: key length"))?;
-            let c = Aes256Key::new_internal(&k)?;
-            ccm_encrypt(&c, nonce, aad, pt, tlen, &mut out)
+            let c = CcmKey::new(&k, tlen)?;
+            let (ct, tag) = out.split_at_mut(pt.len());
+            ccm_encrypt(&c, nonce, aad, pt, ct, tag)
         }
         _ => return Err(DispatchError::Crypto("AES-CCM: unsupported keyLen")),
     };
@@ -795,8 +806,9 @@ fn dispatch_ccm_decrypt(
     ct_with_tag: &[u8],
     tlen: usize,
 ) -> Result<Vec<u8>, DispatchError> {
+    // SP 800-38C §6.2: a ciphertext shorter than its tag is INVALID.
     if ct_with_tag.len() < tlen {
-        return Err(DispatchError::Crypto("AES-CCM: ct shorter than tagLen"));
+        return Err(DispatchError::Crypto("tag mismatch"));
     }
     let pt_len = ct_with_tag.len() - tlen;
     let mut out = vec![0u8; pt_len];
@@ -805,22 +817,25 @@ fn dispatch_ccm_decrypt(
             let k: [u8; 16] = key_bytes
                 .try_into()
                 .map_err(|_| DispatchError::Crypto("AES-CCM: key length"))?;
-            let c = Aes128Key::new_internal(&k)?;
-            ccm_decrypt(&c, nonce, aad, ct_with_tag, tlen, &mut out)
+            let c = CcmKey::new(&k, tlen)?;
+            let (ct, tag) = ct_with_tag.split_at(pt_len);
+            ccm_decrypt(&c, nonce, aad, ct, tag, &mut out)
         }
         192 => {
             let k: [u8; 24] = key_bytes
                 .try_into()
                 .map_err(|_| DispatchError::Crypto("AES-CCM: key length"))?;
-            let c = Aes192Key::new_internal(&k)?;
-            ccm_decrypt(&c, nonce, aad, ct_with_tag, tlen, &mut out)
+            let c = CcmKey::new(&k, tlen)?;
+            let (ct, tag) = ct_with_tag.split_at(pt_len);
+            ccm_decrypt(&c, nonce, aad, ct, tag, &mut out)
         }
         256 => {
             let k: [u8; 32] = key_bytes
                 .try_into()
                 .map_err(|_| DispatchError::Crypto("AES-CCM: key length"))?;
-            let c = Aes256Key::new_internal(&k)?;
-            ccm_decrypt(&c, nonce, aad, ct_with_tag, tlen, &mut out)
+            let c = CcmKey::new(&k, tlen)?;
+            let (ct, tag) = ct_with_tag.split_at(pt_len);
+            ccm_decrypt(&c, nonce, aad, ct, tag, &mut out)
         }
         _ => return Err(DispatchError::Crypto("AES-CCM: unsupported keyLen")),
     };
@@ -832,8 +847,6 @@ fn dispatch_ccm_decrypt(
         )),
     }
 }
-
-// ---- KW / KWP ------------------------------------------------------
 
 fn run_kw_test(
     tc_id: i64,
@@ -872,8 +885,8 @@ fn run_kw_test(
 }
 
 /// Pick the right oxicrypt-aes wrap function for (mode, kw_cipher).
-fn wrap_for<B: BlockCipher>(
-    cipher: &B,
+fn wrap_for(
+    cipher: &KwKey,
     pt: &[u8],
     ct: &mut [u8],
     with_padding: bool,
@@ -881,9 +894,9 @@ fn wrap_for<B: BlockCipher>(
 ) -> Result<(), ModeError> {
     match (with_padding, kw_cipher) {
         (false, KwCipher::Forward) => kw_wrap(cipher, pt, ct),
-        (false, KwCipher::Inverse) => kw_wrap_inverse_cipher(cipher, pt, ct),
-        (true, KwCipher::Forward) => kwp_wrap(cipher, pt, ct),
-        (true, KwCipher::Inverse) => kwp_wrap_inverse_cipher(cipher, pt, ct),
+        (false, KwCipher::Inverse) => kw_wrap_inverse(cipher, pt, ct),
+        (true, KwCipher::Forward) => kwp_wrap(cipher, pt, ct).map(|_| ()),
+        (true, KwCipher::Inverse) => kwp_wrap_inverse(cipher, pt, ct).map(|_| ()),
     }
 }
 
@@ -891,8 +904,8 @@ fn wrap_for<B: BlockCipher>(
 /// Returns the recovered plaintext byte length for KWP (so callers
 /// can truncate the buffer); for KW, the length always matches the
 /// scratch length and the return is `pt.len()`.
-fn unwrap_for<B: BlockCipher>(
-    cipher: &B,
+fn unwrap_for(
+    cipher: &KwKey,
     ct: &[u8],
     pt: &mut [u8],
     with_padding: bool,
@@ -900,9 +913,9 @@ fn unwrap_for<B: BlockCipher>(
 ) -> Result<usize, ModeError> {
     match (with_padding, kw_cipher) {
         (false, KwCipher::Forward) => kw_unwrap(cipher, ct, pt).map(|()| pt.len()),
-        (false, KwCipher::Inverse) => kw_unwrap_inverse_cipher(cipher, ct, pt).map(|()| pt.len()),
+        (false, KwCipher::Inverse) => kw_unwrap_inverse(cipher, ct, pt).map(|()| pt.len()),
         (true, KwCipher::Forward) => kwp_unwrap(cipher, ct, pt),
-        (true, KwCipher::Inverse) => kwp_unwrap_inverse_cipher(cipher, ct, pt),
+        (true, KwCipher::Inverse) => kwp_unwrap_inverse(cipher, ct, pt),
     }
 }
 
@@ -924,21 +937,21 @@ fn dispatch_kw_wrap(
             let k: [u8; 16] = key_bytes
                 .try_into()
                 .map_err(|_| DispatchError::Crypto("AES-KW: key length"))?;
-            let c = Aes128Key::new_internal(&k)?;
+            let c = KwKey::new(&k)?;
             wrap_for(&c, pt, &mut ct, with_padding, kw_cipher)
         }
         192 => {
             let k: [u8; 24] = key_bytes
                 .try_into()
                 .map_err(|_| DispatchError::Crypto("AES-KW: key length"))?;
-            let c = Aes192Key::new_internal(&k)?;
+            let c = KwKey::new(&k)?;
             wrap_for(&c, pt, &mut ct, with_padding, kw_cipher)
         }
         256 => {
             let k: [u8; 32] = key_bytes
                 .try_into()
                 .map_err(|_| DispatchError::Crypto("AES-KW: key length"))?;
-            let c = Aes256Key::new_internal(&k)?;
+            let c = KwKey::new(&k)?;
             wrap_for(&c, pt, &mut ct, with_padding, kw_cipher)
         }
         _ => return Err(DispatchError::Crypto("AES-KW: unsupported keyLen")),
@@ -961,21 +974,21 @@ fn dispatch_kw_unwrap(
             let k: [u8; 16] = key_bytes
                 .try_into()
                 .map_err(|_| DispatchError::Crypto("AES-KW: key length"))?;
-            let c = Aes128Key::new_internal(&k)?;
+            let c = KwKey::new(&k)?;
             unwrap_for(&c, ct, &mut pt, with_padding, kw_cipher)
         }
         192 => {
             let k: [u8; 24] = key_bytes
                 .try_into()
                 .map_err(|_| DispatchError::Crypto("AES-KW: key length"))?;
-            let c = Aes192Key::new_internal(&k)?;
+            let c = KwKey::new(&k)?;
             unwrap_for(&c, ct, &mut pt, with_padding, kw_cipher)
         }
         256 => {
             let k: [u8; 32] = key_bytes
                 .try_into()
                 .map_err(|_| DispatchError::Crypto("AES-KW: key length"))?;
-            let c = Aes256Key::new_internal(&k)?;
+            let c = KwKey::new(&k)?;
             unwrap_for(&c, ct, &mut pt, with_padding, kw_cipher)
         }
         _ => return Err(DispatchError::Crypto("AES-KW: unsupported keyLen")),
@@ -991,8 +1004,6 @@ fn dispatch_kw_unwrap(
         )),
     }
 }
-
-// ---- MCT engine (ECB / CBC) ----------------------------------------
 
 /// Number of outer iterations in an AES MCT test.
 const MCT_OUTER: usize = 100;
@@ -1025,7 +1036,6 @@ fn handle_aes_mct_group(
         .ok_or(DispatchError::MissingField("tcId"))?;
 
     let key_bytes = decode_hex_field(t, "key")?;
-    // Encrypt uses `pt` as the initial input; decrypt uses `ct`.
     let input_field = match direction {
         Direction::Encrypt => "pt",
         Direction::Decrypt => "ct",
@@ -1093,12 +1103,7 @@ fn mct_ecb(
                 prev_output.copy_from_slice(&output);
             }
         }
-        // prev_output = Output[998] (for j < MCT_INNER-1, captured above)
-        // Actually: after the loop, prev_output = Output[MCT_INNER-2],
-        // output = Output[MCT_INNER-1]. But we need to be precise:
-        // j=0: output=O[0], prev_output set to O[0] after
-        // j=1: prev_output=O[0], output=O[1]
-        // j=999: prev_output=O[998], output=O[999] ✓
+        // After the loop, prev_output = Output[998] and output = Output[999].
 
         let mut entry = vec![
             (
@@ -1114,11 +1119,9 @@ fn mct_ecb(
                 JsonValue::String(hex::encode_upper(&output)),
             ),
         ];
-        // CBC also has IV but ECB doesn't — this is ECB so no IV needed.
-        let _ = &mut entry; // suppress unused_mut if refactored
+        let _ = &mut entry;
         results.push(JsonValue::Object(entry));
 
-        // Key update.
         mct_key_update(&mut key, key_len, &prev_output, &output);
         input.copy_from_slice(&output);
     }
@@ -1175,7 +1178,6 @@ fn mct_cbc(
             let saved_input = input.clone();
             cbc_one_block(direction, key_len_bits, &key, &cur_iv, &input, &mut output)?;
 
-            // Update for next iteration:
             match direction {
                 Direction::Encrypt => {
                     // IV for next = CT[j] (current output).
@@ -1222,7 +1224,6 @@ fn mct_cbc(
             ),
         ]));
 
-        // Key update.
         mct_key_update(&mut key, key_len, &prev_output, &output);
         iv.copy_from_slice(&output);
         input.copy_from_slice(&prev_output);
@@ -1244,7 +1245,7 @@ fn ecb_one_block(
             let k: [u8; 16] = key
                 .try_into()
                 .map_err(|_| DispatchError::Crypto("MCT ECB: key length"))?;
-            let c = Aes128Key::new_internal(&k)?;
+            let c = EcbKey::new(&k)?;
             match direction {
                 Direction::Encrypt => ecb_encrypt(&c, input, output),
                 Direction::Decrypt => ecb_decrypt(&c, input, output),
@@ -1254,7 +1255,7 @@ fn ecb_one_block(
             let k: [u8; 24] = key
                 .try_into()
                 .map_err(|_| DispatchError::Crypto("MCT ECB: key length"))?;
-            let c = Aes192Key::new_internal(&k)?;
+            let c = EcbKey::new(&k)?;
             match direction {
                 Direction::Encrypt => ecb_encrypt(&c, input, output),
                 Direction::Decrypt => ecb_decrypt(&c, input, output),
@@ -1264,7 +1265,7 @@ fn ecb_one_block(
             let k: [u8; 32] = key
                 .try_into()
                 .map_err(|_| DispatchError::Crypto("MCT ECB: key length"))?;
-            let c = Aes256Key::new_internal(&k)?;
+            let c = EcbKey::new(&k)?;
             match direction {
                 Direction::Encrypt => ecb_encrypt(&c, input, output),
                 Direction::Decrypt => ecb_decrypt(&c, input, output),
@@ -1292,7 +1293,7 @@ fn cbc_one_block(
             let k: [u8; 16] = key
                 .try_into()
                 .map_err(|_| DispatchError::Crypto("MCT CBC: key length"))?;
-            let c = Aes128Key::new_internal(&k)?;
+            let c = CbcKey::new(&k)?;
             match direction {
                 Direction::Encrypt => cbc_encrypt(&c, &iv16, input, output),
                 Direction::Decrypt => cbc_decrypt(&c, &iv16, input, output),
@@ -1302,7 +1303,7 @@ fn cbc_one_block(
             let k: [u8; 24] = key
                 .try_into()
                 .map_err(|_| DispatchError::Crypto("MCT CBC: key length"))?;
-            let c = Aes192Key::new_internal(&k)?;
+            let c = CbcKey::new(&k)?;
             match direction {
                 Direction::Encrypt => cbc_encrypt(&c, &iv16, input, output),
                 Direction::Decrypt => cbc_decrypt(&c, &iv16, input, output),
@@ -1312,7 +1313,7 @@ fn cbc_one_block(
             let k: [u8; 32] = key
                 .try_into()
                 .map_err(|_| DispatchError::Crypto("MCT CBC: key length"))?;
-            let c = Aes256Key::new_internal(&k)?;
+            let c = CbcKey::new(&k)?;
             match direction {
                 Direction::Encrypt => cbc_encrypt(&c, &iv16, input, output),
                 Direction::Decrypt => cbc_decrypt(&c, &iv16, input, output),
@@ -1331,14 +1332,11 @@ fn cbc_one_block(
 fn mct_key_update(key: &mut [u8], key_len: usize, prev_output: &[u8], last_output: &[u8]) {
     match key_len {
         16 => {
-            // 128-bit: XOR with last output block
             for (k, o) in key.iter_mut().zip(last_output.iter()) {
                 *k ^= o;
             }
         }
         24 => {
-            // 192-bit: XOR with last 8 bytes of prev_output || last_output
-            // = 24 bytes total
             let tail8 = &prev_output[BLOCK_SIZE - 8..];
             for (k, o) in key[..8].iter_mut().zip(tail8.iter()) {
                 *k ^= o;
@@ -1348,7 +1346,6 @@ fn mct_key_update(key: &mut [u8], key_len: usize, prev_output: &[u8], last_outpu
             }
         }
         32 => {
-            // 256-bit: XOR with prev_output || last_output
             for (k, o) in key[..16].iter_mut().zip(prev_output.iter()) {
                 *k ^= o;
             }
@@ -1359,8 +1356,6 @@ fn mct_key_update(key: &mut [u8], key_len: usize, prev_output: &[u8], last_outpu
         _ => {}
     }
 }
-
-// ---- Shared helpers ------------------------------------------------
 
 /// Decode a variable-length IV/nonce from the `iv` field.
 fn decode_iv_var(t: &JsonValue) -> Result<Vec<u8>, DispatchError> {

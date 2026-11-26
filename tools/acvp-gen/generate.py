@@ -43,11 +43,6 @@ from pathlib import Path
 # ACVP-Server commit pinned for this generator run.
 ACVP_COMMIT = "3611942ea10c070dd8bc6afec5682d56c307de8a"
 
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
-
 def sha256_file(path: Path) -> str:
     h = hashlib.sha256()
     with path.open("rb") as f:
@@ -76,11 +71,6 @@ def rust_empty_array(name: str, comment: str) -> str:
 
 def rust_usize_const(name: str, value: int, comment: str) -> str:
     return f"/// {comment}\npub const {name}: usize = {value};"
-
-
-# ---------------------------------------------------------------------------
-# CAVP SHS (SHA-1 / SHA-2) parser
-# ---------------------------------------------------------------------------
 
 
 def parse_shs_rsp(path: Path) -> list[dict]:
@@ -116,11 +106,6 @@ def pick_shs_vector(path: Path) -> dict:
             tc["md_bytes"] = bytes.fromhex(tc["MD"])
             return tc
     raise RuntimeError(f"no byte-aligned ShortMsg in {path}")
-
-
-# ---------------------------------------------------------------------------
-# ACVP SHA-3 / SHAKE selection
-# ---------------------------------------------------------------------------
 
 
 def pick_sha3_vector(json_path: Path) -> dict:
@@ -167,11 +152,6 @@ def pick_shake_vector(json_path: Path, prefer_max_out: int = 600) -> dict:
         "msg_bytes": bytes.fromhex(tc["msg"]),
         "md_bytes": bytes.fromhex(tc["md"]),
     }
-
-
-# ---------------------------------------------------------------------------
-# ACVP HMAC selection
-# ---------------------------------------------------------------------------
 
 
 def pick_hmac_vector(json_path: Path) -> dict:
@@ -222,11 +202,6 @@ def pick_hmac_vector(json_path: Path) -> dict:
         raise RuntimeError(f"no HMAC AFT vector in {json_path}")
     best.pop("_total")
     return best
-
-
-# ---------------------------------------------------------------------------
-# ACVP KDF-1.0 (SP 800-108 Counter Mode) selection
-# ---------------------------------------------------------------------------
 
 
 def pick_kbkdf_counter_vector(kdf_json: dict, mac_mode: str) -> dict:
@@ -360,10 +335,6 @@ def pick_kbkdf_double_pipeline_vector(kdf_json: dict, mac_mode: str) -> dict:
     return best
 
 
-# ---------------------------------------------------------------------------
-# ACVP KDA-HKDF-Sp800-56Cr2 selection
-# ---------------------------------------------------------------------------
-#
 # SP 800-56C Rev 2 §5 Two-Step KDF using HKDF, in "hybrid" form:
 #
 #     PRK = HMAC(salt, Z || T)       (Extract)
@@ -548,11 +519,6 @@ def pick_kda_hkdf_vector(kda_doc: dict, hmac_alg: str) -> dict:
         raise RuntimeError(f"no KDA-HKDF vector for {hmac_alg}")
     best.pop("_total")
     return best
-
-
-# ---------------------------------------------------------------------------
-# Slim JSON slice writers
-# ---------------------------------------------------------------------------
 
 
 def write_sha3_slice(out_dir: Path, algo_dir: str, tc: dict, src_sha256: str) -> None:
@@ -867,11 +833,6 @@ def write_kda_hkdf_slice(
     (d / "kat-slice.json").write_text(json.dumps(slim, indent=2) + "\n")
 
 
-# ---------------------------------------------------------------------------
-# Main
-# ---------------------------------------------------------------------------
-
-
 SHA_CAVP_FILES = [
     ("SHA_1", "SHA1ShortMsg.rsp", "SHA-1"),
     ("SHA_224", "SHA224ShortMsg.rsp", "SHA-224"),
@@ -915,7 +876,6 @@ AES_ACVP_AFT_MODES = [
     ("ACVP-AES-CTR", "ACVP-AES-CTR-1.0", True),
 ]
 
-# R14-B: AEAD / Key-wrap AES modes.
 AES_ACVP_AEAD_MODES = [
     # (algorithm, acvp_dir, picker_fn_name)
     ("ACVP-AES-GCM", "ACVP-AES-GCM-1.0", "gcm"),
@@ -930,8 +890,17 @@ def pick_aes_gcm_groups(
     *,
     tests_per_group: int = 3,
 ) -> list[dict]:
-    """Pick GCM AFT groups filtered for Phase-1 constraints:
-    ivLen = 96, tagLen = 128, ivGen = external."""
+    """Pick GCM AFT groups with ivLen = 96, tagLen = 128 and
+    ivGen = external, one per (direction, keyLen).
+
+    The module generates every encryption IV itself (SP 800-38D §8.2.2)
+    and registers ivGen = internal, so a fixed ciphertext is a known
+    answer only where the vector supplies the IV. Decrypt groups are
+    checked as known answers. Encrypt groups are kept for their key,
+    AAD and plaintext: `acvp-harness/tests/round_trip.rs` rewrites them
+    to ivGen = internal, drops each IV, and checks that every response's
+    IV, ciphertext and tag decrypt to the vector's plaintext and that no
+    IV repeats."""
     picked: dict[tuple[str, int], dict] = {}
     for g in doc["testGroups"]:
         if g.get("testType") != "AFT":
@@ -964,7 +933,10 @@ def pick_aes_ccm_groups(
     tests_per_group: int = 3,
 ) -> list[dict]:
     """Pick CCM AFT groups with byte-aligned ivLen, payloadLen, aadLen,
-    tagLen. One group per (direction, keyLen)."""
+    tagLen, and a tagLen of at least 64 bits, the floor the module's
+    `CcmKey` accepts (SP 800-38C Appendix B). ivLen, payloadLen and
+    aadLen are kept within the bounds `aes_ccm_capability` registers.
+    One group per (direction, keyLen)."""
     picked: dict[tuple[str, int], dict] = {}
     for g in doc["testGroups"]:
         if g.get("testType") != "AFT":
@@ -975,7 +947,13 @@ def pick_aes_ccm_groups(
             continue
         if g.get("ivLen", 0) % 8 != 0:
             continue
-        if g.get("tagLen", 0) % 8 != 0:
+        if g.get("tagLen", 0) % 8 != 0 or g.get("tagLen", 0) < 64:
+            continue
+        if not 56 <= g.get("ivLen", 0) <= 104:
+            continue
+        if g.get("payloadLen", 0) > 256:
+            continue
+        if g.get("aadLen", 0) > 524288:
             continue
         key = (g["direction"], g["keyLen"])
         if key in picked:
@@ -1219,7 +1197,6 @@ def main() -> int:
         "",
     ]
 
-    # --- SHA-1 / SHA-2 (CAVP SHS) --------------------------------------
     rust_parts.append("// ===== SHA-1 / SHA-2 family (NIST CAVP SHS) =====\n")
     manifest.append("[cavp_shs.vectors]")
     for stem, filename, display in SHA_CAVP_FILES:
@@ -1229,7 +1206,6 @@ def main() -> int:
             return 1
         sha = sha256_file(src)
         tc = pick_shs_vector(src)
-        # Copy the source .rsp to vendor/
         dst = vendor / "cavp-shs" / "shabytetestvectors" / filename
         dst.parent.mkdir(parents=True, exist_ok=True)
         dst.write_bytes(src.read_bytes())
@@ -1259,7 +1235,6 @@ def main() -> int:
         )
     manifest.append("")
 
-    # --- SHA-3 family (ACVP) -------------------------------------------
     rust_parts.append("// ===== SHA-3 family (NIST ACVP-Server) =====\n")
     manifest.append("[acvp_server.sha3]")
     for stem, algo_dir in SHA3_ACVP_DIRS:
@@ -1297,7 +1272,6 @@ def main() -> int:
         )
     manifest.append("")
 
-    # --- SHAKE (ACVP) ---------------------------------------------------
     rust_parts.append("// ===== SHAKE XOF (NIST ACVP-Server) =====\n")
     manifest.append("[acvp_server.shake]")
     for stem, algo_dir in SHAKE_ACVP_DIRS:
@@ -1336,7 +1310,6 @@ def main() -> int:
         )
     manifest.append("")
 
-    # --- HMAC (ACVP 1.0) -------------------------------------------------
     rust_parts.append("// ===== HMAC family (NIST ACVP-Server HMAC-*-1.0) =====\n")
     rust_parts.append(
         "// ACVP HMAC test vectors validate MAC truncation: each `*_MAC_PREFIX`\n"
@@ -1392,7 +1365,6 @@ def main() -> int:
         )
     manifest.append("")
 
-    # --- KBKDF Counter Mode (ACVP KDF-1.0) ------------------------------
     rust_parts.append(
         "// ===== SP 800-108 Counter Mode (NIST ACVP-Server KDF-1.0) =====\n"
     )
@@ -1453,7 +1425,6 @@ def main() -> int:
         )
     manifest.append("")
 
-    # --- KBKDF Feedback Mode (ACVP KDF-1.0) -----------------------------
     rust_parts.append(
         "// ===== SP 800-108 Feedback Mode (NIST ACVP-Server KDF-1.0) =====\n"
     )
@@ -1517,7 +1488,6 @@ def main() -> int:
         )
     manifest.append("")
 
-    # --- KBKDF Double-Pipeline Iteration Mode (ACVP KDF-1.0) ------------
     rust_parts.append(
         "// ===== SP 800-108 Double-Pipeline Iteration Mode "
         "(NIST ACVP-Server KDF-1.0) =====\n"
@@ -1585,7 +1555,6 @@ def main() -> int:
         kdf_sha,
     )
 
-    # --- KDA-HKDF-Sp800-56Cr2 Two-Step KDF -----------------------------
     rust_parts.append(
         "// ===== SP 800-56C Rev 2 Two-Step KDA-HKDF "
         "(NIST ACVP-Server KDA-HKDF-Sp800-56Cr2) =====\n"
@@ -1664,10 +1633,9 @@ def main() -> int:
     write_kda_hkdf_slice(vendor, "KDA-HKDF-Sp800-56Cr2", kda_picks, kda_sha)
     manifest.append("")
 
-    # --- AES ECB/CBC/CTR AFT (ACVP-AES-*-1.0) ---------------------------
-    # R14-A: vendor slim AFT slices for AES block-cipher modes handled
+    # Vendor slim AFT slices for AES block-cipher modes handled
     # by the acvp-harness dispatcher. No `generated.rs` entries are
-    # emitted here — the AES power-up KATs already live in
+    # emitted here: the AES power-up KATs live in
     # `oxicrypt-aes` and read from its own vector module. These slices feed
     # only the ACVP dispatcher's round-trip tests.
     manifest.append("[acvp_server.aes_aft]")
@@ -1692,7 +1660,6 @@ def main() -> int:
         )
     manifest.append("")
 
-    # --- AES AEAD / Key-wrap AFT (R14-B) --------------------------------
     # GCM, CCM, KW, KWP — vendored slim slices with testPassed fields
     # preserved for AEAD decrypt / unwrap verification.
     AES_AEAD_PICKERS = {
@@ -1719,7 +1686,6 @@ def main() -> int:
         )
     manifest.append("")
 
-    # --- Write outputs --------------------------------------------------
     manifest_path = vendor / "MANIFEST.toml"
     existing = manifest_path.read_text() if manifest_path.exists() else ""
     manifest_path.write_text("\n".join(merge_manifest(manifest, existing)) + "\n")

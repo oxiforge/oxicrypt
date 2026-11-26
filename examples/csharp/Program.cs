@@ -11,8 +11,8 @@ if (args.Length != 1)
     return 2;
 }
 string name = OperatingSystem.IsWindows() ? "oxicrypt_ffi.dll"
-    : OperatingSystem.IsMacOS() ? "liboxicrypt_ffi.2.dylib"
-    : "liboxicrypt_ffi.so.2";
+    : OperatingSystem.IsMacOS() ? "liboxicrypt_ffi.3.dylib"
+    : "liboxicrypt_ffi.so.3";
 string path = Path.Combine(args[0], name);
 NativeLibrary.SetDllImportResolver(Assembly.GetExecutingAssembly(),
     (library, _, _) => library == Oxi.Library ? NativeLibrary.Load(path) : IntPtr.Zero);

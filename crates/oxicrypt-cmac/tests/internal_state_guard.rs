@@ -1,5 +1,5 @@
-//! A representative `*_internal` function of `oxicrypt-cmac` refuses in every
-//! module state other than `SelfTest` and `Operational`.
+//! The CMAC key constructor refuses in every module state other than
+//! `Operational`, and the crate's CASTs run in `SelfTest`.
 //!
 //! The module state is process-global and each transition is one-way, so
 //! every test here runs in a fresh process of its own (see [`isolated`]),
@@ -43,9 +43,9 @@ const UNSIGNED_TEST_BINARY: &[KatEntry] = &[KatEntry {
     run: || Ok(()),
 }];
 
-/// Calls a representative `*_internal` function.
+/// Calls the CMAC key constructor.
 fn probe() -> Result<(), Error> {
-    oxicrypt_cmac::cmac_aes128_internal(&[0u8; 16], b"").map(|_| ())
+    oxicrypt_cmac::CmacKey::new(&[0u8; 16], 16).map(|_| ())
 }
 
 fn assert_refused(expected: State) {
@@ -54,15 +54,15 @@ fn assert_refused(expected: State) {
 }
 
 #[test]
-fn internal_refuses_in_power_off() {
-    isolated("internal_refuses_in_power_off", || {
+fn constructor_refuses_in_power_off() {
+    isolated("constructor_refuses_in_power_off", || {
         assert_refused(State::PowerOff);
     });
 }
 
 #[test]
-fn internal_refuses_in_error_after_failed_init() {
-    isolated("internal_refuses_in_error_after_failed_init", || {
+fn constructor_refuses_in_error_after_failed_init() {
+    isolated("constructor_refuses_in_error_after_failed_init", || {
         let failing = [KatEntry {
             name: "failing self-test",
             run: || Err(SelfTestFailure),
@@ -73,8 +73,8 @@ fn internal_refuses_in_error_after_failed_init() {
 }
 
 #[test]
-fn internal_refuses_in_integrity_unverified() {
-    isolated("internal_refuses_in_integrity_unverified", || {
+fn constructor_refuses_in_integrity_unverified() {
+    isolated("constructor_refuses_in_integrity_unverified", || {
         assert_eq!(
             initialize_with_tests(&[], &[]),
             Err(Error::IntegrityNotAttested)
@@ -83,18 +83,21 @@ fn internal_refuses_in_integrity_unverified() {
     });
 }
 
-/// The power-up self-tests reach the internals in `SelfTest`: the probe
-/// passes there, and so does every CAST in the crate's inventory.
+/// The constructor is a gated service, so it refuses in `SelfTest`, while
+/// every CAST in the crate's inventory runs there.
 #[test]
-fn internal_admits_self_test_and_casts_run() {
-    isolated("internal_admits_self_test_and_casts_run", || {
+fn constructor_refuses_self_test_and_casts_run() {
+    isolated("constructor_refuses_self_test_and_casts_run", || {
         let probe_in_self_test = [KatEntry {
-            name: "internal admits SelfTest",
+            name: "constructor refuses SelfTest",
             run: || {
-                if state() != State::SelfTest {
+                let refused = Err(Error::NotOperational {
+                    current: State::SelfTest,
+                });
+                if state() != State::SelfTest || probe() != refused {
                     return Err(SelfTestFailure);
                 }
-                probe().map_err(|_| SelfTestFailure)
+                Ok(())
             },
         }];
         let mut inventory = probe_in_self_test.to_vec();

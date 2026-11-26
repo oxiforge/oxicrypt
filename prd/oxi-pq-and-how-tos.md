@@ -1,6 +1,6 @@
 # An integration guide for the C library: `oxi` post-quantum services, six how-tos, one guide
 
-Status: draft, awaiting approval. Approval is the merge of this file and its acceptance criteria in `ISA.md` as a pull request carrying no feature code.
+Status: approved with its acceptance criteria in `ISA.md` by the merge of pull request #309, 2026-11-23.
 
 ## Problem
 

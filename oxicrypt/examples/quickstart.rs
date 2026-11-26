@@ -1,4 +1,4 @@
-//! Calls every wrapped service once and prints what it returned.
+//! Calls one function of each wrapped service and prints what it returned.
 //!
 //! Build against a signed library (see the crate documentation) and run:
 //!
@@ -40,15 +40,62 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let okm = module.hkdf_sha384_expand(&prk, b"info", 42)?;
     println!("hkdf-sha384: {} bytes", okm.as_bytes().len());
 
-    let key = module.aes256_key(&[7u8; 32])?;
-    let nonce = [1u8; 12];
-    let (ciphertext, tag) = module.aes256_gcm_encrypt_vec(&key, &nonce, b"aad", b"hello")?;
-    let plaintext = module.aes256_gcm_decrypt_vec(&key, &nonce, b"aad", &ciphertext, &tag)?;
+    let key = module.aes_gcm_key(&[7u8; 32])?;
+    let mut iv_drbg = module.drbg(DrbgKind::HmacSha512)?;
+    iv_drbg.instantiate(b"quickstart gcm")?;
+    let (ciphertext, sealed) = module.aes_gcm_seal_vec(&key, &mut iv_drbg, b"aad", b"hello")?;
+    let plaintext = module.aes_gcm_open_vec(&key, &sealed.iv, b"aad", &ciphertext, &sealed.tag)?;
     println!("aes-256-gcm round trip: {}", plaintext == b"hello");
-    let mut bad_tag = tag;
+    let mut bad_tag = sealed.tag;
     bad_tag[0] ^= 1;
-    let refused = module.aes256_gcm_decrypt_vec(&key, &nonce, b"aad", &ciphertext, &bad_tag);
+    let refused = module.aes_gcm_open_vec(&key, &sealed.iv, b"aad", &ciphertext, &bad_tag);
     println!("aes-256-gcm modified tag: {:?}", refused.err());
+    println!("aes-gcm invocations: {}", module.aes_gcm_invocations(&key)?);
+
+    let ccm = module.aes_ccm_key(&[8u8; 32], 16)?;
+    let (mut ccm_ct, mut ccm_tag, mut ccm_opened) = ([0u8; 5], [0u8; 16], [0u8; 5]);
+    module.aes_ccm_seal(
+        &ccm,
+        &[9u8; 13],
+        b"aad",
+        b"hello",
+        &mut ccm_ct,
+        &mut ccm_tag,
+    )?;
+    module.aes_ccm_open(&ccm, &[9u8; 13], b"aad", &ccm_ct, &ccm_tag, &mut ccm_opened)?;
+    println!("aes-256-ccm round trip: {}", &ccm_opened == b"hello");
+
+    let block = [3u8; 32];
+    let mut out = [0u8; 32];
+    module.aes_cbc_encrypt(
+        &module.aes_cbc_key(&[4u8; 32])?,
+        &[5u8; 16],
+        &block,
+        &mut out,
+    )?;
+    println!("aes-256-cbc: {}", hex(&out[..16]));
+    module.aes_ctr(
+        &module.aes_ctr_key(&[4u8; 32])?,
+        &[6u8; 16],
+        &block,
+        &mut out,
+    )?;
+    println!("aes-256-ctr: {}", hex(&out[..16]));
+
+    let kek = module.aes_kw_key(&[7u8; 32])?;
+    let mut wrapped = [0u8; 40];
+    module.aes_kw_wrap(&kek, &block, &mut wrapped)?;
+    let mut unwrapped = [0u8; 32];
+    module.aes_kw_unwrap(&kek, &wrapped, &mut unwrapped)?;
+    println!("aes-256-kw round trip: {}", unwrapped == block);
+    let n = module.aes_kwp_wrap(&kek, b"hello", &mut wrapped)?;
+    println!("aes-256-kwp: {n} bytes wrapped");
+
+    let cmac = module.aes_cmac_key(&[2u8; 32], 16)?;
+    let mut mac = [0u8; 16];
+    module.aes_cmac(&cmac, b"message", &mut mac)?;
+    module.aes_cmac_verify(&cmac, b"message", &mac)?;
+    println!("aes-256-cmac: {}", hex(&mac));
 
     println!("entropy source: {}", module.entropy_on_demand_test()?);
     let mut drbg = module.drbg(DrbgKind::HmacSha256)?;

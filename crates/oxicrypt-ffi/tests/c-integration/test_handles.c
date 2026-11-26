@@ -1,8 +1,17 @@
-/* Handle lifecycle test — NULL-free is a safe no-op, basic alloc/free path. */
+/* Key handle lifecycle: oxi_aes_cbc_key_new and oxi_aes_cbc_key_free. */
 
 #include "oxicrypt.h"
 #include <stdint.h>
 #include <stdio.h>
+
+static int failures;
+
+static void expect(const char *check, int rc, int want) {
+    if (rc != want) {
+        fprintf(stderr, "test_handles, %s: rc=%d, expected %d\n", check, rc, want);
+        failures++;
+    }
+}
 
 int main(void) {
     if (oxi_init(0) != 0) {
@@ -10,38 +19,35 @@ int main(void) {
         return 1;
     }
 
-    /* NULL-free must be a no-op (no crash). */
-    oxi_aes256_free(NULL);
+    /* NULL frees nothing. */
+    oxi_aes_cbc_key_free(NULL);
 
-    /* alloc + free on a zero-key handle must succeed (the key value is
-     * not validated for being non-trivial — that's a key-generation
-     * concern, not a cipher-construction concern). */
+    /* Key construction does not judge the key's value. */
     static const uint8_t zero_key[32] = {0};
-    OxiAes256Key *handle = NULL;
-    if (oxi_aes256_new(&handle, zero_key) != 0) {
-        fprintf(stderr, "oxi_aes256_new(zero_key) failed\n");
+    OxiAesCbcKey *handle = NULL;
+    expect("new from an all-zero key", oxi_aes_cbc_key_new(zero_key, sizeof(zero_key), &handle),
+           0);
+    if (handle == NULL) {
+        fprintf(stderr, "test_handles, new from an all-zero key: no handle written\n");
+        failures++;
+    }
+    oxi_aes_cbc_key_free(handle);
+
+    expect("NULL out", oxi_aes_cbc_key_new(zero_key, sizeof(zero_key), NULL),
+           OXI_RESULT_NULL_POINTER);
+
+    OxiAesCbcKey *unused = NULL;
+    expect("NULL key, length 32", oxi_aes_cbc_key_new(NULL, 32, &unused),
+           OXI_RESULT_NULL_POINTER);
+    if (unused != NULL) {
+        fprintf(stderr, "test_handles, NULL key: *out written on failure\n");
+        failures++;
+    }
+
+    if (failures != 0) {
+        fprintf(stderr, "test_handles: %d checks failed\n", failures);
         return 2;
     }
-    if (handle == NULL) {
-        fprintf(stderr, "oxi_aes256_new returned 0 but did not write a handle\n");
-        return 3;
-    }
-    oxi_aes256_free(handle);
-
-    /* NULL-out_handle is rejected (NullPointer = 10). */
-    OxiAes256Key *unused = NULL;
-    int rc = oxi_aes256_new(NULL, zero_key);
-    if (rc != 10) {
-        fprintf(stderr, "oxi_aes256_new(NULL,...) returned %d, expected NullPointer=10\n", rc);
-        return 4;
-    }
-    /* NULL-key is rejected (NullPointer = 10). */
-    rc = oxi_aes256_new(&unused, NULL);
-    if (rc != 10) {
-        fprintf(stderr, "oxi_aes256_new(...,NULL) returned %d, expected NullPointer=10\n", rc);
-        return 5;
-    }
-
-    printf("test_handles: OK (NULL-free + alloc/free + NULL-arg rejection)\n");
+    printf("test_handles: OK\n");
     return 0;
 }

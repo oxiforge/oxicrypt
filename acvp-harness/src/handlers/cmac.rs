@@ -2,20 +2,23 @@
 //!
 //! Two directions:
 //!
-//! - `gen`: compute CMAC over `message` with `key`, return truncated
-//!   `mac` at group-level `macLen`.
-//! - `ver`: compute CMAC, compare the first `macLen` bits against the
-//!   supplied `mac` field, and return `testPassed`.
+//! - `gen`: compute CMAC over `message` under a key whose MAC length is
+//!   the group-level `macLen`, and return that `mac`.
+//! - `ver`: verify the supplied `mac` field with `cmac_verify` under a
+//!   key whose MAC length is the group-level `macLen`, and return
+//!   `testPassed`. The comparison runs over the key's fixed MAC length,
+//!   so a `mac` of any other length fails.
 //!
-//! All three AES key sizes (128/192/256) are supported. The handler
-//! always computes the full 128-bit CMAC tag and truncates to the
-//! group-declared `macLen` (bits) for both generation and
-//! verification.
+//! All three AES key sizes (128/192/256) are supported. `macLen` must be
+//! a multiple of 8 in 64..=128 bits, the range `CmacKey` accepts
+//! (SP 800-38B Appendix A); a group outside it is refused as
+//! unsupported.
 
 use crate::dispatch::{AlgorithmHandler, DispatchError};
 use crate::hex;
 use crate::json::JsonValue;
-use oxicrypt_cmac::{cmac_aes128, cmac_aes192, cmac_aes256};
+use oxicrypt_aes::ModeError;
+use oxicrypt_cmac::{CmacKey, cmac, cmac_verify};
 
 /// CMAC-AES AFT dispatcher.
 pub struct CmacAesHandler;
@@ -35,7 +38,6 @@ impl AlgorithmHandler for CmacAesHandler {
     }
 }
 
-/// Direction for CMAC test groups.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum CmacDirection {
     Gen,
@@ -79,9 +81,11 @@ fn handle_cmac_group(group: &JsonValue) -> Result<JsonValue, DispatchError> {
         .get("macLen")
         .and_then(JsonValue::as_u64)
         .ok_or(DispatchError::MissingField("macLen"))?;
-    if mac_len_bits == 0 || mac_len_bits > 128 || mac_len_bits % 8 != 0 {
+    // SP 800-38B Appendix A: the module's CMAC keys take no MAC below
+    // 64 bits, so a shorter `macLen` is refused, not truncated to.
+    if !(64..=128).contains(&mac_len_bits) || mac_len_bits % 8 != 0 {
         return Err(DispatchError::Unsupported(
-            "CMAC: macLen must be 8..128 and byte-aligned",
+            "CMAC: macLen must be 64..128 and byte-aligned",
         ));
     }
     let mac_len_bytes = (mac_len_bits / 8) as usize;
@@ -108,26 +112,32 @@ fn handle_cmac_group(group: &JsonValue) -> Result<JsonValue, DispatchError> {
             .ok_or(DispatchError::MissingField("message"))?;
         let msg_bytes = hex::decode(msg_hex)?;
 
-        let full_tag = compute_cmac(key_len_bits, &key_bytes, &msg_bytes)?;
-        let truncated = &full_tag[..mac_len_bytes];
-
         let resp = match direction {
-            CmacDirection::Gen => JsonValue::Object(vec![
-                ("tcId".to_string(), JsonValue::Number(test_case_id)),
-                (
-                    "mac".to_string(),
-                    JsonValue::String(hex::encode_upper(truncated)),
-                ),
-            ]),
+            CmacDirection::Gen => {
+                let k = cmac_key(key_len_bits, &key_bytes, mac_len_bytes)?;
+                let mut tag = vec![0u8; mac_len_bytes];
+                cmac(&k, &msg_bytes, &mut tag)
+                    .map_err(|_e| DispatchError::Crypto("CMAC generation error"))?;
+                JsonValue::Object(vec![
+                    ("tcId".to_string(), JsonValue::Number(test_case_id)),
+                    (
+                        "mac".to_string(),
+                        JsonValue::String(hex::encode_upper(&tag)),
+                    ),
+                ])
+            }
             CmacDirection::Ver => {
                 let expected_hex = t
                     .get("mac")
                     .and_then(JsonValue::as_str)
                     .ok_or(DispatchError::MissingField("mac"))?;
                 let expected_mac = hex::decode(expected_hex)?;
-                // Constant-comparison isn't required here — ACVP test
-                // vectors are public. Just compare truncated tags.
-                let passed = truncated == expected_mac.as_slice();
+                let k = cmac_key(key_len_bits, &key_bytes, mac_len_bytes)?;
+                let passed = match cmac_verify(&k, &msg_bytes, &expected_mac) {
+                    Ok(()) => true,
+                    Err(ModeError::TagMismatch | ModeError::InvalidTagLength) => false,
+                    Err(_) => return Err(DispatchError::Crypto("CMAC verification error")),
+                };
                 JsonValue::Object(vec![
                     ("tcId".to_string(), JsonValue::Number(test_case_id)),
                     ("testPassed".to_string(), JsonValue::Bool(passed)),
@@ -143,28 +153,29 @@ fn handle_cmac_group(group: &JsonValue) -> Result<JsonValue, DispatchError> {
     ]))
 }
 
-/// Compute a full 128-bit CMAC tag over `msg` using the appropriate
-/// AES key size.
-fn compute_cmac(key_len_bits: u64, key: &[u8], msg: &[u8]) -> Result<[u8; 16], DispatchError> {
-    match key_len_bits {
-        128 => {
-            let k: [u8; 16] = key
-                .try_into()
-                .map_err(|_| DispatchError::Crypto("CMAC: key length mismatch for AES-128"))?;
-            cmac_aes128(&k, msg).map_err(|_e| DispatchError::Crypto("CMAC-128 error"))
-        }
-        192 => {
-            let k: [u8; 24] = key
-                .try_into()
-                .map_err(|_| DispatchError::Crypto("CMAC: key length mismatch for AES-192"))?;
-            cmac_aes192(&k, msg).map_err(|_e| DispatchError::Crypto("CMAC-192 error"))
-        }
-        256 => {
-            let k: [u8; 32] = key
-                .try_into()
-                .map_err(|_| DispatchError::Crypto("CMAC: key length mismatch for AES-256"))?;
-            cmac_aes256(&k, msg).map_err(|_e| DispatchError::Crypto("CMAC-256 error"))
-        }
-        _ => Err(DispatchError::Crypto("CMAC: unsupported keyLen")),
+/// A CMAC key of the group's `keyLen` (bits) with a MAC length of
+/// `mac_len` bytes.
+fn cmac_key(key_len_bits: u64, key: &[u8], mac_len: usize) -> Result<CmacKey, DispatchError> {
+    let (key_len, mismatch, failure) = match key_len_bits {
+        128 => (
+            16,
+            "CMAC: key length mismatch for AES-128",
+            "CMAC-128 error",
+        ),
+        192 => (
+            24,
+            "CMAC: key length mismatch for AES-192",
+            "CMAC-192 error",
+        ),
+        256 => (
+            32,
+            "CMAC: key length mismatch for AES-256",
+            "CMAC-256 error",
+        ),
+        _ => return Err(DispatchError::Crypto("CMAC: unsupported keyLen")),
+    };
+    if key.len() != key_len {
+        return Err(DispatchError::Crypto(mismatch));
     }
+    CmacKey::new(key, mac_len).map_err(|_e| DispatchError::Crypto(failure))
 }

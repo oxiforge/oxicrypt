@@ -85,21 +85,23 @@ fn main() {
     // ── 4. AES-256-GCM encrypt + decrypt ────────────────────────
     println!("─── 4. AES-256-GCM ───");
     let aes_key = [0x42u8; 32]; // 256-bit key (demo only!)
-    let iv = [0x01u8; 12]; // 96-bit IV (demo only — use DRBG in production!)
     let aad = b"additional authenticated data";
     let plaintext = b"Secrets worth protecting";
 
-    let cipher = oxicrypt_aes::Aes256Key::new(&aes_key).expect("valid key");
+    // SP 800-38D §8.2.2: the module draws each 96-bit IV from this DRBG.
+    let mut iv_drbg = oxicrypt_drbg::HmacDrbgSha256::instantiate_from_module(b"playground-gcm-iv")
+        .expect("drbg instantiate");
+    let cipher = oxicrypt_aes::GcmKey::new(&aes_key).expect("valid key");
     let mut ciphertext = vec![0u8; plaintext.len()];
-    let mut tag_out = [0u8; 16];
-    oxicrypt_aes::gcm_encrypt(&cipher, &iv, aad, plaintext, &mut ciphertext, &mut tag_out)
+    let sealed = oxicrypt_aes::gcm_encrypt(&cipher, &mut iv_drbg, aad, plaintext, &mut ciphertext)
         .expect("gcm encrypt");
     println!("  Plaintext:  \"{}\"", std::str::from_utf8(plaintext).unwrap());
+    println!("  IV:         {}", hex(&sealed.iv));
     println!("  Ciphertext: {}", hex(&ciphertext));
-    println!("  Tag:        {}", hex(&tag_out));
+    println!("  Tag:        {}", hex(&sealed.tag));
 
     let mut recovered = vec![0u8; ciphertext.len()];
-    oxicrypt_aes::gcm_decrypt(&cipher, &iv, aad, &ciphertext, &tag_out, &mut recovered)
+    oxicrypt_aes::gcm_decrypt(&cipher, &sealed.iv, aad, &ciphertext, &sealed.tag, &mut recovered)
         .expect("gcm decrypt");
     assert_eq!(plaintext.as_slice(), recovered.as_slice());
     println!("  Decrypted:  \"{}\" ✓", std::str::from_utf8(&recovered).unwrap());

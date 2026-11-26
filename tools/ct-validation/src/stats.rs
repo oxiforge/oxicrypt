@@ -43,6 +43,18 @@ impl Verdict {
             _ => Verdict::Clean,
         }
     }
+
+    /// The process exit code for a run whose final verdict is `self`:
+    /// `Leak` exits 1, `Warn` exits 1 under `strict` and 0 otherwise, and
+    /// `Clean` exits 0.
+    #[must_use]
+    pub fn exit_code(self, strict: bool) -> i32 {
+        match self {
+            Verdict::Clean => 0,
+            Verdict::Warn => i32::from(strict),
+            Verdict::Leak => 1,
+        }
+    }
 }
 
 /// Full result record for one target's measurement run.
@@ -64,9 +76,19 @@ pub struct VerdictReport {
 }
 
 /// Compute Welch's two-sample t-statistic for two samples of equal
-/// length. Returns `0.0` if both variances are zero, or if either
-/// sample count is below 2 — those are degenerate cases the caller should never
-/// feed us in practice, but returning zero keeps the math stable.
+/// length.
+///
+/// Returns `0.0` if either sample count is below 2.
+///
+/// When the standard error is zero, as for two constant samples, the
+/// statistic is `0.0` if the means are equal and otherwise infinite with
+/// the sign of the difference of the means: two classes that never vary
+/// but differ are a separation, not an absence of one.
+///
+/// When the standard error is not finite, because a variance overflowed
+/// or a sample holds an infinity, the statistic is likewise `0.0` if the
+/// means are equal and otherwise infinite with the sign of their
+/// difference.
 #[must_use]
 pub fn welch_t(a: &[f64], b: &[f64]) -> f64 {
     let na = a.len();
@@ -77,10 +99,22 @@ pub fn welch_t(a: &[f64], b: &[f64]) -> f64 {
     let (ma, va) = mean_var(a);
     let (mb, vb) = mean_var(b);
     let denom = (va / (na as f64) + vb / (nb as f64)).sqrt();
-    if denom == 0.0 || !denom.is_finite() {
-        return 0.0;
+    if denom == 0.0 {
+        return signed_separation(ma - mb);
+    }
+    if !denom.is_finite() {
+        return signed_separation(ma - mb);
     }
     (ma - mb) / denom
+}
+
+/// `0.0` for a zero difference of means, else an infinity with its sign.
+fn signed_separation(difference: f64) -> f64 {
+    if difference == 0.0 {
+        0.0
+    } else {
+        f64::INFINITY.copysign(difference)
+    }
 }
 
 /// Sample mean and **sample** (Bessel-corrected) variance.
@@ -161,6 +195,45 @@ mod tests {
         );
     }
 
+    /// Two constant samples with different means give an infinite
+    /// statistic signed by the difference, which the verdict classifies as
+    /// a leak; two identical constant samples give zero.
+    #[test]
+    fn welch_t_constant_samples() {
+        let low = [5.0_f64; 100];
+        let high = [7.0_f64; 100];
+        assert_eq!(welch_t(&high, &low).to_bits(), f64::INFINITY.to_bits());
+        assert_eq!(welch_t(&low, &high).to_bits(), f64::NEG_INFINITY.to_bits());
+        assert_eq!(Verdict::from_t(welch_t(&high, &low)), Verdict::Leak);
+        assert_eq!(welch_t(&low, &low).to_bits(), 0.0f64.to_bits());
+    }
+
+    /// A standard error that is not finite gives zero for equal means and
+    /// a signed infinity otherwise. Alternating ±1e308 has a mean of 0 and
+    /// a variance that overflows to infinity; a sample holding an infinity
+    /// has an infinite mean and a variance that is not a number.
+    #[test]
+    fn welch_t_non_finite_standard_error() {
+        let spread = [1e308_f64, -1e308, 1e308, -1e308];
+        let (mean, var) = mean_var(&spread);
+        assert_eq!((mean, var), (0.0, f64::INFINITY));
+        let one = [1.0_f64; 4];
+        assert_eq!(welch_t(&spread, &spread).to_bits(), 0.0f64.to_bits());
+        assert_eq!(
+            welch_t(&spread, &one).to_bits(),
+            f64::NEG_INFINITY.to_bits()
+        );
+        assert_eq!(welch_t(&one, &spread).to_bits(), f64::INFINITY.to_bits());
+
+        let infinite = [f64::INFINITY, 0.0, 0.0, 0.0];
+        assert!(mean_var(&infinite).1.is_nan());
+        assert_eq!(welch_t(&infinite, &one).to_bits(), f64::INFINITY.to_bits());
+        assert_eq!(
+            welch_t(&one, &infinite).to_bits(),
+            f64::NEG_INFINITY.to_bits()
+        );
+    }
+
     /// Classic textbook fixture: two small hand-computed samples.
     /// Sample A: [30, 31, 29, 32, 30], mean=30.4, sample var=1.3
     /// Sample B: [28, 27, 29, 26, 28], mean=27.6, sample var=1.3
@@ -222,5 +295,15 @@ mod tests {
         assert_eq!(Verdict::Leak.worst(Verdict::Clean), Verdict::Leak);
         assert_eq!(Verdict::Clean.worst(Verdict::Leak), Verdict::Leak);
         assert_eq!(Verdict::Leak.worst(Verdict::Warn), Verdict::Leak);
+    }
+
+    #[test]
+    fn exit_code_fails_warn_only_under_strict() {
+        assert_eq!(Verdict::Clean.exit_code(false), 0);
+        assert_eq!(Verdict::Warn.exit_code(false), 0);
+        assert_eq!(Verdict::Leak.exit_code(false), 1);
+        assert_eq!(Verdict::Clean.exit_code(true), 0);
+        assert_eq!(Verdict::Warn.exit_code(true), 1);
+        assert_eq!(Verdict::Leak.exit_code(true), 1);
     }
 }

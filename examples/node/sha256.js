@@ -5,7 +5,7 @@
 const path = require('node:path');
 const koffi = require('koffi');
 
-const names = { linux: 'liboxicrypt_ffi.so.2', darwin: 'liboxicrypt_ffi.2.dylib', win32: 'oxicrypt_ffi.dll' };
+const names = { linux: 'liboxicrypt_ffi.so.3', darwin: 'liboxicrypt_ffi.3.dylib', win32: 'oxicrypt_ffi.dll' };
 
 if (process.argv.length !== 3) {
     console.error('usage: node sha256.js <bundle-dir>');

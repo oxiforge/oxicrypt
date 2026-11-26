@@ -19,14 +19,17 @@
 //!   (`oxicrypt_module::Error::RbgTooWeak`), then `Busy` and
 //!   `EntropyUnavailable` (`oxicrypt_module::RbgError` variants; `Busy` is
 //!   also returned by a DRBG handle another thread is using)
+//! - 34:          `KeyExhausted` (`oxicrypt_module::Error`), a key past its
+//!   invocation limit
 //! - 255:         Catch-all `Internal` (reserved)
 //!
-//! Four codes are mapped but returned by no exported function at ABI 2:
+//! Four codes are mapped but returned by no exported function at ABI 3:
 //! `ReseedRequired = 9`, `EntropyInputTooShort = 29`, `NonceTooShort = 30`
 //! and `RbgTooWeak = 31`.
 //!
-//! `RbgTooWeak` is unreachable because no exported function hands an
-//! `OxiDrbg` to a service that checks its strength, and the one typed DRBG
+//! `RbgTooWeak` is unreachable because the one service that checks the
+//! strength of an `OxiDrbg`, `oxi_aes_gcm_seal`, requires 96 bits and every
+//! `OxiDrbg` is instantiated at 128 bits or more, and the one typed DRBG
 //! handle the services take, HMAC_DRBG-SHA-256, is instantiated at 256
 //! bits, above every service's strength requirement.
 //!
@@ -74,15 +77,14 @@ pub enum OxiResult {
     /// Service exists in the `Service` enum but its implementation is not yet built (stub crate).
     NotImplemented = 7,
 
-    // DRBG errors (oxicrypt_drbg::DrbgError) — state-machine preconditions
-    // distinct from `InvalidInput = 5` (input bounds) so callers can
-    // structure error-handling correctly: Uninstantiated triggers an
-    // `instantiate` call.
+    // DRBG errors (oxicrypt_drbg::DrbgError): state preconditions, kept
+    // apart from `InvalidInput = 5` because the caller recovers
+    // differently (`Uninstantiated` calls for an `instantiate`).
     /// `generate` (or `reseed`) called before `instantiate` succeeded on this DRBG handle.
     Uninstantiated = 8,
     /// The DRBG's reseed counter passed the SP 800-90A Table 3 reseed
     /// interval and the DRBG cannot reseed itself. No exported function
-    /// returns it at ABI 2: every C DRBG handle is seeded by the module and
+    /// returns it at ABI 3: every C DRBG handle is seeded by the module and
     /// reseeds itself at the interval. It is returned by `generate` on an
     /// `oxicrypt_drbg` instance instantiated through the testing interface
     /// with a caller-supplied entropy input, which does not reseed itself at
@@ -114,8 +116,8 @@ pub enum OxiResult {
     /// cryptographic verification primitive ran cleanly but the result
     /// disagrees with the claimed value." Distinct from
     /// [`OxiResult::InvalidInput`] (= 5), which signals input that failed
-    /// to decode BEFORE any cryptographic comparison. AEAD plaintext
-    /// output buffer contents are UNDEFINED when this code is returned.
+    /// to decode BEFORE any cryptographic comparison. The AES mode
+    /// symbols write no output when they return this code.
     TagMismatch = 22,
     /// Input/output buffer length pair is mismatched (e.g. plaintext.len() != ciphertext.len()).
     LengthMismatch = 23,
@@ -133,7 +135,7 @@ pub enum OxiResult {
     IntegrityUnverified = 28,
     /// A DRBG instantiate or reseed was given an entropy input shorter than
     /// the minimum for the instantiated security strength (SP 800-90A Rev. 1
-    /// Tables 2 and 3). No exported function returns it at ABI 2: the C
+    /// Tables 2 and 3). No exported function returns it at ABI 3: the C
     /// interface takes no entropy input, and the module's seed path supplies
     /// a full-length one. It is returned by the `oxicrypt_drbg` testing
     /// interface's caller-entropy forms: HMAC_DRBG and Hash_DRBG
@@ -146,7 +148,7 @@ pub enum OxiResult {
     /// instantiated security strength, the module's nonce floor
     /// (permitted by SP 800-90A Rev. 1 §9.1 step 8; a shorter nonce that
     /// would meet only the uniqueness condition of §8.6.7 is refused). No
-    /// exported function returns it at ABI 2: the C interface takes no
+    /// exported function returns it at ABI 3: the C interface takes no
     /// nonce, and the module's seed path supplies a full-length one. It is
     /// returned by the `oxicrypt_drbg` testing interface's caller-nonce
     /// forms: HMAC_DRBG and Hash_DRBG `instantiate`, and CTR_DRBG
@@ -163,6 +165,11 @@ pub enum OxiResult {
     /// entered its error state, and every later service returns
     /// `NotOperational = 1` until the process restarts.
     EntropyUnavailable = 33,
+    /// The key has reached the number of invocations its mode permits under
+    /// one key (2^32 AES-GCM encryptions, SP 800-38D §8.3; 2^61 AES-CCM
+    /// block-cipher invocations, SP 800-38C §5.1). Nothing was written and
+    /// no IV was generated; the key stays exhausted, so establish a new key.
+    KeyExhausted = 34,
 
     /// Catch-all for "should-never-happen" cases, including an error variant
     /// this mapping does not name.
@@ -197,6 +204,7 @@ impl From<oxicrypt_module::Error> for OxiResult {
                 oxicrypt_module::RbgError::Busy => OxiResult::Busy,
             },
             oxicrypt_module::Error::RbgTooWeak => OxiResult::RbgTooWeak,
+            oxicrypt_module::Error::KeyExhausted => OxiResult::KeyExhausted,
             // `oxicrypt_module::Error` is non-exhaustive, so a variant it
             // adds later reaches this arm and reports `Internal` until it is
             // mapped above.
@@ -216,21 +224,19 @@ impl From<oxicrypt_aes::ModeError> for OxiResult {
             oxicrypt_aes::ModeError::InvalidTagLength => OxiResult::InvalidTagLength,
             oxicrypt_aes::ModeError::InvalidPayloadLength => OxiResult::InvalidPayloadLength,
             oxicrypt_aes::ModeError::InvalidAadLength => OxiResult::InvalidAadLength,
+            oxicrypt_aes::ModeError::Rbg(e) => OxiResult::from(oxicrypt_module::Error::Rbg(e)),
+            oxicrypt_aes::ModeError::RbgTooWeak => OxiResult::RbgTooWeak,
             oxicrypt_aes::ModeError::Module(e) => OxiResult::from(e),
+            // `oxicrypt_aes::ModeError` is non-exhaustive, so a variant it
+            // adds later reaches this arm and reports `Internal` until it is
+            // mapped above.
+            _ => OxiResult::Internal,
         }
     }
 }
 
 /// Convert a `Result<(), oxicrypt_module::Error>` into the C `int` status code.
 pub(crate) fn status_module(r: Result<(), oxicrypt_module::Error>) -> c_int {
-    match r {
-        Ok(()) => OxiResult::Ok as c_int,
-        Err(e) => OxiResult::from(e) as c_int,
-    }
-}
-
-/// Convert a `Result<(), oxicrypt_aes::ModeError>` into the C `int` status code.
-pub(crate) fn status_aes(r: Result<(), oxicrypt_aes::ModeError>) -> c_int {
     match r {
         Ok(()) => OxiResult::Ok as c_int,
         Err(e) => OxiResult::from(e) as c_int,
@@ -259,19 +265,15 @@ impl From<oxicrypt_drbg::DrbgError> for OxiResult {
         match e {
             oxicrypt_drbg::DrbgError::Uninstantiated => OxiResult::Uninstantiated,
             oxicrypt_drbg::DrbgError::ReseedRequired => OxiResult::ReseedRequired,
-            // SP 800-90A Table 3 max_personalization_string / max_additional_input
-            // are length bounds; collapse to InvalidInput=5 (input-bounds family)
-            // alongside `oxicrypt_module::Error::InvalidInput` rather than a
-            // dedicated discriminant — there is nothing the caller can do
-            // structurally different between the two. `InvalidSeedLength` is
-            // a CTR_DRBG-specific seed-length mismatch (not exercised by HMAC
-            // DRBG) but maps to the same family for the same reason.
+            // The SP 800-90A Table 3 bounds on the personalization string
+            // and additional input, and CTR_DRBG's seed-length mismatch,
+            // share `InvalidInput = 5` with the module's own input refusal
+            // because the caller's recovery is the same.
             oxicrypt_drbg::DrbgError::InputTooLong
             | oxicrypt_drbg::DrbgError::InvalidSeedLength => OxiResult::InvalidInput,
             // SP 800-90A Table 3 max_number_of_bits_per_request — output bound,
             // semantically identical to KDF's HKDF-Expand 255*HashLen ceiling.
             oxicrypt_drbg::DrbgError::RequestTooLong => OxiResult::OutputTooLong,
-            // The reseed form of the instantiate refusal reports the same code.
             oxicrypt_drbg::DrbgError::EntropyInputTooShort => OxiResult::EntropyInputTooShort,
             oxicrypt_drbg::DrbgError::Module(m) => OxiResult::from(m),
         }
@@ -284,10 +286,8 @@ mod tests {
 
     #[test]
     fn module_error_maps_to_distinct_oxi_results() {
-        // Each of the eleven oxicrypt_module::Error variants that exist today
-        // maps to its own OxiResult, never to the `Internal` catch-all.
-        // AlreadyFailed deliberately shares NotOperational. The list is
-        // kept by hand: a variant the module adds later is not caught here.
+        // `AlreadyFailed` shares `NotOperational` by design. The list is
+        // kept by hand, so a variant the module adds is not caught here.
         let mappings = [
             (
                 OxiResult::from(oxicrypt_module::Error::NotOperational {
@@ -339,8 +339,12 @@ mod tests {
                 OxiResult::from(oxicrypt_module::Error::NonceTooShort),
                 OxiResult::NonceTooShort,
             ),
+            (
+                OxiResult::from(oxicrypt_module::Error::KeyExhausted),
+                OxiResult::KeyExhausted,
+            ),
         ];
-        assert_eq!(mappings.len(), 11, "one case per variant named above");
+        assert_eq!(mappings.len(), 12, "one case per variant named above");
         for (got, expected) in mappings {
             assert_ne!(got, OxiResult::Internal);
             assert_eq!(got, expected);
@@ -366,8 +370,6 @@ mod tests {
         assert_eq!(OxiResult::RbgTooWeak as i32, 31);
         assert_eq!(OxiResult::Busy as i32, 32);
         assert_eq!(OxiResult::EntropyUnavailable as i32, 33);
-        // A DRBG input over its length bound is `InvalidInput`, and a
-        // request over the per-request limit is `OutputTooLong`.
         assert_eq!(
             OxiResult::from(oxicrypt_drbg::DrbgError::InputTooLong) as i32,
             5
@@ -407,9 +409,37 @@ mod tests {
                 OxiResult::from(oxicrypt_aes::ModeError::LengthMismatch),
                 OxiResult::LengthMismatch,
             ),
+            (
+                OxiResult::from(oxicrypt_aes::ModeError::Module(
+                    oxicrypt_module::Error::KeyExhausted,
+                )),
+                OxiResult::KeyExhausted,
+            ),
         ];
         for (got, expected) in mappings {
             assert_eq!(got, expected);
+        }
+        assert_eq!(OxiResult::KeyExhausted as i32, 34);
+    }
+
+    /// Every `ModeError` variant has its own code, so none reaches the
+    /// wildcard arm that reports `Internal = 255`. The variants come from
+    /// `oxicrypt_aes::mode_error_variants`, which does not compile without
+    /// every variant of the enum.
+    #[test]
+    fn every_aes_mode_error_variant_maps_below_internal() {
+        let codes: Vec<(oxicrypt_aes::ModeError, i32)> = oxicrypt_aes::mode_error_variants()
+            .map(|error| (error, OxiResult::from(error) as i32))
+            .collect();
+        assert_eq!(codes.len(), 11);
+        for (i, &(error, code)) in codes.iter().enumerate() {
+            assert!(
+                code < OxiResult::Internal as i32,
+                "{error:?} maps to {code}"
+            );
+            for &(other, other_code) in codes.iter().skip(i + 1) {
+                assert_ne!(code, other_code, "{error:?} and {other:?} share {code}");
+            }
         }
     }
 
@@ -417,20 +447,13 @@ mod tests {
     fn status_helpers_convert_results() {
         let module_ok: Result<(), oxicrypt_module::Error> = Ok(());
         assert_eq!(status_module(module_ok), 0);
-        let aes_ok: Result<(), oxicrypt_aes::ModeError> = Ok(());
-        assert_eq!(status_aes(aes_ok), 0);
         let module_err: Result<(), oxicrypt_module::Error> =
             Err(oxicrypt_module::Error::InvalidInput);
         assert_eq!(status_module(module_err), OxiResult::InvalidInput as i32);
-        let aes_err: Result<(), oxicrypt_aes::ModeError> =
-            Err(oxicrypt_aes::ModeError::TagMismatch);
-        assert_eq!(status_aes(aes_err), OxiResult::TagMismatch as i32);
     }
 
     #[test]
     fn kdf_error_maps_to_distinct_oxi_results() {
-        // KdfError::OutputTooLong has its own discriminant; the
-        // Module(_) wrapper passes through to the inner Error mapping.
         assert_eq!(
             OxiResult::from(oxicrypt_kdf::KdfError::OutputTooLong),
             OxiResult::OutputTooLong

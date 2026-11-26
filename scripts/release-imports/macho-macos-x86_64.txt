@@ -1,4 +1,4 @@
-# Run-time imports allowed for liboxicrypt_ffi.2.dylib in the macos-x86_64 archive.
+# Run-time imports allowed for liboxicrypt_ffi.3.dylib in the macos-x86_64 archive.
 # Read by `release-archive-check.sh imports`, which fails the release build
 # on any Mach-O import not named here. A new import is a deliberate change,
 # made in this file in the commit that introduces it, with its reason.

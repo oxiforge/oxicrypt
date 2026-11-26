@@ -12,8 +12,8 @@ two staged PRs:
   safe-no-op-after-finalize lifecycle, symbol rename `oxicrypt_*` → `oxi_*`,
   single-function `oxi_init(int profile)` (F3) with distinct
   `OxiResult::InvalidInput` for unknown profile codes (F4),
-  `oxi_is_operational` state query, AES-256-GCM canonical exposure with
-  opaque `OxiAes256Key` handle (F4 distinct `OxiResult::TagMismatch`,
+  `oxi_is_operational` state query, AES-GCM exposure through an
+  opaque key handle (F4 distinct `OxiResult::TagMismatch`,
   F5 NULL-safe `_free`, F9 NULL-AAD-with-len-0 allowed),
   `oxicrypt-integrity-sign` extended for multi-target signing (F8 per-binary
   integrity slots in cdylib + staticlib), C integration test harness
@@ -157,54 +157,46 @@ void      oxi_hmac_sha256_free(OxiHmacSha256Ctx *ctx);
 
 /* ── AES ──────────────────────────────────────────────────────────── */
 
-typedef struct OxiAes128Key OxiAes128Key;
-typedef struct OxiAes256Key OxiAes256Key;
-
-OxiResult oxi_aes128_new(OxiAes128Key **key,
-                         const uint8_t raw_key[16]);
-OxiResult oxi_aes256_new(OxiAes256Key **key,
-                         const uint8_t raw_key[32]);
-void      oxi_aes128_free(OxiAes128Key *key);
-void      oxi_aes256_free(OxiAes256Key *key);
-
-/**
- * AES-256-GCM authenticated encryption.
+/*
+ * This block uses the generated header's types, int for a status and
+ * uintptr_t for a length, where the sections above use OxiResult and
+ * size_t.
  *
- * @param key        AES-256 key (from oxi_aes256_new).
- * @param iv         12-byte initialization vector (MUST be unique per key).
- * @param aad        Additional authenticated data (may be NULL if aad_len==0).
- * @param aad_len    Length of AAD in bytes.
- * @param plaintext  Input plaintext.
- * @param pt_len     Length of plaintext in bytes.
- * @param ciphertext Output buffer, must be at least pt_len bytes.
- * @param tag        Output buffer for 16-byte authentication tag.
- * @return           OXI_OK or error.
+ * One opaque key handle type per mode: OxiAesGcmKey, OxiAesCcmKey,
+ * OxiAesCbcKey, OxiAesCtrKey, OxiAesKwKey (KW and KWP, forward and
+ * inverse cipher) and OxiAesCmacKey. Each is built from 16, 24 or 32 key
+ * bytes by its mode's _key_new and released by its mode's _key_free; a
+ * handle passed to another mode's function returns InvalidInput = 5. The
+ * header declares the 34 oxi_aes_* functions; AES-GCM is shown here.
  */
-OxiResult oxi_aes256_gcm_encrypt(const OxiAes256Key *key,
-                                 const uint8_t iv[12],
-                                 const uint8_t *aad, size_t aad_len,
-                                 const uint8_t *plaintext, size_t pt_len,
-                                 uint8_t *ciphertext,
-                                 uint8_t tag[16]);
+typedef struct OxiAesGcmKey OxiAesGcmKey;
 
-/**
- * AES-256-GCM authenticated decryption.
- *
- * Returns OXI_ERR_TAG_MISMATCH if authentication fails.
- * On tag mismatch, the plaintext buffer contents are UNDEFINED —
- * the caller MUST NOT use them.
+int  oxi_aes_gcm_key_new(const uint8_t *key, uintptr_t key_len, OxiAesGcmKey **out);
+void oxi_aes_gcm_key_free(OxiAesGcmKey *key);
+
+/*
+ * AES-GCM authenticated encryption under a 96-bit IV the module draws from
+ * the caller's DRBG handle and writes to iv_out (SP 800-38D §8.2.2). A key
+ * that has reached its limit of 2^32 encryptions returns KeyExhausted = 34.
  */
-OxiResult oxi_aes256_gcm_decrypt(const OxiAes256Key *key,
-                                 const uint8_t iv[12],
-                                 const uint8_t *aad, size_t aad_len,
-                                 const uint8_t *ciphertext, size_t ct_len,
-                                 uint8_t *plaintext,
-                                 const uint8_t tag[16]);
+int oxi_aes_gcm_seal(const OxiAesGcmKey *key,
+                     OxiDrbg *drbg,
+                     const uint8_t *aad, uintptr_t aad_len,
+                     const uint8_t *plaintext, uintptr_t pt_len,
+                     uint8_t *ciphertext,
+                     uint8_t *iv_out,
+                     uint8_t *tag_out);
 
-OxiResult oxi_aes256_ctr(const OxiAes256Key *key,
-                         const uint8_t icb[16],
-                         const uint8_t *input, size_t len,
-                         uint8_t *output);
+/*
+ * AES-GCM authenticated decryption. A tag that does not verify returns
+ * TagMismatch = 22, and the plaintext is written only on success.
+ */
+int oxi_aes_gcm_open(const OxiAesGcmKey *key,
+                     const uint8_t *iv,
+                     const uint8_t *aad, uintptr_t aad_len,
+                     const uint8_t *ciphertext, uintptr_t ct_len,
+                     const uint8_t *tag,
+                     uint8_t *plaintext);
 
 /* ── DRBG ─────────────────────────────────────────────────────────── */
 
@@ -402,8 +394,8 @@ const char *oxi_version(void);
 2. ✅ **Complete** (PR #7) — `extern "C"` functions implemented as thin
    wrappers over the Rust API: `oxi_init`, `oxi_active_profile`,
    `oxi_is_operational`, `oxi_sha256`, `oxi_sha512`, `oxi_hmac_sha256`,
-   `oxi_aes256_new`, `oxi_aes256_free`, `oxi_aes256_gcm_encrypt`,
-   `oxi_aes256_gcm_decrypt`. Streaming AES-GCM exposure deferred —
+   and AES-GCM over an opaque key handle (the header's `oxi_aes_gcm_*`
+   functions). Streaming AES-GCM exposure deferred —
    the underlying `oxicrypt-aes` public API does not expose streaming
    GCM yet; exposing a caller-managed streaming surface ahead of the
    Rust API would invert the dependency direction.

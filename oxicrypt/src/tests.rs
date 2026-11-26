@@ -169,6 +169,13 @@ fn code_22_depends_on_the_site() {
 }
 
 #[test]
+fn code_34_is_key_exhausted_at_every_site() {
+    for site in SITES {
+        assert_eq!(Error::from_code(34, site), Error::KeyExhausted);
+    }
+}
+
+#[test]
 fn profile_and_integrity_codes_round_trip() {
     for code in -2..=12 {
         assert_eq!(Profile::from_code(code).code(), code);
@@ -313,12 +320,16 @@ fn sys_functions() -> BTreeMap<String, Signature> {
 fn sys_declares_exactly_the_header() {
     let header = header_functions();
     let sys = sys_functions();
-    assert_eq!(header.len(), 299, "the header's export count changed");
+    assert_eq!(header.len(), 319, "the header's export count changed");
     assert!(header.contains_key("lama_manifest"));
     assert_eq!(
-        header["oxi_aes256_new"],
+        header["oxi_aes_gcm_key_new"],
         (
-            vec!["*mut *mut OxiAes256Key".to_owned(), "*const u8".to_owned()],
+            vec![
+                "*const u8".to_owned(),
+                "usize".to_owned(),
+                "*mut *mut OxiAesGcmKey".to_owned()
+            ],
             "c_int".to_owned()
         ),
         "the header parser's positive control"
@@ -671,10 +682,15 @@ mod forbidden_traits {
         HkdfPrk, MlDsa87KeySeed, MlDsa87SecretKey, MlKem1024DecapsulationKey, MlKem1024EncapsSeed,
         MlKem1024KeySeedD, MlKem1024KeySeedZ, Okm, SharedSecret,
     };
-    use crate::{Aes256Key, Drbg};
+    use crate::{AesCbcKey, AesCcmKey, AesCmacKey, AesCtrKey, AesGcmKey, AesKwKey, Drbg};
     use core::hash::Hash;
 
-    assert_not_impl!(Aes256Key: Clone, Copy);
+    assert_not_impl!(AesGcmKey: Clone, Copy);
+    assert_not_impl!(AesCcmKey: Clone, Copy);
+    assert_not_impl!(AesCbcKey: Clone, Copy);
+    assert_not_impl!(AesCtrKey: Clone, Copy);
+    assert_not_impl!(AesKwKey: Clone, Copy);
+    assert_not_impl!(AesCmacKey: Clone, Copy);
     assert_not_impl!(Drbg: Clone, Copy, Sync);
     assert_not_impl!(HkdfPrk: Clone, Copy, PartialEq, Hash, core::fmt::Display);
     assert_not_impl!(Okm: Clone, Copy, PartialEq, Hash, core::fmt::Display);
@@ -742,7 +758,7 @@ fn the_unit_test_binary_reaches_the_library() {
     assert!(!manifest.is_null());
 }
 
-// ----- AES-256-GCM length limits -----
+// ----- AES-GCM length limits -----
 
 /// SP 800-38D §5.2.1.1: a plaintext of at most 2^39 − 256 bits and
 /// additional data of at most 2^64 − 1 bits, in whole bytes.

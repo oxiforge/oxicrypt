@@ -540,6 +540,11 @@ pub enum Error {
     /// The random bit generator handed to a service has a security
     /// strength below what that service requires.
     RbgTooWeak,
+    /// A key has reached the number of invocations its mode permits under
+    /// one key (for AES-GCM with generated IVs, 2^32 encryptions, SP 800-38D
+    /// §8.3). Further encryption under the key is refused; establish a new
+    /// key.
+    KeyExhausted,
 }
 
 impl fmt::Display for Error {
@@ -582,6 +587,10 @@ impl fmt::Display for Error {
             ),
             Self::Rbg(e) => write!(f, "random bit generator: {e}"),
             Self::RbgTooWeak => f.write_str("random bit generator strength below the requirement"),
+            Self::KeyExhausted => f.write_str(
+                "the key has reached its invocation limit and refuses further encryption; \
+                 establish a new key",
+            ),
         }
     }
 }
@@ -1683,7 +1692,7 @@ const fn is_lms_service(service: Service) -> bool {
 ///
 /// Split out so the boundaries can be tested at all. `is_lms_service` takes a
 /// `Service`, and the LMS block sits at the very top of the enum — there is no
-/// variant above 659 — so a widened *upper* bound admits nothing today and no
+/// variant above 659 — so a widened *upper* bound admits no variant and no
 /// `Service`-typed probe can detect it. Over a raw `u16`, both edges and the
 /// parity are reachable: `lms_block_boundaries_are_exact` pins
 /// 499/500/501/502/658/659/660/661, which fails if either bound moves in
@@ -2431,7 +2440,6 @@ mod tests {
         }
         assert_eq!(UNREACHED_RUNS.load(Ordering::Acquire), 0);
         assert_eq!(state(), State::Error);
-        // Operational-only guard must reject calls from here on.
         assert!(matches!(
             require_operational(),
             Err(Error::NotOperational {
@@ -2570,7 +2578,6 @@ mod tests {
 
     #[test]
     fn unrestricted_allows_all_services() {
-        // Spot-check: every category should pass in Unrestricted.
         let spot = [
             Service::Sha1,
             Service::Sha256,
@@ -3490,7 +3497,6 @@ mod tests {
     fn require_allowed_passes_everything_in_unrestricted() {
         let _guard = reset_for_test();
         initialize_with_tests(UNSIGNED_TEST_BINARY, &[]).unwrap();
-        // Spot-check a few from each end of the spectrum.
         require_allowed(Service::Sha1).unwrap();
         require_allowed(Service::Aes128Ecb).unwrap();
         require_allowed(Service::Ed25519Sign).unwrap();
@@ -3552,7 +3558,7 @@ mod tests {
     /// Both edges of the LMS discriminant block, over raw values.
     ///
     /// The block sits at the very top of the enum, so a widened *upper* bound
-    /// admits nothing today and no `Service`-typed probe can see it — moving
+    /// admits no variant and no `Service`-typed probe can see it — moving
     /// the bound to 709 leaves the whole suite green. Testing the arithmetic
     /// directly is what makes the upper edge checkable at all.
     #[test]
@@ -3566,7 +3572,6 @@ mod tests {
         assert!(!lms_block_contains(660), "660 is above the LMS block");
         assert!(!lms_block_contains(661), "661 is above the LMS block");
 
-        // ...and the block the arithmetic describes is the one the enum has.
         assert_eq!(Service::LmsSha256M32H5W1Verify as u16, 501);
         assert_eq!(Service::LmsShakeM24H25W8Verify as u16, 659);
     }
@@ -3624,6 +3629,13 @@ mod tests {
             Error::RbgTooWeak.to_string(),
             "random bit generator strength below the requirement"
         );
+        assert!(
+            Error::KeyExhausted
+                .to_string()
+                .contains("reached its invocation limit"),
+            "{}",
+            Error::KeyExhausted
+        );
     }
 
     #[test]
@@ -3670,7 +3682,6 @@ mod tests {
 
     #[test]
     fn service_display_is_stable() {
-        // Pin a few representative Display strings.
         assert_eq!(Service::Sha256.to_string(), "SHA-256");
         assert_eq!(Service::Aes256Gcm.to_string(), "AES-256-GCM");
         assert_eq!(Service::MlKem1024Encaps.to_string(), "ML-KEM-1024 encaps");

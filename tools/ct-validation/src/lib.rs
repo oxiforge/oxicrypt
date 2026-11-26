@@ -85,9 +85,11 @@
 //!
 //! ## Targets and current verdicts
 //!
-//! The ten primitives wired into [`targets`] cover every secret-
-//! dependent arithmetic path on the RSA, P-256, P-384 and Ed25519
-//! private-key sides. The set is `targets::all_target_names`:
+//! The fifteen primitives wired into [`targets`] are the targets listed
+//! below, on the RSA, P-256, P-384 and Ed25519 private-key sides, the
+//! portable GHASH and AES round arithmetic, the CMAC subkey derivation
+//! and tag comparison, and the KWP integrity check. The set is
+//! `targets::all_target_names`:
 //!
 //! | Target                      | Primitive                                               |
 //! |-----------------------------|---------------------------------------------------------|
@@ -101,6 +103,28 @@
 //! | `ecdsa_p384_scalar_invert`  | `oxicrypt_ecdsa::p384_scalar::Scalar384::invert`        |
 //! | `ecdh_p384_cdh`             | `oxicrypt_ecdh::compute_shared_secret_p384_internal`    |
 //! | `eddsa_ed25519_scalar_mul`  | `oxicrypt_eddsa::edwards::EdwardsPoint::mul` (clamped)  |
+//! | `ghash`                     | `oxicrypt_aes::modes::ghash_mul_portable_internal`      |
+//! | `aes_gmul`                  | `oxicrypt_aes::block::{inv_,}mix_columns_internal`      |
+//! | `cmac_subkey`               | `oxicrypt_cmac::cmac::subkeys_from_l_internal`          |
+//! | `kwp_unwrap`                | `oxicrypt_aes::kw::kwp_check_internal`                  |
+//! | `cmac_verify`               | `oxicrypt_cmac::cmac_verify`                            |
+//!
+//! With the `fixture` feature the harness also builds two controls, run
+//! by name only. `cmac_verify_leaky` is `cmac_verify`'s classes and call
+//! with a comparison that stops at the first differing byte, and must
+//! report a leak. `aa` verifies the same correct tag in both classes, so
+//! a `Leak` it reports is the harness's or the host's, the baseline for
+//! reading a `--strict` `Leak` on another target.
+//!
+//! ## Exit codes and `--strict`
+//!
+//! The binary exits 0 when every target is `Clean`, 1 when any is `Leak`,
+//! and 2 on a usage error or a module that did not start. A `Warn` exits
+//! 0; under `--strict` it is measured once more under
+//! [`measure::strict_rerun_config`], at [`measure::STRICT_RERUN_SAMPLES`]
+//! or `--samples` samples, whichever is larger, and with a seed derived
+//! from the first run's, and a second `Warn` exits 1 as a `Leak` does
+//! ([`measure::run_with_policy`], [`Verdict::exit_code`]).
 //!
 //! Verdicts are not pinned here: they are whatever the harness reports
 //! on the run in front of you, at the sample budget you gave it.

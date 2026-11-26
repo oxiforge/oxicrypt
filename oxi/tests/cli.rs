@@ -517,6 +517,10 @@ fn selftest_runs_the_whole_inventory_and_indicates_pass() {
             "group {group} is missing from the report"
         );
     }
+    assert!(
+        stdout.contains("\naes (31)\n"),
+        "the aes group must report its 31 self-tests, got:\n{stdout}"
+    );
     // And the integrity test is named, since it is the one the operator most
     // wants to see and the one that is NOT part of the flat inventory.
     assert!(

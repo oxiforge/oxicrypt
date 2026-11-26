@@ -421,6 +421,36 @@ jobs:
           # exit), so the seed-path lifecycle test fails here instead of
           # skipping when the timer check selects the other path.
           OXI_REQUIRE_ASSESSED_PATH: "1"
+      # The AES and CMAC zeroization tests, which count the wipes of each
+      # intermediate per path and compile only with the feature.
+      # Fail closed on a run that passes no test, and on a run in which a
+      # named test that compiles only with the feature did not pass. The
+      # output is uncoloured, since the workflow-wide CARGO_TERM_COLOR
+      # splits the lines these patterns read with escape codes.
+      - name: cargo nextest run -p oxicrypt-aes --features fault-injection
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        run: |
+          set -o pipefail
+          log="$RUNNER_TEMP/nextest-aes-fault.log"
+          cargo nextest run -p oxicrypt-aes --features fault-injection --color never 2>&1 | tee "$log"
+          grep -Eq "[1-9][0-9]* tests? run: [1-9][0-9]* passed" "$log" \
+            || { echo "the oxicrypt-aes fault-injection run passed no tests" >&2; exit 1; }
+          for t in modes::tests::intermediates::intermediates_zeroized_on_all_paths \
+                   kw::tests::kw_wrap_fail_leaves_buffer_wiped; do
+            grep -Eq "PASS \[.*\] .*oxicrypt-aes.* ${t}\$" "$log" \
+              || { echo "the oxicrypt-aes fault-injection run did not pass $t" >&2; exit 1; }
+          done
+      - name: cargo nextest run -p oxicrypt-cmac --features fault-injection
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        run: |
+          set -o pipefail
+          log="$RUNNER_TEMP/nextest-cmac-fault.log"
+          cargo nextest run -p oxicrypt-cmac --features fault-injection --color never 2>&1 | tee "$log"
+          grep -Eq "[1-9][0-9]* tests? run: [1-9][0-9]* passed" "$log" \
+            || { echo "the oxicrypt-cmac fault-injection run passed no tests" >&2; exit 1; }
+          t=cmac::tests::subkeys_zeroized_on_all_paths
+          grep -Eq "PASS \[.*\] .*oxicrypt-cmac.* ${t}\$" "$log" \
+            || { echo "the oxicrypt-cmac fault-injection run did not pass $t" >&2; exit 1; }
       # Requires the unsigned copy refused (integrity status 3), the signed copy operational (1), and a copy with one byte flipped inside the signed region refused (2).
       - name: Unsigned, signed and tampered library through oxi_init
         if: ${{ !cancelled() && steps.build.outcome == 'success' }}
@@ -432,11 +462,11 @@ jobs:
             target/release/c-integration/signed/liboxicrypt_ffi.so \
             target/release/oxicrypt-integrity-sign
 
-  # The lock-protected static cell behind the DRBG seed path is checked for
-  # undefined behaviour under Miri; the tests build the cell with a reduced
-  # spin bound.
+  # The lock-protected static cell behind the DRBG seed path, and the AES
+  # mode cores, are checked for undefined behaviour under Miri; the tests
+  # build the cell with a reduced spin bound.
   miri:
-    name: "Miri: SpinCell soundness"
+    name: "Miri: SpinCell and AES soundness"
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -444,6 +474,30 @@ jobs:
         run: rustup toolchain install nightly --profile minimal --component miri
       - run: cargo +nightly miri setup
       - run: cargo +nightly miri test -p oxicrypt-platform --features fault-injection --lib spincell_
+      # The first four skipped tests run their bodies through
+      # `test_support::isolated`, which re-executes the test binary as a
+      # child process; Miri cannot spawn a process and aborts the run. They
+      # run in the test job. The other five callers of `isolated` are behind
+      # `fault-injection` and compiled out of this step.
+      # `ccm_aad_length_encoding_boundary` is skipped for its cost under
+      # interpretation: each of its two cases puts about 65 KB of associated
+      # data, some 4,100 AES blocks, through the CBC-MAC three times (its own
+      # reference computation, the seal and the open), about 24,000 block
+      # operations in all. The CCM formatting and CBC-MAC it exercises run
+      # under Miri in this module's other CCM tests, `ccm_invocation_accounting`
+      # among them, and the encoding boundary itself is checked by the test
+      # job.
+      # Fail closed on a run that passes no test.
+      - run: |
+          set -o pipefail
+          cargo +nightly miri test -p oxicrypt-aes --lib -- \
+            --skip all_kats_pass \
+            --skip forbidden_mode_refused_under_cnsa_profile \
+            --skip held_token_refused_after_error_state \
+            --skip kw_unwrap_fail_leaves_buffer_wiped \
+            --skip ccm_aad_length_encoding_boundary 2>&1 | tee /tmp/miri-aes.log
+          grep -Eq "test result: ok\. [1-9][0-9]* passed" /tmp/miri-aes.log \
+            || { echo "the oxicrypt-aes Miri run passed no tests" >&2; exit 1; }
 
   # The release-build guard, on a second machine.
   #
@@ -568,6 +622,30 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - run: ./scripts/test-release-scripts.sh
+
+  # The KWP length arithmetic is checked so that it cannot wrap where
+  # `usize` is 32 bits, which no 64-bit job exercises. The 32-bit C
+  # runtime the test binary links against comes from gcc-multilib.
+  i686:
+    name: cargo test (i686 KWP length arithmetic)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install stable toolchain
+        run: rustup toolchain install stable --profile minimal
+      - name: Install the 32-bit target and C runtime
+        run: |
+          rustup target add i686-unknown-linux-gnu
+          sudo apt-get update
+          sudo apt-get install -y gcc-multilib
+      - uses: Swatinem/rust-cache@v2
+      # Fail closed on a zero-match filter: `cargo test <filter>` exits 0 with
+      # "0 tests run" if the test is renamed or gated out.
+      - run: |
+          set -o pipefail
+          cargo test -p oxicrypt-aes --target i686-unknown-linux-gnu --lib kwp_length_arithmetic_does_not_wrap 2>&1 | tee /tmp/i686.log
+          grep -Eq "test result: ok\. [1-9][0-9]* passed" /tmp/i686.log \
+            || { echo "kwp_length_arithmetic_does_not_wrap matched no passing tests" >&2; exit 1; }
 
   # Non-default feature configs — the local pre-push hook tests
   # default features only, so this job is cloud CI's unique

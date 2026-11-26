@@ -250,8 +250,11 @@ impl ParallelHashXof128 {
 
 ### Key types
 
-`Aes128Key::new(&[u8; 16]) -> Result<Self, Error>`, `Aes192Key::new(&[u8; 24]) -> Result<Self, Error>`,
-`Aes256Key::new(&[u8; 32]) -> Result<Self, Error>`.
+One key type per mode, none `Clone`, each built from a 16-, 24- or 32-byte
+key and gated on its mode's service for that size: `GcmKey::new(&[u8])`,
+`CcmKey::new(&[u8], tag_len)` (tag length 8, 10, 12, 14 or 16 bytes),
+`CbcKey::new(&[u8])`, `CtrKey::new(&[u8])`, `KwKey::new(&[u8])` (KW and
+KWP), each returning `Result<Self, Error>`. ECB takes the hidden `EcbKey`.
 
 ### Mode operations
 
@@ -259,19 +262,21 @@ impl ParallelHashXof128 {
 |----------|------|-------|
 | `ecb_encrypt`, `ecb_decrypt` | ECB | Block-aligned input |
 | `cbc_encrypt`, `cbc_decrypt` | CBC | 16-byte IV, block-aligned |
-| `ctr_xor` | CTR | 16-byte ICB, any length |
-| `gcm_encrypt`, `gcm_decrypt` | GCM | 12-byte IV, 16-byte tag |
-| `ccm_encrypt`, `ccm_decrypt` | CCM | Variable nonce/tag lengths |
+| `ctr` | CTR | 16-byte initial counter block, any length |
+| `gcm_encrypt`, `gcm_decrypt` | GCM | Encrypt takes an `oxicrypt-drbg` DRBG as `drbg` and returns the 12-byte IV drawn from `drbg` and the 16-byte tag as `GcmSealed`; decrypt takes that IV and tag |
+| `ccm_encrypt`, `ccm_decrypt` | CCM | 7- to 13-byte nonce, the key's tag length |
 | `kw_wrap`, `kw_unwrap` | KW | SP 800-38F key wrap |
 | `kwp_wrap`, `kwp_unwrap` | KWP | Key wrap with padding |
+| `kw_wrap_inverse`, `kw_unwrap_inverse`, `kwp_wrap_inverse`, `kwp_unwrap_inverse` | KW, KWP | Inverse-cipher direction |
 
-All mode functions are generic over `BlockCipher`, accepting any AES key size.
+Each mode function takes its mode's key and is gated on its mode's service
+at the key's size; the KWP functions gate on the KWP service.
 
 ### Error type
 
 `ModeError`: `NotBlockAligned`, `InvalidIvLength`, `TagMismatch`,
 `LengthMismatch`, `InvalidNonceLength`, `InvalidTagLength`,
-`InvalidPayloadLength`, `InvalidAadLength`.
+`InvalidPayloadLength`, `InvalidAadLength`, `Rbg`, `RbgTooWeak`, `Module`.
 
 ## DRBG — `oxicrypt_drbg`
 

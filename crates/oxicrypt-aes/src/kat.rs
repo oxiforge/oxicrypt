@@ -2,48 +2,55 @@
 //!
 //! # Source traceability
 //!
-//! Every KAT in this module is reproduced verbatim from a published
-//! NIST reference and carries its citation inline so a CST lab can
-//! audit the source without leaving the file:
+//! Each KAT's source is cited inline where the KAT is defined, so a CST
+//! lab can audit it without leaving the file. A derived entry (a
+//! truncated keystream prefix, a flipped byte) says so at its
+//! definition. The sources:
 //!
 //!   * **ECB** — the NIST AES example vectors that FIPS 197 Appendix C
 //!     points to (AES-128/192/256, single block).
 //!   * **CBC** — SP 800-38A Appendix F.2 (AES-128 in F.2.1, AES-192
 //!     in F.2.3, AES-256 in F.2.5).
 //!   * **CTR** — SP 800-38A Appendix F.5 (AES-128 in F.5.1, AES-192
-//!     in F.5.3, AES-256 in F.5.5).
+//!     in F.5.3, AES-256 in F.5.5), and the first 56 bytes of F.5.5,
+//!     which end inside a block.
 //!   * **GCM** — NIST-published "GCM Test Vectors" (McGrew & Viega
 //!     AES-GCM reference Appendix B):
 //!     - AES-128 Test Case 3
 //!     - AES-192 Test Case 9
 //!     - AES-256 Test Case 15
+//!     - AES-256 Test Case 16 (60-byte plaintext, 20-byte AAD)
 //!   * **CCM** — NIST CAVP CCMVS test vectors, "Variable Payload
 //!     Test" (`ccmtestvectors.zip` / `VPT{128,192,256}.rsp`), using
 //!     the `[Alen=32, Nlen=13, Tlen=16, Plen=16]` parameter group,
 //!     Count=160 from each file. These are the canonical NIST
-//!     validation vectors for SP 800-38C.
+//!     validation vectors for SP 800-38C. A further AES-256 entry comes
+//!     from the "Variable Nonce Test" `VNT256.rsp`, `[Nlen = 7]`,
+//!     Count=0.
 //!   * **KW / KWP** — RFC 3394 §4.1–§4.6 and RFC 5649 §6.
+//!   * **KW / KWP with the inverse cipher** — the NIST ACVP-Server
+//!     sample vectors `ACVP-AES-KW-1.0` (tgId 31, tcId 3001) and
+//!     `ACVP-AES-KWP-1.0` (tgId 21, tcId 2001), `kwCipher: inverse`,
+//!     `keyLen: 256`.
 //!
-//!
-//! Each KAT is defined encrypt-then-decrypt: the KAT function
-//! encrypts the published plaintext, checks the ciphertext, then
-//! decrypts and checks it matches the plaintext. A single failure
-//! in either direction fails the KAT, so each KAT entry exercises
-//! both forward and inverse paths per FIPS 140-3 IG 10.3.A.
+//! [`KATS`] holds 31 entries.
 
 #![allow(clippy::indexing_slicing, clippy::arithmetic_side_effects)]
 
 use oxicrypt_module::{KatEntry, SelfTestFailure};
 
-use crate::block::{Aes128Key, Aes192Key, Aes256Key};
-use crate::ccm::{ccm_decrypt, ccm_encrypt};
-use crate::kw::{kw_unwrap, kw_wrap, kwp_unwrap, kwp_wrap};
-use crate::modes::{cbc_decrypt, cbc_encrypt, ctr_xor, gcm_decrypt, gcm_encrypt};
+use crate::block::EcbKey;
+use crate::ccm::{ccm_decrypt_core, ccm_encrypt_core};
+use crate::kw::{
+    kw_unwrap_core, kw_unwrap_inverse_core, kw_wrap_core, kw_wrap_inverse_core, kwp_unwrap_core,
+    kwp_unwrap_inverse_core, kwp_wrap_core, kwp_wrap_inverse_core,
+};
+use crate::modes::{
+    ModeError, cbc_decrypt_core, cbc_encrypt_core, ctr_core, gcm_decrypt_core, gcm_encrypt_core,
+};
 
-// ----------------------------------------------------------------------
 // Shared SP 800-38A Appendix F plaintext (4 blocks, used by both CBC
 // and CTR vectors for all three key sizes).
-// ----------------------------------------------------------------------
 
 const SP38A_PT: [u8; 64] = [
     // Block 1: 6bc1bee22e409f96e93d7e117393172a
@@ -56,9 +63,7 @@ const SP38A_PT: [u8; 64] = [
     0xf6, 0x9f, 0x24, 0x45, 0xdf, 0x4f, 0x9b, 0x17, 0xad, 0x2b, 0x41, 0x7b, 0xe6, 0x6c, 0x37, 0x10,
 ];
 
-// ----------------------------------------------------------------------
-// ECB — the NIST AES example vectors
-// ----------------------------------------------------------------------
+// ECB: the NIST AES example vectors (FIPS 197 Appendix C).
 
 // Appendix C uses a single 16-byte plaintext with key=0x000102..0f.
 const FIPS197_PT: [u8; 16] = [
@@ -92,7 +97,7 @@ const FIPS197_CT256: [u8; 16] = [
 ];
 
 fn self_test_ecb_aes128() -> Result<(), SelfTestFailure> {
-    let k = Aes128Key::new_internal(&FIPS197_KEY128).map_err(|_| SelfTestFailure)?;
+    let k = EcbKey::new(&FIPS197_KEY128).map_err(|_| SelfTestFailure)?;
     let mut blk = FIPS197_PT;
     k.encrypt_block(&mut blk).map_err(|_| SelfTestFailure)?;
     if blk != FIPS197_CT128 {
@@ -106,7 +111,7 @@ fn self_test_ecb_aes128() -> Result<(), SelfTestFailure> {
 }
 
 fn self_test_ecb_aes192() -> Result<(), SelfTestFailure> {
-    let k = Aes192Key::new_internal(&FIPS197_KEY192).map_err(|_| SelfTestFailure)?;
+    let k = EcbKey::new(&FIPS197_KEY192).map_err(|_| SelfTestFailure)?;
     let mut blk = FIPS197_PT;
     k.encrypt_block(&mut blk).map_err(|_| SelfTestFailure)?;
     if blk != FIPS197_CT192 {
@@ -120,7 +125,7 @@ fn self_test_ecb_aes192() -> Result<(), SelfTestFailure> {
 }
 
 fn self_test_ecb_aes256() -> Result<(), SelfTestFailure> {
-    let k = Aes256Key::new_internal(&FIPS197_KEY256).map_err(|_| SelfTestFailure)?;
+    let k = EcbKey::new(&FIPS197_KEY256).map_err(|_| SelfTestFailure)?;
     let mut blk = FIPS197_PT;
     k.encrypt_block(&mut blk).map_err(|_| SelfTestFailure)?;
     if blk != FIPS197_CT256 {
@@ -133,10 +138,8 @@ fn self_test_ecb_aes256() -> Result<(), SelfTestFailure> {
     Ok(())
 }
 
-// ----------------------------------------------------------------------
-// CBC — SP 800-38A Appendix F.2 (all three key sizes share F.2 IV
+// CBC: SP 800-38A Appendix F.2 (all three key sizes share F.2 IV
 // and plaintext; only the key and ciphertext differ).
-// ----------------------------------------------------------------------
 
 const SP38A_CBC_IV: [u8; 16] = [
     0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f,
@@ -178,14 +181,14 @@ const CBC256_CT: [u8; 64] = [
 ];
 
 fn self_test_cbc_aes128() -> Result<(), SelfTestFailure> {
-    let k = Aes128Key::new_internal(&CBC128_KEY).map_err(|_| SelfTestFailure)?;
+    let k = EcbKey::new(&CBC128_KEY).map_err(|_| SelfTestFailure)?;
     let mut ct = [0u8; 64];
-    cbc_encrypt(&k, &SP38A_CBC_IV, &SP38A_PT, &mut ct).map_err(|_| SelfTestFailure)?;
+    cbc_encrypt_core(&k, &SP38A_CBC_IV, &SP38A_PT, &mut ct).map_err(|_| SelfTestFailure)?;
     if ct != CBC128_CT {
         return Err(SelfTestFailure);
     }
     let mut back = [0u8; 64];
-    cbc_decrypt(&k, &SP38A_CBC_IV, &ct, &mut back).map_err(|_| SelfTestFailure)?;
+    cbc_decrypt_core(&k, &SP38A_CBC_IV, &ct, &mut back).map_err(|_| SelfTestFailure)?;
     if back != SP38A_PT {
         return Err(SelfTestFailure);
     }
@@ -193,14 +196,14 @@ fn self_test_cbc_aes128() -> Result<(), SelfTestFailure> {
 }
 
 fn self_test_cbc_aes192() -> Result<(), SelfTestFailure> {
-    let k = Aes192Key::new_internal(&CBC192_KEY).map_err(|_| SelfTestFailure)?;
+    let k = EcbKey::new(&CBC192_KEY).map_err(|_| SelfTestFailure)?;
     let mut ct = [0u8; 64];
-    cbc_encrypt(&k, &SP38A_CBC_IV, &SP38A_PT, &mut ct).map_err(|_| SelfTestFailure)?;
+    cbc_encrypt_core(&k, &SP38A_CBC_IV, &SP38A_PT, &mut ct).map_err(|_| SelfTestFailure)?;
     if ct != CBC192_CT {
         return Err(SelfTestFailure);
     }
     let mut back = [0u8; 64];
-    cbc_decrypt(&k, &SP38A_CBC_IV, &ct, &mut back).map_err(|_| SelfTestFailure)?;
+    cbc_decrypt_core(&k, &SP38A_CBC_IV, &ct, &mut back).map_err(|_| SelfTestFailure)?;
     if back != SP38A_PT {
         return Err(SelfTestFailure);
     }
@@ -208,23 +211,21 @@ fn self_test_cbc_aes192() -> Result<(), SelfTestFailure> {
 }
 
 fn self_test_cbc_aes256() -> Result<(), SelfTestFailure> {
-    let k = Aes256Key::new_internal(&CBC256_KEY).map_err(|_| SelfTestFailure)?;
+    let k = EcbKey::new(&CBC256_KEY).map_err(|_| SelfTestFailure)?;
     let mut ct = [0u8; 64];
-    cbc_encrypt(&k, &SP38A_CBC_IV, &SP38A_PT, &mut ct).map_err(|_| SelfTestFailure)?;
+    cbc_encrypt_core(&k, &SP38A_CBC_IV, &SP38A_PT, &mut ct).map_err(|_| SelfTestFailure)?;
     if ct != CBC256_CT {
         return Err(SelfTestFailure);
     }
     let mut back = [0u8; 64];
-    cbc_decrypt(&k, &SP38A_CBC_IV, &ct, &mut back).map_err(|_| SelfTestFailure)?;
+    cbc_decrypt_core(&k, &SP38A_CBC_IV, &ct, &mut back).map_err(|_| SelfTestFailure)?;
     if back != SP38A_PT {
         return Err(SelfTestFailure);
     }
     Ok(())
 }
 
-// ----------------------------------------------------------------------
-// CTR — SP 800-38A Appendix F.5
-// ----------------------------------------------------------------------
+// CTR: SP 800-38A Appendix F.5.
 
 const SP38A_CTR_ICB: [u8; 16] = [
     0xf0, 0xf1, 0xf2, 0xf3, 0xf4, 0xf5, 0xf6, 0xf7, 0xf8, 0xf9, 0xfa, 0xfb, 0xfc, 0xfd, 0xfe, 0xff,
@@ -255,14 +256,14 @@ const CTR256_CT: [u8; 64] = [
 ];
 
 fn self_test_ctr_aes128() -> Result<(), SelfTestFailure> {
-    let k = Aes128Key::new_internal(&CBC128_KEY).map_err(|_| SelfTestFailure)?;
+    let k = EcbKey::new(&CBC128_KEY).map_err(|_| SelfTestFailure)?;
     let mut ct = [0u8; 64];
-    ctr_xor(&k, &SP38A_CTR_ICB, &SP38A_PT, &mut ct).map_err(|_| SelfTestFailure)?;
+    ctr_core(&k, &SP38A_CTR_ICB, &SP38A_PT, &mut ct).map_err(|_| SelfTestFailure)?;
     if ct != CTR128_CT {
         return Err(SelfTestFailure);
     }
     let mut back = [0u8; 64];
-    ctr_xor(&k, &SP38A_CTR_ICB, &ct, &mut back).map_err(|_| SelfTestFailure)?;
+    ctr_core(&k, &SP38A_CTR_ICB, &ct, &mut back).map_err(|_| SelfTestFailure)?;
     if back != SP38A_PT {
         return Err(SelfTestFailure);
     }
@@ -270,14 +271,14 @@ fn self_test_ctr_aes128() -> Result<(), SelfTestFailure> {
 }
 
 fn self_test_ctr_aes192() -> Result<(), SelfTestFailure> {
-    let k = Aes192Key::new_internal(&CBC192_KEY).map_err(|_| SelfTestFailure)?;
+    let k = EcbKey::new(&CBC192_KEY).map_err(|_| SelfTestFailure)?;
     let mut ct = [0u8; 64];
-    ctr_xor(&k, &SP38A_CTR_ICB, &SP38A_PT, &mut ct).map_err(|_| SelfTestFailure)?;
+    ctr_core(&k, &SP38A_CTR_ICB, &SP38A_PT, &mut ct).map_err(|_| SelfTestFailure)?;
     if ct != CTR192_CT {
         return Err(SelfTestFailure);
     }
     let mut back = [0u8; 64];
-    ctr_xor(&k, &SP38A_CTR_ICB, &ct, &mut back).map_err(|_| SelfTestFailure)?;
+    ctr_core(&k, &SP38A_CTR_ICB, &ct, &mut back).map_err(|_| SelfTestFailure)?;
     if back != SP38A_PT {
         return Err(SelfTestFailure);
     }
@@ -285,23 +286,44 @@ fn self_test_ctr_aes192() -> Result<(), SelfTestFailure> {
 }
 
 fn self_test_ctr_aes256() -> Result<(), SelfTestFailure> {
-    let k = Aes256Key::new_internal(&CBC256_KEY).map_err(|_| SelfTestFailure)?;
+    let k = EcbKey::new(&CBC256_KEY).map_err(|_| SelfTestFailure)?;
     let mut ct = [0u8; 64];
-    ctr_xor(&k, &SP38A_CTR_ICB, &SP38A_PT, &mut ct).map_err(|_| SelfTestFailure)?;
+    ctr_core(&k, &SP38A_CTR_ICB, &SP38A_PT, &mut ct).map_err(|_| SelfTestFailure)?;
     if ct != CTR256_CT {
         return Err(SelfTestFailure);
     }
     let mut back = [0u8; 64];
-    ctr_xor(&k, &SP38A_CTR_ICB, &ct, &mut back).map_err(|_| SelfTestFailure)?;
+    ctr_core(&k, &SP38A_CTR_ICB, &ct, &mut back).map_err(|_| SelfTestFailure)?;
     if back != SP38A_PT {
         return Err(SelfTestFailure);
     }
     Ok(())
 }
 
-// ----------------------------------------------------------------------
-// GCM — McGrew & Viega AES-GCM reference, Test Cases 3 / 9 / 15.
-// ----------------------------------------------------------------------
+/// Length of the F.5.5 prefix the partial-block CTR KAT uses.
+const CTR_PREFIX_LEN: usize = 56;
+
+// F.5.5 CTR-AES256.Encrypt, first 56 bytes of plaintext and ciphertext. CTR
+// output is the plaintext XOR a keystream that does not depend on the
+// plaintext (SP 800-38A §6.5), so a prefix of the vector is the vector for
+// that prefix.
+fn self_test_ctr_aes256_prefix() -> Result<(), SelfTestFailure> {
+    let k = EcbKey::new(&CBC256_KEY).map_err(|_| SelfTestFailure)?;
+    let pt = &SP38A_PT[..CTR_PREFIX_LEN];
+    let mut ct = [0u8; CTR_PREFIX_LEN];
+    ctr_core(&k, &SP38A_CTR_ICB, pt, &mut ct).map_err(|_| SelfTestFailure)?;
+    if ct[..] != CTR256_CT[..CTR_PREFIX_LEN] {
+        return Err(SelfTestFailure);
+    }
+    let mut back = [0u8; CTR_PREFIX_LEN];
+    ctr_core(&k, &SP38A_CTR_ICB, &ct, &mut back).map_err(|_| SelfTestFailure)?;
+    if back[..] != *pt {
+        return Err(SelfTestFailure);
+    }
+    Ok(())
+}
+
+// GCM: McGrew & Viega AES-GCM reference, Test Cases 3 / 9 / 15.
 
 // Plaintext shared by Cases 3, 9, 15 (64 bytes, no AAD).
 const GCM_PT: [u8; 64] = [
@@ -359,15 +381,15 @@ const GCM256_TAG: [u8; 16] = [
 ];
 
 fn self_test_gcm_aes128() -> Result<(), SelfTestFailure> {
-    let k = Aes128Key::new_internal(&GCM128_KEY).map_err(|_| SelfTestFailure)?;
+    let k = EcbKey::new(&GCM128_KEY).map_err(|_| SelfTestFailure)?;
     let mut ct = [0u8; 64];
     let mut tag = [0u8; 16];
-    gcm_encrypt(&k, &GCM_IV, &[], &GCM_PT, &mut ct, &mut tag).map_err(|_| SelfTestFailure)?;
+    gcm_encrypt_core(&k, &GCM_IV, &[], &GCM_PT, &mut ct, &mut tag).map_err(|_| SelfTestFailure)?;
     if ct != GCM128_CT || tag != GCM128_TAG {
         return Err(SelfTestFailure);
     }
     let mut back = [0u8; 64];
-    gcm_decrypt(&k, &GCM_IV, &[], &ct, &tag, &mut back).map_err(|_| SelfTestFailure)?;
+    gcm_decrypt_core(&k, &GCM_IV, &[], &ct, &tag, &mut back).map_err(|_| SelfTestFailure)?;
     if back != GCM_PT {
         return Err(SelfTestFailure);
     }
@@ -375,15 +397,15 @@ fn self_test_gcm_aes128() -> Result<(), SelfTestFailure> {
 }
 
 fn self_test_gcm_aes192() -> Result<(), SelfTestFailure> {
-    let k = Aes192Key::new_internal(&GCM192_KEY).map_err(|_| SelfTestFailure)?;
+    let k = EcbKey::new(&GCM192_KEY).map_err(|_| SelfTestFailure)?;
     let mut ct = [0u8; 64];
     let mut tag = [0u8; 16];
-    gcm_encrypt(&k, &GCM_IV, &[], &GCM_PT, &mut ct, &mut tag).map_err(|_| SelfTestFailure)?;
+    gcm_encrypt_core(&k, &GCM_IV, &[], &GCM_PT, &mut ct, &mut tag).map_err(|_| SelfTestFailure)?;
     if ct != GCM192_CT || tag != GCM192_TAG {
         return Err(SelfTestFailure);
     }
     let mut back = [0u8; 64];
-    gcm_decrypt(&k, &GCM_IV, &[], &ct, &tag, &mut back).map_err(|_| SelfTestFailure)?;
+    gcm_decrypt_core(&k, &GCM_IV, &[], &ct, &tag, &mut back).map_err(|_| SelfTestFailure)?;
     if back != GCM_PT {
         return Err(SelfTestFailure);
     }
@@ -391,24 +413,92 @@ fn self_test_gcm_aes192() -> Result<(), SelfTestFailure> {
 }
 
 fn self_test_gcm_aes256() -> Result<(), SelfTestFailure> {
-    let k = Aes256Key::new_internal(&GCM256_KEY).map_err(|_| SelfTestFailure)?;
+    let k = EcbKey::new(&GCM256_KEY).map_err(|_| SelfTestFailure)?;
     let mut ct = [0u8; 64];
     let mut tag = [0u8; 16];
-    gcm_encrypt(&k, &GCM_IV, &[], &GCM_PT, &mut ct, &mut tag).map_err(|_| SelfTestFailure)?;
+    gcm_encrypt_core(&k, &GCM_IV, &[], &GCM_PT, &mut ct, &mut tag).map_err(|_| SelfTestFailure)?;
     if ct != GCM256_CT || tag != GCM256_TAG {
         return Err(SelfTestFailure);
     }
     let mut back = [0u8; 64];
-    gcm_decrypt(&k, &GCM_IV, &[], &ct, &tag, &mut back).map_err(|_| SelfTestFailure)?;
+    gcm_decrypt_core(&k, &GCM_IV, &[], &ct, &tag, &mut back).map_err(|_| SelfTestFailure)?;
     if back != GCM_PT {
         return Err(SelfTestFailure);
     }
     Ok(())
 }
 
-// ----------------------------------------------------------------------
-// KW — RFC 3394 §4 / SP 800-38F §6.2
-// ----------------------------------------------------------------------
+// McGrew and Viega, "The Galois/Counter Mode of Operation (GCM)", Appendix B,
+// Test Case 16: AES-256, 96-bit IV, 60-byte plaintext, 20-byte AAD. Source:
+// the specification as submitted to NIST's proposed modes of operation, the
+// file gcm-spec.pdf (sha256
+// 8cec9d63d2e28400773fff488c7aa9fcecb9636d50d994baca3cc025aa23df95).
+// The key and IV are those of Test Case 15 (GCM256_KEY, GCM_IV).
+
+const GCM256_C16_PT: [u8; 60] = [
+    0xd9, 0x31, 0x32, 0x25, 0xf8, 0x84, 0x06, 0xe5, 0xa5, 0x59, 0x09, 0xc5, 0xaf, 0xf5, 0x26, 0x9a,
+    0x86, 0xa7, 0xa9, 0x53, 0x15, 0x34, 0xf7, 0xda, 0x2e, 0x4c, 0x30, 0x3d, 0x8a, 0x31, 0x8a, 0x72,
+    0x1c, 0x3c, 0x0c, 0x95, 0x95, 0x68, 0x09, 0x53, 0x2f, 0xcf, 0x0e, 0x24, 0x49, 0xa6, 0xb5, 0x25,
+    0xb1, 0x6a, 0xed, 0xf5, 0xaa, 0x0d, 0xe6, 0x57, 0xba, 0x63, 0x7b, 0x39,
+];
+const GCM256_C16_AAD: [u8; 20] = [
+    0xfe, 0xed, 0xfa, 0xce, 0xde, 0xad, 0xbe, 0xef, 0xfe, 0xed, 0xfa, 0xce, 0xde, 0xad, 0xbe, 0xef,
+    0xab, 0xad, 0xda, 0xd2,
+];
+const GCM256_C16_CT: [u8; 60] = [
+    0x52, 0x2d, 0xc1, 0xf0, 0x99, 0x56, 0x7d, 0x07, 0xf4, 0x7f, 0x37, 0xa3, 0x2a, 0x84, 0x42, 0x7d,
+    0x64, 0x3a, 0x8c, 0xdc, 0xbf, 0xe5, 0xc0, 0xc9, 0x75, 0x98, 0xa2, 0xbd, 0x25, 0x55, 0xd1, 0xaa,
+    0x8c, 0xb0, 0x8e, 0x48, 0x59, 0x0d, 0xbb, 0x3d, 0xa7, 0xb0, 0x8b, 0x10, 0x56, 0x82, 0x88, 0x38,
+    0xc5, 0xf6, 0x1e, 0x63, 0x93, 0xba, 0x7a, 0x0a, 0xbc, 0xc9, 0xf6, 0x62,
+];
+const GCM256_C16_TAG: [u8; 16] = [
+    0x76, 0xfc, 0x6e, 0xce, 0x0f, 0x4e, 0x17, 0x68, 0xcd, 0xdf, 0x88, 0x53, 0xbb, 0x2d, 0x55, 0x1b,
+];
+
+fn self_test_gcm_aes256_case16() -> Result<(), SelfTestFailure> {
+    let k = EcbKey::new(&GCM256_KEY).map_err(|_| SelfTestFailure)?;
+    let mut ct = [0u8; 60];
+    let mut tag = [0u8; 16];
+    gcm_encrypt_core(
+        &k,
+        &GCM_IV,
+        &GCM256_C16_AAD,
+        &GCM256_C16_PT,
+        &mut ct,
+        &mut tag,
+    )
+    .map_err(|_| SelfTestFailure)?;
+    if ct != GCM256_C16_CT || tag != GCM256_C16_TAG {
+        return Err(SelfTestFailure);
+    }
+    let mut back = [0u8; 60];
+    gcm_decrypt_core(&k, &GCM_IV, &GCM256_C16_AAD, &ct, &tag, &mut back)
+        .map_err(|_| SelfTestFailure)?;
+    if back != GCM256_C16_PT {
+        return Err(SelfTestFailure);
+    }
+    Ok(())
+}
+
+// The Test Case 16 vector with byte 0 of its tag flipped. Decryption must
+// return FAIL (SP 800-38D §7.2) and write no plaintext, so the output, filled
+// with a non-zero pattern beforehand, must be left exactly as passed.
+fn self_test_gcm_aes256_rejected_tag() -> Result<(), SelfTestFailure> {
+    let k = EcbKey::new(&GCM256_KEY).map_err(|_| SelfTestFailure)?;
+    let mut tag = GCM256_C16_TAG;
+    tag[0] ^= 0x01;
+    let mut out = [0xa5u8; 60];
+    let result = gcm_decrypt_core(&k, &GCM_IV, &GCM256_C16_AAD, &GCM256_C16_CT, &tag, &mut out);
+    if result != Err(ModeError::TagMismatch) {
+        return Err(SelfTestFailure);
+    }
+    if out != [0xa5u8; 60] {
+        return Err(SelfTestFailure);
+    }
+    Ok(())
+}
+
+// KW: RFC 3394 §4 and SP 800-38F §6.2.
 //
 // RFC 3394 §4.1 through §4.6 publish six canonical KW test vectors
 // across the KEK × wrapped-key cross product. We run all six at
@@ -477,14 +567,14 @@ const RFC3394_46_CT: [u8; 40] = [
 ];
 
 fn self_test_kw_aes128_pt128() -> Result<(), SelfTestFailure> {
-    let k = Aes128Key::new_internal(&RFC3394_41_KEK).map_err(|_| SelfTestFailure)?;
+    let k = EcbKey::new(&RFC3394_41_KEK).map_err(|_| SelfTestFailure)?;
     let mut ct = [0u8; 24];
-    kw_wrap(&k, &RFC3394_PT_128, &mut ct).map_err(|_| SelfTestFailure)?;
+    kw_wrap_core(&k, &RFC3394_PT_128, &mut ct).map_err(|_| SelfTestFailure)?;
     if ct != RFC3394_41_CT {
         return Err(SelfTestFailure);
     }
     let mut back = [0u8; 16];
-    kw_unwrap(&k, &ct, &mut back).map_err(|_| SelfTestFailure)?;
+    kw_unwrap_core(&k, &ct, &mut back).map_err(|_| SelfTestFailure)?;
     if back != RFC3394_PT_128 {
         return Err(SelfTestFailure);
     }
@@ -492,14 +582,14 @@ fn self_test_kw_aes128_pt128() -> Result<(), SelfTestFailure> {
 }
 
 fn self_test_kw_aes192_pt128() -> Result<(), SelfTestFailure> {
-    let k = Aes192Key::new_internal(&RFC3394_42_KEK).map_err(|_| SelfTestFailure)?;
+    let k = EcbKey::new(&RFC3394_42_KEK).map_err(|_| SelfTestFailure)?;
     let mut ct = [0u8; 24];
-    kw_wrap(&k, &RFC3394_PT_128, &mut ct).map_err(|_| SelfTestFailure)?;
+    kw_wrap_core(&k, &RFC3394_PT_128, &mut ct).map_err(|_| SelfTestFailure)?;
     if ct != RFC3394_42_CT {
         return Err(SelfTestFailure);
     }
     let mut back = [0u8; 16];
-    kw_unwrap(&k, &ct, &mut back).map_err(|_| SelfTestFailure)?;
+    kw_unwrap_core(&k, &ct, &mut back).map_err(|_| SelfTestFailure)?;
     if back != RFC3394_PT_128 {
         return Err(SelfTestFailure);
     }
@@ -507,14 +597,14 @@ fn self_test_kw_aes192_pt128() -> Result<(), SelfTestFailure> {
 }
 
 fn self_test_kw_aes256_pt128() -> Result<(), SelfTestFailure> {
-    let k = Aes256Key::new_internal(&RFC3394_43_KEK).map_err(|_| SelfTestFailure)?;
+    let k = EcbKey::new(&RFC3394_43_KEK).map_err(|_| SelfTestFailure)?;
     let mut ct = [0u8; 24];
-    kw_wrap(&k, &RFC3394_PT_128, &mut ct).map_err(|_| SelfTestFailure)?;
+    kw_wrap_core(&k, &RFC3394_PT_128, &mut ct).map_err(|_| SelfTestFailure)?;
     if ct != RFC3394_43_CT {
         return Err(SelfTestFailure);
     }
     let mut back = [0u8; 16];
-    kw_unwrap(&k, &ct, &mut back).map_err(|_| SelfTestFailure)?;
+    kw_unwrap_core(&k, &ct, &mut back).map_err(|_| SelfTestFailure)?;
     if back != RFC3394_PT_128 {
         return Err(SelfTestFailure);
     }
@@ -522,14 +612,14 @@ fn self_test_kw_aes256_pt128() -> Result<(), SelfTestFailure> {
 }
 
 fn self_test_kw_aes192_pt192() -> Result<(), SelfTestFailure> {
-    let k = Aes192Key::new_internal(&RFC3394_42_KEK).map_err(|_| SelfTestFailure)?;
+    let k = EcbKey::new(&RFC3394_42_KEK).map_err(|_| SelfTestFailure)?;
     let mut ct = [0u8; 32];
-    kw_wrap(&k, &RFC3394_PT_192, &mut ct).map_err(|_| SelfTestFailure)?;
+    kw_wrap_core(&k, &RFC3394_PT_192, &mut ct).map_err(|_| SelfTestFailure)?;
     if ct != RFC3394_44_CT {
         return Err(SelfTestFailure);
     }
     let mut back = [0u8; 24];
-    kw_unwrap(&k, &ct, &mut back).map_err(|_| SelfTestFailure)?;
+    kw_unwrap_core(&k, &ct, &mut back).map_err(|_| SelfTestFailure)?;
     if back != RFC3394_PT_192 {
         return Err(SelfTestFailure);
     }
@@ -537,14 +627,14 @@ fn self_test_kw_aes192_pt192() -> Result<(), SelfTestFailure> {
 }
 
 fn self_test_kw_aes256_pt192() -> Result<(), SelfTestFailure> {
-    let k = Aes256Key::new_internal(&RFC3394_43_KEK).map_err(|_| SelfTestFailure)?;
+    let k = EcbKey::new(&RFC3394_43_KEK).map_err(|_| SelfTestFailure)?;
     let mut ct = [0u8; 32];
-    kw_wrap(&k, &RFC3394_PT_192, &mut ct).map_err(|_| SelfTestFailure)?;
+    kw_wrap_core(&k, &RFC3394_PT_192, &mut ct).map_err(|_| SelfTestFailure)?;
     if ct != RFC3394_45_CT {
         return Err(SelfTestFailure);
     }
     let mut back = [0u8; 24];
-    kw_unwrap(&k, &ct, &mut back).map_err(|_| SelfTestFailure)?;
+    kw_unwrap_core(&k, &ct, &mut back).map_err(|_| SelfTestFailure)?;
     if back != RFC3394_PT_192 {
         return Err(SelfTestFailure);
     }
@@ -552,23 +642,84 @@ fn self_test_kw_aes256_pt192() -> Result<(), SelfTestFailure> {
 }
 
 fn self_test_kw_aes256_pt256() -> Result<(), SelfTestFailure> {
-    let k = Aes256Key::new_internal(&RFC3394_43_KEK).map_err(|_| SelfTestFailure)?;
+    let k = EcbKey::new(&RFC3394_43_KEK).map_err(|_| SelfTestFailure)?;
     let mut ct = [0u8; 40];
-    kw_wrap(&k, &RFC3394_PT_256, &mut ct).map_err(|_| SelfTestFailure)?;
+    kw_wrap_core(&k, &RFC3394_PT_256, &mut ct).map_err(|_| SelfTestFailure)?;
     if ct != RFC3394_46_CT {
         return Err(SelfTestFailure);
     }
     let mut back = [0u8; 32];
-    kw_unwrap(&k, &ct, &mut back).map_err(|_| SelfTestFailure)?;
+    kw_unwrap_core(&k, &ct, &mut back).map_err(|_| SelfTestFailure)?;
     if back != RFC3394_PT_256 {
         return Err(SelfTestFailure);
     }
     Ok(())
 }
 
-// ----------------------------------------------------------------------
-// KWP — RFC 5649 §6 / SP 800-38F §6.3
-// ----------------------------------------------------------------------
+// KW with the inverse cipher (SP 800-38F §6.2 with CIPH⁻¹ as the wrapping
+// function): NIST ACVP-Server `gen-val/json-files/`, ACVP-AES-KW-1.0
+// internalProjection.json, tgId 31, tcId 3001 (`kwCipher: inverse`,
+// `keyLen: 256`, `direction: encrypt`, `payloadLen: 832`).
+
+const ACVP_KW_INV_KEY: [u8; 32] = [
+    0xe6, 0x6f, 0xd4, 0xb0, 0x7c, 0x5a, 0x06, 0xe1, 0x20, 0x08, 0x62, 0xcc, 0x8f, 0xdd, 0xd8, 0xb0,
+    0xca, 0x28, 0xeb, 0xa5, 0xca, 0xb6, 0x39, 0x89, 0x1c, 0x8a, 0xc4, 0x75, 0x97, 0xa1, 0xaa, 0x36,
+];
+const ACVP_KW_INV_PT: [u8; 104] = [
+    0x96, 0x42, 0x7f, 0x1b, 0xab, 0xaf, 0xdd, 0xdc, 0x46, 0x12, 0x5c, 0x94, 0x74, 0x75, 0x7d, 0xae,
+    0x68, 0x96, 0x33, 0x9c, 0x36, 0x18, 0x56, 0x19, 0xf4, 0x27, 0x30, 0xcd, 0x9c, 0x36, 0x30, 0xa4,
+    0xfd, 0x61, 0xbf, 0x1c, 0xe8, 0x92, 0x01, 0x58, 0xd2, 0x4b, 0x91, 0x74, 0x76, 0x79, 0x51, 0x7b,
+    0xe7, 0x21, 0x60, 0x1d, 0x39, 0x71, 0x33, 0x55, 0x5f, 0x68, 0xad, 0xac, 0x08, 0xaf, 0x28, 0xd8,
+    0x86, 0xd2, 0x0d, 0xc5, 0xf1, 0x65, 0xcf, 0xc9, 0xb4, 0x6c, 0x0e, 0x69, 0x6e, 0xb5, 0x81, 0xa1,
+    0xd4, 0x38, 0x7c, 0xc4, 0x0e, 0xb6, 0x77, 0x0b, 0x27, 0xb0, 0x82, 0xb8, 0x5b, 0xb5, 0xc4, 0xe0,
+    0xb5, 0x00, 0x29, 0xf7, 0x1b, 0x25, 0xb4, 0x64,
+];
+const ACVP_KW_INV_CT: [u8; 112] = [
+    0xef, 0x71, 0xf3, 0x0e, 0xbf, 0x56, 0x94, 0xec, 0x2b, 0xd4, 0xbb, 0xe2, 0x15, 0xff, 0x77, 0xa0,
+    0x00, 0x2b, 0xbb, 0x0e, 0x63, 0xb6, 0x75, 0xf4, 0xff, 0x83, 0xf3, 0xf9, 0x3b, 0xb8, 0xf7, 0x66,
+    0x3e, 0x89, 0x28, 0x85, 0x60, 0x49, 0x61, 0x30, 0x12, 0x9b, 0x16, 0xc4, 0x34, 0xec, 0xee, 0x69,
+    0xb0, 0x71, 0x0d, 0xbb, 0xff, 0x37, 0xba, 0x86, 0x42, 0x1c, 0x59, 0xc9, 0xbb, 0x78, 0x0d, 0x3e,
+    0x2d, 0x41, 0x83, 0xb6, 0xfc, 0x5a, 0x82, 0x0c, 0x96, 0xc3, 0x19, 0xfb, 0xc7, 0x75, 0x14, 0x7f,
+    0x00, 0x55, 0xfd, 0x88, 0x7a, 0x61, 0xf1, 0xa7, 0x8d, 0x02, 0x6c, 0xe3, 0x11, 0x43, 0x71, 0x4b,
+    0xd7, 0x84, 0x32, 0x23, 0x21, 0x58, 0xdc, 0x58, 0xb7, 0x3d, 0xf3, 0x63, 0x41, 0xd8, 0xd7, 0x26,
+];
+
+fn self_test_kw_inverse_aes256() -> Result<(), SelfTestFailure> {
+    let k = EcbKey::new(&ACVP_KW_INV_KEY).map_err(|_| SelfTestFailure)?;
+    let mut ct = [0u8; 112];
+    kw_wrap_inverse_core(&k, &ACVP_KW_INV_PT, &mut ct).map_err(|_| SelfTestFailure)?;
+    if ct != ACVP_KW_INV_CT {
+        return Err(SelfTestFailure);
+    }
+    let mut back = [0u8; 104];
+    kw_unwrap_inverse_core(&k, &ct, &mut back).map_err(|_| SelfTestFailure)?;
+    if back != ACVP_KW_INV_PT {
+        return Err(SelfTestFailure);
+    }
+    Ok(())
+}
+
+/// The `AES-256-KW rejected-ICV CAST`: flips byte 0 of the ciphertext of
+/// the AES-256 inverse-cipher KW KAT (ACVP tcId 3001), which changes the A
+/// register that unwrapping checks against the ICV (SP 800-38F §6.2), and
+/// drives `kw_unwrap_inverse_core` on it. The unwrap must return
+/// [`ModeError::TagMismatch`] with the output, pre-filled with a non-zero
+/// byte, wiped to zero.
+fn self_test_kw_inverse_rejected_icv() -> Result<(), SelfTestFailure> {
+    let k = EcbKey::new(&ACVP_KW_INV_KEY).map_err(|_| SelfTestFailure)?;
+    let mut ct = ACVP_KW_INV_CT;
+    ct[0] ^= 0x01;
+    let mut out = [0xa5u8; 104];
+    if kw_unwrap_inverse_core(&k, &ct, &mut out) != Err(ModeError::TagMismatch) {
+        return Err(SelfTestFailure);
+    }
+    if out != [0u8; 104] {
+        return Err(SelfTestFailure);
+    }
+    Ok(())
+}
+
+// KWP: RFC 5649 §6 and SP 800-38F §6.3.
 //
 // RFC 5649 publishes two AES-192 KWP test vectors that between them
 // exercise both KWP code paths: a 7-byte plaintext (single-AES-block
@@ -594,14 +745,14 @@ const RFC5649_CT_20: [u8; 32] = [
 ];
 
 fn self_test_kwp_aes192_7() -> Result<(), SelfTestFailure> {
-    let k = Aes192Key::new_internal(&RFC5649_KEK).map_err(|_| SelfTestFailure)?;
+    let k = EcbKey::new(&RFC5649_KEK).map_err(|_| SelfTestFailure)?;
     let mut ct = [0u8; 16];
-    kwp_wrap(&k, &RFC5649_PT_7, &mut ct).map_err(|_| SelfTestFailure)?;
+    kwp_wrap_core(&k, &RFC5649_PT_7, &mut ct).map_err(|_| SelfTestFailure)?;
     if ct != RFC5649_CT_7 {
         return Err(SelfTestFailure);
     }
     let mut scratch = [0u8; 8];
-    let mli = kwp_unwrap(&k, &ct, &mut scratch).map_err(|_| SelfTestFailure)?;
+    let mli = kwp_unwrap_core(&k, &ct, &mut scratch).map_err(|_| SelfTestFailure)?;
     if mli != RFC5649_PT_7.len() || scratch[..mli] != RFC5649_PT_7[..] {
         return Err(SelfTestFailure);
     }
@@ -609,26 +760,65 @@ fn self_test_kwp_aes192_7() -> Result<(), SelfTestFailure> {
 }
 
 fn self_test_kwp_aes192_20() -> Result<(), SelfTestFailure> {
-    let k = Aes192Key::new_internal(&RFC5649_KEK).map_err(|_| SelfTestFailure)?;
+    let k = EcbKey::new(&RFC5649_KEK).map_err(|_| SelfTestFailure)?;
     let mut ct = [0u8; 32];
-    kwp_wrap(&k, &RFC5649_PT_20, &mut ct).map_err(|_| SelfTestFailure)?;
+    kwp_wrap_core(&k, &RFC5649_PT_20, &mut ct).map_err(|_| SelfTestFailure)?;
     if ct != RFC5649_CT_20 {
         return Err(SelfTestFailure);
     }
     let mut scratch = [0u8; 24];
-    let mli = kwp_unwrap(&k, &ct, &mut scratch).map_err(|_| SelfTestFailure)?;
+    let mli = kwp_unwrap_core(&k, &ct, &mut scratch).map_err(|_| SelfTestFailure)?;
     if mli != RFC5649_PT_20.len() || scratch[..mli] != RFC5649_PT_20[..] {
         return Err(SelfTestFailure);
     }
     Ok(())
 }
 
-// ----------------------------------------------------------------------
-// CCM — SP 800-38C, sourced from NIST CAVP CCMVS VPT{128,192,256}.rsp.
+// KWP with the inverse cipher (SP 800-38F §6.3 with CIPH⁻¹ as the wrapping
+// function): NIST ACVP-Server `gen-val/json-files/`, ACVP-AES-KWP-1.0
+// internalProjection.json, tgId 21, tcId 2001 (`kwCipher: inverse`,
+// `keyLen: 256`, `direction: encrypt`, `payloadLen: 656`).
+
+const ACVP_KWP_INV_KEY: [u8; 32] = [
+    0x63, 0xa9, 0xa4, 0x66, 0x18, 0xa7, 0xd6, 0xf1, 0x98, 0xc7, 0x72, 0x76, 0x40, 0x10, 0xa6, 0xfe,
+    0x9e, 0x12, 0x70, 0xe2, 0x46, 0x9c, 0x98, 0xa1, 0x15, 0xca, 0x84, 0x67, 0xec, 0x8e, 0x80, 0xf0,
+];
+const ACVP_KWP_INV_PT: [u8; 82] = [
+    0xb5, 0xef, 0x66, 0x68, 0x8f, 0xa0, 0x2b, 0xcc, 0xdf, 0xa2, 0x5c, 0xf2, 0x73, 0x35, 0x59, 0x85,
+    0x61, 0x7b, 0xce, 0x11, 0x07, 0x71, 0x05, 0x6d, 0xa0, 0xb5, 0x70, 0x16, 0xcf, 0x33, 0x20, 0xcf,
+    0x61, 0x11, 0x45, 0x06, 0x52, 0x15, 0x4b, 0xbe, 0x21, 0x0d, 0x91, 0xa2, 0xec, 0x53, 0x51, 0x75,
+    0x38, 0xee, 0xfc, 0xaf, 0xb2, 0xdd, 0x90, 0xfb, 0xf5, 0xb9, 0x7d, 0xda, 0x5f, 0x4c, 0xda, 0x71,
+    0x45, 0x49, 0x46, 0xc5, 0xab, 0x92, 0x74, 0x5d, 0x2b, 0x81, 0xee, 0x98, 0x6c, 0xfb, 0x26, 0x1d,
+    0x90, 0xd0,
+];
+const ACVP_KWP_INV_CT: [u8; 96] = [
+    0xf1, 0xa5, 0xd9, 0x90, 0x82, 0xf9, 0x74, 0xde, 0x12, 0xc0, 0x9d, 0xe3, 0xc8, 0x3a, 0xa3, 0x53,
+    0x4e, 0x35, 0x7f, 0xb8, 0x91, 0xf7, 0x4c, 0xed, 0x88, 0xe5, 0xb9, 0x1e, 0x49, 0xf8, 0xb0, 0xf1,
+    0x34, 0x6d, 0x64, 0x04, 0x4b, 0x95, 0xbb, 0x55, 0xfe, 0x2d, 0x70, 0xc0, 0xc9, 0x3b, 0x33, 0xb9,
+    0x54, 0xd7, 0xff, 0xd0, 0x49, 0x58, 0x5d, 0x69, 0xab, 0xe4, 0xcb, 0xc7, 0x91, 0x38, 0xd1, 0x06,
+    0xc8, 0xfc, 0xc9, 0x85, 0x91, 0xfb, 0x4e, 0xfe, 0x87, 0xed, 0xc9, 0xe8, 0x2b, 0xfd, 0x64, 0x24,
+    0xce, 0xf1, 0xff, 0xab, 0x8f, 0xc1, 0x15, 0xde, 0xaa, 0xeb, 0x08, 0xd8, 0x62, 0x11, 0x66, 0xe8,
+];
+
+fn self_test_kwp_inverse_aes256() -> Result<(), SelfTestFailure> {
+    let k = EcbKey::new(&ACVP_KWP_INV_KEY).map_err(|_| SelfTestFailure)?;
+    let mut ct = [0u8; 96];
+    kwp_wrap_inverse_core(&k, &ACVP_KWP_INV_PT, &mut ct).map_err(|_| SelfTestFailure)?;
+    if ct != ACVP_KWP_INV_CT {
+        return Err(SelfTestFailure);
+    }
+    let mut scratch = [0u8; 88];
+    let mli = kwp_unwrap_inverse_core(&k, &ct, &mut scratch).map_err(|_| SelfTestFailure)?;
+    if mli != ACVP_KWP_INV_PT.len() || scratch[..mli] != ACVP_KWP_INV_PT[..] {
+        return Err(SelfTestFailure);
+    }
+    Ok(())
+}
+
+// CCM: SP 800-38C, sourced from NIST CAVP CCMVS VPT{128,192,256}.rsp.
 // Shared parameter group: [Alen=32, Nlen=13, Tlen=16, Plen=16],
-// Count=160. Each .rsp file publishes Key, Nonce, Adata, Payload,
-// CT — all reproduced here byte-for-byte from ccmtestvectors.zip.
-// ----------------------------------------------------------------------
+// Count=160. Each .rsp file publishes Key, Nonce, Adata, Payload and
+// CT, all reproduced here byte-for-byte from ccmtestvectors.zip.
 
 const CCM_VPT128_KEY: [u8; 16] = [
     0x70, 0x01, 0x0e, 0xd9, 0x0e, 0x61, 0x86, 0xec, 0xad, 0x41, 0xf0, 0xd3, 0xc7, 0xc4, 0x2f, 0xf8,
@@ -687,30 +877,18 @@ const CCM_VPT256_CT: [u8; 32] = [
 ];
 
 fn self_test_ccm_aes128() -> Result<(), SelfTestFailure> {
-    let k = Aes128Key::new_internal(&CCM_VPT128_KEY).map_err(|_| SelfTestFailure)?;
+    let k = EcbKey::new(&CCM_VPT128_KEY).map_err(|_| SelfTestFailure)?;
     let mut ct = [0u8; 32];
-    ccm_encrypt(
-        &k,
-        &CCM_VPT128_NONCE,
-        &CCM_VPT128_AAD,
-        &CCM_VPT128_PT,
-        16,
-        &mut ct,
-    )
-    .map_err(|_| SelfTestFailure)?;
+    let (c, t) = ct.split_at_mut(16);
+    ccm_encrypt_core(&k, &CCM_VPT128_NONCE, &CCM_VPT128_AAD, &CCM_VPT128_PT, c, t)
+        .map_err(|_| SelfTestFailure)?;
     if ct != CCM_VPT128_CT {
         return Err(SelfTestFailure);
     }
     let mut pt = [0u8; 16];
-    ccm_decrypt(
-        &k,
-        &CCM_VPT128_NONCE,
-        &CCM_VPT128_AAD,
-        &CCM_VPT128_CT,
-        16,
-        &mut pt,
-    )
-    .map_err(|_| SelfTestFailure)?;
+    let (c, t) = CCM_VPT128_CT.split_at(16);
+    ccm_decrypt_core(&k, &CCM_VPT128_NONCE, &CCM_VPT128_AAD, c, t, &mut pt)
+        .map_err(|_| SelfTestFailure)?;
     if pt != CCM_VPT128_PT {
         return Err(SelfTestFailure);
     }
@@ -718,30 +896,18 @@ fn self_test_ccm_aes128() -> Result<(), SelfTestFailure> {
 }
 
 fn self_test_ccm_aes192() -> Result<(), SelfTestFailure> {
-    let k = Aes192Key::new_internal(&CCM_VPT192_KEY).map_err(|_| SelfTestFailure)?;
+    let k = EcbKey::new(&CCM_VPT192_KEY).map_err(|_| SelfTestFailure)?;
     let mut ct = [0u8; 32];
-    ccm_encrypt(
-        &k,
-        &CCM_VPT192_NONCE,
-        &CCM_VPT192_AAD,
-        &CCM_VPT192_PT,
-        16,
-        &mut ct,
-    )
-    .map_err(|_| SelfTestFailure)?;
+    let (c, t) = ct.split_at_mut(16);
+    ccm_encrypt_core(&k, &CCM_VPT192_NONCE, &CCM_VPT192_AAD, &CCM_VPT192_PT, c, t)
+        .map_err(|_| SelfTestFailure)?;
     if ct != CCM_VPT192_CT {
         return Err(SelfTestFailure);
     }
     let mut pt = [0u8; 16];
-    ccm_decrypt(
-        &k,
-        &CCM_VPT192_NONCE,
-        &CCM_VPT192_AAD,
-        &CCM_VPT192_CT,
-        16,
-        &mut pt,
-    )
-    .map_err(|_| SelfTestFailure)?;
+    let (c, t) = CCM_VPT192_CT.split_at(16);
+    ccm_decrypt_core(&k, &CCM_VPT192_NONCE, &CCM_VPT192_AAD, c, t, &mut pt)
+        .map_err(|_| SelfTestFailure)?;
     if pt != CCM_VPT192_PT {
         return Err(SelfTestFailure);
     }
@@ -749,31 +915,82 @@ fn self_test_ccm_aes192() -> Result<(), SelfTestFailure> {
 }
 
 fn self_test_ccm_aes256() -> Result<(), SelfTestFailure> {
-    let k = Aes256Key::new_internal(&CCM_VPT256_KEY).map_err(|_| SelfTestFailure)?;
+    let k = EcbKey::new(&CCM_VPT256_KEY).map_err(|_| SelfTestFailure)?;
     let mut ct = [0u8; 32];
-    ccm_encrypt(
-        &k,
-        &CCM_VPT256_NONCE,
-        &CCM_VPT256_AAD,
-        &CCM_VPT256_PT,
-        16,
-        &mut ct,
-    )
-    .map_err(|_| SelfTestFailure)?;
+    let (c, t) = ct.split_at_mut(16);
+    ccm_encrypt_core(&k, &CCM_VPT256_NONCE, &CCM_VPT256_AAD, &CCM_VPT256_PT, c, t)
+        .map_err(|_| SelfTestFailure)?;
     if ct != CCM_VPT256_CT {
         return Err(SelfTestFailure);
     }
     let mut pt = [0u8; 16];
-    ccm_decrypt(
-        &k,
-        &CCM_VPT256_NONCE,
-        &CCM_VPT256_AAD,
-        &CCM_VPT256_CT,
-        16,
-        &mut pt,
-    )
-    .map_err(|_| SelfTestFailure)?;
+    let (c, t) = CCM_VPT256_CT.split_at(16);
+    ccm_decrypt_core(&k, &CCM_VPT256_NONCE, &CCM_VPT256_AAD, c, t, &mut pt)
+        .map_err(|_| SelfTestFailure)?;
     if pt != CCM_VPT256_PT {
+        return Err(SelfTestFailure);
+    }
+    Ok(())
+}
+
+// NIST CAVP CCMVS VNT256.rsp (ccmtestvectors.zip), [Nlen = 7] group,
+// Count = 0: Alen = 32, Plen = 24, Tlen = 16. CT is the ciphertext followed
+// by the tag.
+
+const CCM_VNT256_KEY: [u8; 32] = [
+    0x55, 0x35, 0x21, 0xa7, 0x65, 0xab, 0x0c, 0x3f, 0xd2, 0x03, 0x65, 0x4e, 0x99, 0x16, 0x33, 0x0e,
+    0x18, 0x9b, 0xdf, 0x95, 0x1f, 0xee, 0xe9, 0xb4, 0x4b, 0x10, 0xda, 0x20, 0x8f, 0xee, 0x7a, 0xcf,
+];
+const CCM_VNT256_NONCE: [u8; 7] = [0xaa, 0xa2, 0x3f, 0x10, 0x16, 0x47, 0xd8];
+const CCM_VNT256_AAD: [u8; 32] = [
+    0xa3, 0x55, 0xd4, 0xc6, 0x11, 0x81, 0x2e, 0x5f, 0x92, 0x58, 0xd7, 0x18, 0x8b, 0x3d, 0xf8, 0x85,
+    0x14, 0x77, 0x09, 0x4f, 0xfc, 0x2a, 0xf2, 0xcf, 0x0c, 0x86, 0x70, 0xdb, 0x90, 0x3f, 0xbb, 0xe0,
+];
+const CCM_VNT256_PT: [u8; 24] = [
+    0x64, 0x4e, 0xb3, 0x4b, 0x9a, 0x12, 0x6e, 0x43, 0x7b, 0x5e, 0x01, 0x5e, 0xea, 0x14, 0x1c, 0xa1,
+    0xa8, 0x80, 0x20, 0xf2, 0xd5, 0xd6, 0xcc, 0x2c,
+];
+const CCM_VNT256_CT: [u8; 40] = [
+    0x27, 0xed, 0x90, 0x66, 0x81, 0x74, 0xeb, 0xf8, 0x24, 0x1a, 0x3c, 0x74, 0xb3, 0x5e, 0x12, 0x46,
+    0xb6, 0x61, 0x7e, 0x41, 0x23, 0x57, 0x8f, 0x15, 0x3b, 0xdb, 0x67, 0x06, 0x2a, 0x13, 0xef, 0x4e,
+    0x98, 0x6f, 0x5b, 0xb3, 0xd0, 0xbb, 0x43, 0x07,
+];
+
+fn self_test_ccm_aes256_nonce7() -> Result<(), SelfTestFailure> {
+    let k = EcbKey::new(&CCM_VNT256_KEY).map_err(|_| SelfTestFailure)?;
+    let mut ct = [0u8; 40];
+    let (c, t) = ct.split_at_mut(24);
+    ccm_encrypt_core(&k, &CCM_VNT256_NONCE, &CCM_VNT256_AAD, &CCM_VNT256_PT, c, t)
+        .map_err(|_| SelfTestFailure)?;
+    if ct != CCM_VNT256_CT {
+        return Err(SelfTestFailure);
+    }
+    let mut pt = [0u8; 24];
+    let (c, t) = CCM_VNT256_CT.split_at(24);
+    ccm_decrypt_core(&k, &CCM_VNT256_NONCE, &CCM_VNT256_AAD, c, t, &mut pt)
+        .map_err(|_| SelfTestFailure)?;
+    if pt != CCM_VNT256_PT {
+        return Err(SelfTestFailure);
+    }
+    Ok(())
+}
+
+// The VNT256 Count = 0 vector with byte 0 of its tag flipped. Decryption
+// must return INVALID and reveal no payload (SP 800-38C §6.2), so the
+// output, filled with a non-zero pattern beforehand, must be left exactly
+// as passed.
+fn self_test_ccm_aes256_rejected_tag() -> Result<(), SelfTestFailure> {
+    let k = EcbKey::new(&CCM_VNT256_KEY).map_err(|_| SelfTestFailure)?;
+    let (c, t) = CCM_VNT256_CT.split_at(24);
+    let mut tag = [0u8; 16];
+    tag.copy_from_slice(t);
+    tag[0] ^= 0x01;
+    let mut out = [0xa5u8; 24];
+    let result = ccm_decrypt_core(&k, &CCM_VNT256_NONCE, &CCM_VNT256_AAD, c, &tag, &mut out);
+    if result != Err(ModeError::TagMismatch) {
+        return Err(SelfTestFailure);
+    }
+    if out != [0xa5u8; 24] {
         return Err(SelfTestFailure);
     }
     Ok(())
@@ -819,6 +1036,10 @@ pub const KATS: &[KatEntry] = &[
         run: self_test_ctr_aes256,
     },
     KatEntry {
+        name: "AES-256-CTR KAT (SP 800-38A F.5.5 CTR-AES256.Encrypt, first 56 bytes)",
+        run: self_test_ctr_aes256_prefix,
+    },
+    KatEntry {
         name: "AES-128-GCM KAT (SP 800-38D / McGrew-Viega Case 3, encrypt+decrypt)",
         run: self_test_gcm_aes128,
     },
@@ -829,6 +1050,14 @@ pub const KATS: &[KatEntry] = &[
     KatEntry {
         name: "AES-256-GCM KAT (SP 800-38D / McGrew-Viega Case 15, encrypt+decrypt)",
         run: self_test_gcm_aes256,
+    },
+    KatEntry {
+        name: "AES-256-GCM KAT (McGrew-Viega test case 16: 60-byte plaintext, 20-byte AAD)",
+        run: self_test_gcm_aes256_case16,
+    },
+    KatEntry {
+        name: "AES-256-GCM rejected-tag CAST",
+        run: self_test_gcm_aes256_rejected_tag,
     },
     KatEntry {
         name: "AES-128-KW KAT (RFC 3394 §4.1, wrap+unwrap 128-bit key)",
@@ -855,12 +1084,24 @@ pub const KATS: &[KatEntry] = &[
         run: self_test_kw_aes256_pt256,
     },
     KatEntry {
+        name: "AES-256-KW inverse-cipher KAT",
+        run: self_test_kw_inverse_aes256,
+    },
+    KatEntry {
+        name: "AES-256-KW rejected-ICV CAST",
+        run: self_test_kw_inverse_rejected_icv,
+    },
+    KatEntry {
         name: "AES-192-KWP KAT (RFC 5649 §6, 7-byte plaintext / single-block path)",
         run: self_test_kwp_aes192_7,
     },
     KatEntry {
         name: "AES-192-KWP KAT (RFC 5649 §6, 20-byte plaintext / multi-semiblock path)",
         run: self_test_kwp_aes192_20,
+    },
+    KatEntry {
+        name: "AES-256-KWP inverse-cipher KAT",
+        run: self_test_kwp_inverse_aes256,
     },
     KatEntry {
         name: "AES-128-CCM KAT (NIST CAVP CCMVS VPT128.rsp Count=160, encrypt+decrypt)",
@@ -874,20 +1115,128 @@ pub const KATS: &[KatEntry] = &[
         name: "AES-256-CCM KAT (NIST CAVP CCMVS VPT256.rsp Count=160, encrypt+decrypt)",
         run: self_test_ccm_aes256,
     },
+    KatEntry {
+        name: "AES-256-CCM KAT (NIST CAVP CCM VNT256, count 0 of the Nlen = 7 group: a 7-byte nonce and a non-block-multiple payload)",
+        run: self_test_ccm_aes256_nonce7,
+    },
+    KatEntry {
+        name: "AES-256-CCM rejected-tag CAST",
+        run: self_test_ccm_aes256_rejected_tag,
+    },
 ];
 
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::panic)]
 mod tests {
     use super::KATS;
-    use crate::test_support::UNSIGNED_TEST_BINARY;
+    use crate::test_support::{UNSIGNED_TEST_BINARY, isolated, start_module};
     use oxicrypt_module::{State, initialize_with_tests, state};
 
+    /// Initialises the module with an empty self-test inventory and runs
+    /// the function of the [`KATS`] entry called `name` in the
+    /// `Operational` state. It pins the entry's name and its function; the
+    /// run of the full inventory in the `SelfTest` state is
+    /// `all_kats_pass`.
+    fn run_named(name: &str) {
+        let entry = KATS
+            .iter()
+            .find(|e| e.name == name)
+            .unwrap_or_else(|| panic!("no KAT named {name:?}"));
+        start_module();
+        assert_eq!((entry.run)(), Ok(()), "{name}");
+    }
+
+    #[test]
+    fn kats_inventory_count() {
+        assert_eq!(KATS.len(), 31);
+    }
+
+    #[test]
+    fn kats_aes256_gcm_case16() {
+        run_named("AES-256-GCM KAT (McGrew-Viega test case 16: 60-byte plaintext, 20-byte AAD)");
+    }
+
+    #[test]
+    fn kats_aes256_gcm_rejected_tag() {
+        run_named("AES-256-GCM rejected-tag CAST");
+    }
+
+    #[test]
+    fn kats_aes256_ccm_7_byte_nonce() {
+        run_named(
+            "AES-256-CCM KAT (NIST CAVP CCM VNT256, count 0 of the Nlen = 7 group: a 7-byte nonce and a non-block-multiple payload)",
+        );
+    }
+
+    #[test]
+    fn kats_aes256_ccm_rejected_tag() {
+        run_named("AES-256-CCM rejected-tag CAST");
+    }
+
+    #[test]
+    fn kats_aes256_ctr_56_byte_prefix() {
+        run_named("AES-256-CTR KAT (SP 800-38A F.5.5 CTR-AES256.Encrypt, first 56 bytes)");
+    }
+
+    #[test]
+    fn kats_aes256_kw_inverse_cipher() {
+        run_named("AES-256-KW inverse-cipher KAT");
+    }
+
+    #[test]
+    fn kats_aes256_kwp_inverse_cipher() {
+        run_named("AES-256-KWP inverse-cipher KAT");
+    }
+
+    #[test]
+    fn kats_aes256_kw_rejected_icv() {
+        run_named("AES-256-KW rejected-ICV CAST");
+    }
+
     /// The KATs run as the power-up self-tests do: in `SelfTest`, where the
-    /// `*_internal` constructors they use admit the call.
+    /// non-service constructor and the ungated cores they use admit the
+    /// call. Initialisation happens once per process, so the test runs in
+    /// a process of its own.
     #[test]
     fn all_kats_pass() {
-        initialize_with_tests(UNSIGNED_TEST_BINARY, KATS).unwrap();
-        assert_eq!(state(), State::Operational);
+        isolated("kat::tests::all_kats_pass", &["self-test"], |_| {
+            initialize_with_tests(UNSIGNED_TEST_BINARY, KATS).unwrap();
+            assert_eq!(state(), State::Operational);
+        });
+    }
+}
+
+/// Each key type's in-place constructor refuses a 15-byte key, and the GCM
+/// one a limit of 0. A key they build is constructed, used and freed
+/// through the C key handle, whose free runs the key's destructor in
+/// place, so no test here leaves a built key in a slot without one.
+#[cfg(test)]
+mod in_place_tests {
+    use super::GCM128_KEY;
+    use crate::test_support::start_module;
+    use crate::{CbcKey, CcmKey, CtrKey, EcbKey, GcmKey, KwKey};
+    use core::mem::MaybeUninit;
+    use oxicrypt_module::Error;
+
+    const SHORT: [u8; 15] = [0x2b; 15];
+
+    #[test]
+    fn in_place_constructors_refuse_bad_arguments() {
+        start_module();
+        let refused = |r: Result<(), Error>| assert_eq!(r, Err(Error::InvalidInput));
+        refused(EcbKey::new_in_place(&mut MaybeUninit::uninit(), &SHORT).map(|_| ()));
+        refused(CbcKey::new_in_place(&mut MaybeUninit::uninit(), &SHORT).map(|_| ()));
+        refused(CtrKey::new_in_place(&mut MaybeUninit::uninit(), &SHORT).map(|_| ()));
+        refused(GcmKey::new_in_place(&mut MaybeUninit::uninit(), &SHORT).map(|_| ()));
+        refused(GcmKey::new_with_count_in_place(&mut MaybeUninit::uninit(), &SHORT, 7).map(|_| ()));
+        refused(GcmKey::new_with_limit_in_place(&mut MaybeUninit::uninit(), &SHORT, 3).map(|_| ()));
+        refused(
+            GcmKey::new_with_limit_in_place(&mut MaybeUninit::uninit(), &GCM128_KEY, 0).map(|_| ()),
+        );
+        refused(CcmKey::new_in_place(&mut MaybeUninit::uninit(), &SHORT, 16).map(|_| ()));
+        refused(
+            CcmKey::new_with_count_in_place(&mut MaybeUninit::uninit(), &SHORT, 16, 9).map(|_| ()),
+        );
+        refused(KwKey::new_in_place(&mut MaybeUninit::uninit(), &SHORT).map(|_| ()));
     }
 }

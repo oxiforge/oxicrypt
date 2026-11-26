@@ -2,7 +2,9 @@
 //! where those crates export one. The others are pinned by the known-answer
 //! tests in `operational.rs` and `unrestricted.rs`, which no wrong length
 //! passes. Also the DRBG functions the C header declares: the module-seeded
-//! ones present and no caller-seeded one.
+//! ones present and no caller-seeded one; the AES functions: the per-mode
+//! key handle ones present and none of the `oxi_aes256_` family; and the ABI
+//! number the crate is built against.
 
 #![allow(clippy::unwrap_used)]
 
@@ -81,14 +83,62 @@ const DRBG_SYMBOLS: [&str; 33] = [
     "oxi_ctr_drbg_aes256_reseed_from_module",
 ];
 
-/// The names of every function the header declares, each followed by `(`.
-fn header_function_names() -> Vec<String> {
+/// The AES functions of the C interface: the constructor, free and
+/// operations of each mode's key handle.
+const AES_SYMBOLS: [&str; 34] = [
+    "oxi_aes_gcm_key_new",
+    "oxi_aes_gcm_key_new_with_count",
+    "oxi_aes_gcm_key_new_with_limit",
+    "oxi_aes_gcm_key_invocations",
+    "oxi_aes_gcm_key_free",
+    "oxi_aes_gcm_seal",
+    "oxi_aes_gcm_open",
+    "oxi_aes_ccm_key_new",
+    "oxi_aes_ccm_key_new_with_count",
+    "oxi_aes_ccm_key_invocations",
+    "oxi_aes_ccm_key_free",
+    "oxi_aes_ccm_seal",
+    "oxi_aes_ccm_open",
+    "oxi_aes_cbc_key_new",
+    "oxi_aes_cbc_key_free",
+    "oxi_aes_cbc_encrypt",
+    "oxi_aes_cbc_decrypt",
+    "oxi_aes_ctr_key_new",
+    "oxi_aes_ctr_key_free",
+    "oxi_aes_ctr",
+    "oxi_aes_kw_key_new",
+    "oxi_aes_kw_key_free",
+    "oxi_aes_kw_wrap",
+    "oxi_aes_kw_unwrap",
+    "oxi_aes_kwp_wrap",
+    "oxi_aes_kwp_unwrap",
+    "oxi_aes_kw_wrap_inverse",
+    "oxi_aes_kw_unwrap_inverse",
+    "oxi_aes_kwp_wrap_inverse",
+    "oxi_aes_kwp_unwrap_inverse",
+    "oxi_aes_cmac_key_new",
+    "oxi_aes_cmac_key_free",
+    "oxi_aes_cmac",
+    "oxi_aes_cmac_verify",
+];
+
+/// The text of the C header.
+fn header_text() -> String {
     let path = concat!(
         env!("CARGO_MANIFEST_DIR"),
         "/../crates/oxicrypt-ffi/include/oxicrypt.h"
     );
-    let header = std::fs::read_to_string(path).unwrap();
-    header
+    std::fs::read_to_string(path).unwrap()
+}
+
+/// The number of `oxi_` functions the header declares: its 319 exports less
+/// `lama_manifest`.
+const HEADER_OXI_FUNCTIONS: usize = 318;
+
+/// The names of every `oxi_` function the header declares, each followed by
+/// `(`.
+fn header_function_names() -> Vec<String> {
+    header_text()
         .lines()
         .filter(|l| !l.starts_with(' ') && !l.starts_with('#') && l.contains('('))
         .filter_map(|l| {
@@ -117,7 +167,7 @@ fn the_header_declares_the_drbg_symbols() {
 #[test]
 fn the_header_declares_no_caller_seeded_drbg_function() {
     let names = header_function_names();
-    assert!(names.len() >= 290, "parsed only {} names", names.len());
+    assert_eq!(names.len(), HEADER_OXI_FUNCTIONS, "parsed {names:?}");
     let caller_seeded: Vec<_> = names
         .iter()
         // A typed handle's function, `oxi_<mechanism>_drbg_<primitive>_…`.
@@ -133,4 +183,54 @@ fn the_header_declares_no_caller_seeded_drbg_function() {
         caller_seeded.is_empty(),
         "caller-seeded DRBG functions in the header: {caller_seeded:?}"
     );
+}
+
+#[test]
+fn the_header_declares_the_aes_symbols() {
+    let names = header_function_names();
+    assert!(
+        names.iter().any(|n| n == "oxi_sha384"),
+        "the scan's positive control"
+    );
+    for symbol in AES_SYMBOLS {
+        assert_eq!(
+            names.iter().filter(|n| *n == symbol).count(),
+            1,
+            "{symbol} is not declared exactly once in the header"
+        );
+    }
+    let aes: Vec<_> = names.iter().filter(|n| n.starts_with("oxi_aes_")).collect();
+    assert_eq!(
+        aes.len(),
+        AES_SYMBOLS.len(),
+        "AES functions in the header: {aes:?}"
+    );
+}
+
+#[test]
+fn the_header_declares_no_aes256_function() {
+    let names = header_function_names();
+    assert_eq!(names.len(), HEADER_OXI_FUNCTIONS, "parsed {names:?}");
+    let aes256: Vec<_> = names
+        .iter()
+        .filter(|n| n.starts_with("oxi_aes256_"))
+        .collect();
+    assert!(
+        aes256.is_empty(),
+        "oxi_aes256_ functions in the header: {aes256:?}"
+    );
+    let header = header_text();
+    assert!(
+        header.contains("OxiAesGcmKey"),
+        "the scan's positive control"
+    );
+    assert!(
+        !header.contains("OxiAes256"),
+        "an OxiAes256 type in the header"
+    );
+}
+
+#[test]
+fn the_crate_is_built_against_abi_3() {
+    assert_eq!(b::OXI_ABI_VERSION, 3);
 }

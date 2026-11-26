@@ -29,7 +29,7 @@ void oxi_test_poison_entropy(void);
 /* Simulates an on-demand health test failure: the next oxi_entropy_on_demand_test returns 33 and the module enters its error state. Requires the fault-injection feature. */
 void oxi_test_fail_next_on_demand(void);
 
-/* Reports whether the last DRBG handle freed by oxi_drbg_free or a typed DRBG _free read as all zero after its wipe and before release: 1 yes, 0 no, -1 none freed since the last call, which each call clears. Requires the fault-injection feature. */
+/* Reports whether the last handle allocation the module wiped and released, a DRBG handle freed by oxi_drbg_free or a typed DRBG _free or an AES key handle, read as all zero after its wipe and before release: 1 yes, 0 no, -1 none released since the last call, which each call clears. Requires the fault-injection feature. */
 int oxi_test_last_freed_bytes_zero(void);
 
 /* Simulates an allocation failure: the next _new_rbg call returns 255. Requires the fault-injection feature. */

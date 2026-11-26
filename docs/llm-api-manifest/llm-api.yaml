@@ -110,14 +110,14 @@ modules:
       - oxicrypt-sha
 
   - name: oxicrypt-cmac
-    description: AES-CMAC (SP 800-38B) over AES-128/192/256.
+    description: AES-CMAC (SP 800-38B) over AES-128/192/256, through a non-Clone CmacKey that fixes its MAC length.
     no_std: true
     depends_on:
       - oxicrypt-module
       - oxicrypt-aes
 
   - name: oxicrypt-aes
-    description: AES block cipher (FIPS 197) and ECB/CBC/CTR/GCM/CCM/KW/KWP modes, generic over the BlockCipher trait.
+    description: AES block cipher (FIPS 197) and ECB/CBC/CTR/GCM/CCM/KW/KWP modes, each mode taking a non-Clone key type bound to it and gated on that mode's service, whose SSPs are the AES keys and the GCM IV of an encryption, a CSP from its draw inside gcm_encrypt until the encryption consumes it and a PSP after (SP 800-38D section 9.1 item 2), all other IVs, counters and nonces being public parameters.
     no_std: true
     depends_on: [oxicrypt-module]
 
@@ -417,7 +417,7 @@ families:
     applies_to: functions
 
   - name: cmac-aes
-    description: CMAC-AES one-shot tag functions taking a key and message and returning a 16-byte tag.
+    description: CMAC-AES functions taking a CmacKey and a message, writing the tag truncated to the key's MAC length or verifying a MAC of that length.
     applies_to: functions
 
   - name: kdf-sp800108-mode
@@ -528,6 +528,8 @@ types:
         description: A random bit generator refused or failed; the inner RbgError says why.
       - name: RbgTooWeak
         description: The random bit generator handed to a service has a security strength below what that service requires.
+      - name: KeyExhausted
+        description: A key has reached the number of invocations its mode permits under one key (2^32 AES-GCM encryptions, SP 800-38D section 8.3); further encryption under the key is refused, and a new key must be established.
 
   - name: Rbg
     module: oxicrypt-module
@@ -612,7 +614,7 @@ types:
       - name: Uninstantiated
         description: generate or reseed was called before instantiate succeeded on this DRBG handle.
       - name: ReseedRequired
-        description: The reseed counter passed the SP 800-90A reseed interval on an instance that does not reseed itself, a state no exported function reaches at ABI 2.
+        description: The reseed counter passed the SP 800-90A reseed interval on an instance that does not reseed itself, a state no exported function reaches at ABI 3.
       - name: NullPointer
         description: Caller passed a NULL pointer where one is required.
       - name: BufferTooSmall
@@ -666,29 +668,67 @@ types:
       zeroize_on_drop: true
       constant_time: true
 
-  - name: Aes128Key
+  - name: GcmKey
     module: oxicrypt-aes
     kind: struct
-    description: AES-128 expanded key schedule.
-    size_bytes: null  # Expanded schedule, not just the 16-byte key
-    security:
-      contains_secret: true
-      zeroize_on_drop: true
-      constant_time: false  # Table-based S-box; disclosed in security policy
-
-  - name: Aes192Key
-    module: oxicrypt-aes
-    kind: struct
-    description: AES-192 expanded key schedule.
+    description: AES key bound to GCM, built by GcmKey::new(key) from 16, 24 or 32 bytes and gated on the AES-GCM service for that size, whose atomic invocation count gcm_encrypt reserves before drawing an IV and which refuses with Module(KeyExhausted) once the count reaches its limit (2^32 per SP 800-38D section 8.3, or the share set by GcmKey::new_with_limit), decryption not counting; the operator must never construct the same key bytes as a key of another mode; not Clone.
     security:
       contains_secret: true
       zeroize_on_drop: true
       constant_time: false
 
-  - name: Aes256Key
+  - name: GcmSealed
     module: oxicrypt-aes
     kind: struct
-    description: AES-256 expanded key schedule.
+    description: The IV and tag of one GCM encryption, returned by gcm_encrypt; both are public once the encryption has run.
+    fields:
+      - name: iv
+        type: "[u8; 12]"
+        description: The 96-bit IV drawn from the generator passed to gcm_encrypt.
+      - name: tag
+        type: "[u8; 16]"
+        description: The 128-bit authentication tag.
+
+  - name: CcmKey
+    module: oxicrypt-aes
+    kind: struct
+    description: AES key bound to CCM with a tag length fixed at construction, built by CcmKey::new(key, tag_len) from 16, 24 or 32 bytes with tag_len in {8, 10, 12, 14, 16} and gated on the AES-CCM service for that size, not Clone, that charges each ccm_encrypt and ccm_decrypt the block-cipher invocations SP 800-38C's formatting fixes for its lengths, 1 + ceil((a_enc + aad_len) / 16) + 2 * ceil(pt_len / 16) + 1 for an encryption and 1 + ceil((a_enc + aad_len) / 16) + 3 * ceil(pt_len / 16) + 1 for a decryption with a_enc the 2-, 6- or 10-byte AAD length encoding (no AAD blocks when aad_len is 0), a failed decryption charged in full, and refuses with ModeError::Module(KeyExhausted) an operation that would take the count past 2^61 (SP 800-38C §5.1).
+    security:
+      contains_secret: true
+      zeroize_on_drop: true
+      constant_time: false
+
+  - name: CbcKey
+    module: oxicrypt-aes
+    kind: struct
+    description: AES key bound to CBC, built by CbcKey::new(key) from 16, 24 or 32 bytes and gated on the AES-CBC service for that size; not Clone.
+    security:
+      contains_secret: true
+      zeroize_on_drop: true
+      constant_time: false
+
+  - name: CtrKey
+    module: oxicrypt-aes
+    kind: struct
+    description: AES key bound to CTR, built by CtrKey::new(key) from 16, 24 or 32 bytes and gated on the AES-CTR service for that size; not Clone.
+    security:
+      contains_secret: true
+      zeroize_on_drop: true
+      constant_time: false
+
+  - name: KwKey
+    module: oxicrypt-aes
+    kind: struct
+    description: AES key bound to KW and KWP in both cipher directions, built by KwKey::new(key) from 16, 24 or 32 bytes and gated on the AES-KW service for that size; not Clone.
+    security:
+      contains_secret: true
+      zeroize_on_drop: true
+      constant_time: false
+
+  - name: EcbKey
+    module: oxicrypt-aes
+    kind: struct
+    description: Hidden AES key for the raw block cipher, built by EcbKey::new(key) from 16, 24 or 32 bytes, or by EcbKey::zeroed(len) followed by EcbKey::expand_in_place(key), which expands the schedule where the key already lies; EcbKey::new and EcbKey::expand_in_place are non-service interfaces with no profile gate that admit the self-test state, used by the CASTs, CTR_DRBG and CMAC (CMAC through the in-place pair), and the key of ecb_encrypt and ecb_decrypt; not Clone.
     security:
       contains_secret: true
       zeroize_on_drop: true
@@ -697,7 +737,7 @@ types:
   - name: ModeError
     module: oxicrypt-aes
     kind: enum
-    description: Error type for AES mode operations.
+    description: "Error type for AES mode operations, non-exhaustive; mode_error_variants yields one value of every variant."
     variants:
       - name: NotBlockAligned
         description: Input length is not a multiple of 16 bytes.
@@ -706,15 +746,19 @@ types:
       - name: TagMismatch
         description: GCM/CCM authentication tag verification failed.
       - name: LengthMismatch
-        description: Output buffer is wrong size.
+        description: Input, output or buffer length not valid for the mode (GCM, CCM, CTR, KW, KWP).
       - name: InvalidNonceLength
         description: CCM nonce outside valid range.
       - name: InvalidTagLength
         description: CCM tag length outside valid range.
       - name: InvalidPayloadLength
-        description: Payload exceeds mode's maximum.
+        description: Payload exceeds the mode's maximum, or an ECB or CBC input is empty.
       - name: InvalidAadLength
         description: AAD exceeds mode's maximum.
+      - name: Rbg
+        description: The random bit generator produced no output; carries its oxicrypt_module::RbgError unchanged.
+      - name: RbgTooWeak
+        description: The random bit generator's security strength is below the 96 bits the GCM IV requires.
       - name: Module
         description: The module refused the operation (carries oxicrypt_module::Error, NotOperational outside SelfTest and Operational).
 
@@ -1235,7 +1279,7 @@ types:
   - name: BlockCipher
     module: oxicrypt-aes
     kind: trait
-    description: Sealed trait implemented by Aes128Key, Aes192Key, and Aes256Key; all AES mode functions are generic over it.
+    description: Hidden per-block interface implemented by EcbKey, through which CTR_DRBG and CMAC run the AES block cipher; each block method checks the module state again and returns Err(NotOperational) once the module has left SelfTest and Operational.
 
   - name: KdfError
     module: oxicrypt-kdf
@@ -1479,6 +1523,36 @@ types:
     kind: opaque
     module: oxicrypt-ffi
     description: Opaque ECDSA P-384 private-key handle that passed an IG 10.3.A pairwise consistency test at construction; carries the 48-byte scalar d and 97-byte SEC1 public key Q, and zeroises d on drop.
+
+  - name: OxiAesGcmKey
+    kind: opaque
+    module: oxicrypt-ffi
+    description: "Opaque AES-GCM key handle whose first field is a module-written header naming its mode, refused with InvalidInput by the symbols of every other mode and zeroized on free."
+
+  - name: OxiAesCcmKey
+    kind: opaque
+    module: oxicrypt-ffi
+    description: "Opaque AES-CCM key handle whose first field is a module-written header naming its mode, refused with InvalidInput by the symbols of every other mode and zeroized on free."
+
+  - name: OxiAesCbcKey
+    kind: opaque
+    module: oxicrypt-ffi
+    description: "Opaque AES-CBC key handle whose first field is a module-written header naming its mode, refused with InvalidInput by the symbols of every other mode and zeroized on free."
+
+  - name: OxiAesCtrKey
+    kind: opaque
+    module: oxicrypt-ffi
+    description: "Opaque AES-CTR key handle whose first field is a module-written header naming its mode, refused with InvalidInput by the symbols of every other mode and zeroized on free."
+
+  - name: OxiAesKwKey
+    kind: opaque
+    module: oxicrypt-ffi
+    description: "Opaque AES key-wrap (KW and KWP, forward and inverse cipher) key handle whose first field is a module-written header naming its mode, refused with InvalidInput by the symbols of every other mode and zeroized on free."
+
+  - name: OxiAesCmacKey
+    kind: opaque
+    module: oxicrypt-ffi
+    description: "Opaque CMAC key handle whose first field is a module-written header naming its mode, refused with InvalidInput by the symbols of every other mode and zeroized on free."
 
   - name: OxiDrbg
     kind: opaque
@@ -2139,6 +2213,8 @@ types:
         description: "Code 32: a DRBG handle is in use by another call, or the module's seed path was held past its wait bound; nothing changed, retry after a pause."
       - name: EntropyUnavailable
         description: "Code 33: the entropy source failed while seeding or testing, and the module has entered its error state."
+      - name: KeyExhausted
+        description: "Code 34: the key has reached the number of invocations its mode permits under one key; nothing was written and the key stays exhausted."
       - name: Internal
         description: "Code 255."
       - name: SignatureInvalid
@@ -2210,13 +2286,67 @@ types:
       - name: CtrAes256
         description: "CTR_DRBG with AES-256 and the derivation function."
 
-  - name: Aes256Key
+  - name: AesGcmKey
     module: oxicrypt
     kind: opaque
-    description: "An AES-256 key schedule held by the library, freed exactly once when dropped; Send and Sync."
+    description: "An AES-GCM key held by the library with its count of encryptions, freed exactly once when dropped; Send and Sync."
     security:
       contains_secret: true
       zeroize_on_drop: true
+      constant_time: false
+
+  - name: AesCcmKey
+    module: oxicrypt
+    kind: opaque
+    description: "An AES-CCM key held by the library with its tag length and its count of block-cipher invocations, freed exactly once when dropped; Send and Sync."
+    security:
+      contains_secret: true
+      zeroize_on_drop: true
+      constant_time: false
+
+  - name: AesCbcKey
+    module: oxicrypt
+    kind: opaque
+    description: "An AES-CBC key held by the library, freed exactly once when dropped; Send and Sync."
+    security:
+      contains_secret: true
+      zeroize_on_drop: true
+      constant_time: false
+
+  - name: AesCtrKey
+    module: oxicrypt
+    kind: opaque
+    description: "An AES-CTR key held by the library, freed exactly once when dropped; Send and Sync."
+    security:
+      contains_secret: true
+      zeroize_on_drop: true
+      constant_time: false
+
+  - name: AesKwKey
+    module: oxicrypt
+    kind: opaque
+    description: "An AES key-wrap key held by the library for KW and KWP in both cipher directions, freed exactly once when dropped; Send and Sync."
+    security:
+      contains_secret: true
+      zeroize_on_drop: true
+      constant_time: false
+
+  - name: AesCmacKey
+    module: oxicrypt
+    kind: opaque
+    description: "A CMAC key held by the library with its MAC length, freed exactly once when dropped; Send and Sync."
+    security:
+      contains_secret: true
+      zeroize_on_drop: true
+      constant_time: false
+
+  - name: GcmSealed
+    module: oxicrypt
+    kind: struct
+    description: "The 96-bit IV the module drew and the 128-bit tag of one AES-GCM encryption, both public."
+    security:
+      contains_secret: false
+      zeroize_on_drop: false
       constant_time: false
 
   - name: HkdfPrk
@@ -4554,64 +4684,527 @@ functions:
 
   # ── AES-GCM ──────────────────────────────────────────────────────
 
+  - name: "GcmKey::new_with_count"
+    module: oxicrypt-aes
+    description: Build a GCM key as GcmKey::new does, with its invocation count preloaded to the encryptions earlier instances of the same key bytes performed, summed by the operator across processes and restarts.
+    signature: "pub fn new_with_count(key: &[u8], used: u64) -> Result<Self, Error>"
+    parameters:
+      - name: key
+        type: "&[u8]"
+        direction: in
+        description: AES key bytes.
+        constraints:
+          size: "16, 24 or 32"
+      - name: used
+        type: u64
+        direction: in
+        description: Encryptions already performed under these key bytes, as read from GcmKey::invocations.
+        constraints:
+          valid_range: "0..=2^32"
+    returns:
+      type: "Result<GcmKey, Error>"
+      description: A key whose count starts at used and whose limit is 2^32; a key built with used = 2^32 refuses every encryption.
+      error_variants:
+        - name: NotOperational
+          condition: Module not Operational.
+        - name: InvalidInput
+          condition: key is not 16, 24 or 32 bytes, or used is above 2^32 (checked after the module and profile gates).
+        - name: AlgorithmRestricted
+          condition: The active profile does not permit AES-GCM at the key's size.
+    preconditions:
+      - description: Module must be Operational.
+    thread_safety: thread-safe
+    security:
+      constant_time: false
+      handles_secrets: true
+      fips_approved: true
+      fips_gate: Operational
+
+  - name: "GcmKey::new_with_limit"
+    module: oxicrypt-aes
+    description: Build a GCM key as GcmKey::new does, with a count of 0 and a limit of limit encryptions, this instance's share of the 2^32 permitted under the key bytes; the module does not see other instances, so the operator keeps the sum of shares at or below 2^32.
+    signature: "pub fn new_with_limit(key: &[u8], limit: u64) -> Result<Self, Error>"
+    parameters:
+      - name: key
+        type: "&[u8]"
+        direction: in
+        description: AES key bytes.
+        constraints:
+          size: "16, 24 or 32"
+      - name: limit
+        type: u64
+        direction: in
+        description: The number of encryptions this instance may perform.
+        constraints:
+          valid_range: "1..=2^32"
+    returns:
+      type: "Result<GcmKey, Error>"
+      description: A key that refuses with KeyExhausted once it has performed limit encryptions.
+      error_variants:
+        - name: NotOperational
+          condition: Module not Operational.
+        - name: InvalidInput
+          condition: key is not 16, 24 or 32 bytes, or limit is 0 or above 2^32 (checked after the module and profile gates).
+        - name: AlgorithmRestricted
+          condition: The active profile does not permit AES-GCM at the key's size.
+    preconditions:
+      - description: Module must be Operational.
+    thread_safety: thread-safe
+    security:
+      constant_time: false
+      handles_secrets: true
+      fips_approved: true
+      fips_gate: Operational
+
+  - name: "GcmKey::invocations"
+    module: oxicrypt-aes
+    description: Read the number of encryptions reserved under this key, including any preloaded by GcmKey::new_with_count; decryptions are not counted.
+    signature: "pub fn invocations(&self) -> u64"
+    parameters:
+      - name: self
+        type: "&GcmKey"
+        direction: in
+        description: The key.
+    returns:
+      type: u64
+      description: The current invocation count, at most the key's limit; no module gate, since the count is not a service output.
+    thread_safety: thread-safe
+    security:
+      constant_time: true
+      handles_secrets: false
+      fips_approved: false
+      fips_gate: null
+
+  # ── AES in-place key constructors ───────────────────────────────
+
+  - name: "EcbKey::new_in_place"
+    module: oxicrypt-aes
+    description: "Hidden constructor that builds the key as EcbKey::new does, in a MaybeUninit slot the caller provides, expanding the schedule there so the key is not moved by the module's code; a value already in the slot is overwritten without being dropped, and on an error the slot is not written; on success the caller must run the key's destructor in place, for example by embedding the slot in a type whose Drop does so, as the C key handle does, since a slot left without its destructor run leaves the schedule unwiped."
+    signature: "pub fn new_in_place<'a>(slot: &'a mut MaybeUninit<Self>, key: &[u8]) -> Result<&'a mut Self, Error>"
+    parameters:
+      - name: slot
+        type: "&'a mut MaybeUninit<EcbKey>"
+        direction: out
+        description: The key's final location, treated as uninitialised.
+      - name: key
+        type: "&[u8]"
+        direction: in
+        description: AES key bytes.
+        constraints:
+          size: "16, 24 or 32"
+    returns:
+      type: "Result<&'a mut EcbKey, Error>"
+      description: A reference to the key in slot.
+      error_variants:
+        - name: NotOperational
+          condition: The module is neither Operational nor in SelfTest on the thread running the power-up self-tests.
+        - name: InvalidInput
+          condition: key is not 16, 24 or 32 bytes.
+    postconditions:
+      - description: On Ok, the caller runs the key's destructor in place once; on Err, slot is not written.
+    thread_safety: thread-safe
+    security:
+      constant_time: false
+      handles_secrets: true
+      fips_approved: false
+      fips_gate: null
+
+  - name: "CbcKey::new_in_place"
+    module: oxicrypt-aes
+    description: "Hidden constructor that builds the key as CbcKey::new does, in a MaybeUninit slot the caller provides, expanding the schedule there so the key is not moved by the module's code; a value already in the slot is overwritten without being dropped, and on an error the slot is not written; on success the caller must run the key's destructor in place, for example by embedding the slot in a type whose Drop does so, as the C key handle does, since a slot left without its destructor run leaves the schedule unwiped."
+    signature: "pub fn new_in_place<'a>(slot: &'a mut MaybeUninit<Self>, key: &[u8]) -> Result<&'a mut Self, Error>"
+    parameters:
+      - name: slot
+        type: "&'a mut MaybeUninit<CbcKey>"
+        direction: out
+        description: The key's final location, treated as uninitialised.
+      - name: key
+        type: "&[u8]"
+        direction: in
+        description: AES key bytes.
+        constraints:
+          size: "16, 24 or 32"
+    returns:
+      type: "Result<&'a mut CbcKey, Error>"
+      description: A reference to the key in slot.
+      error_variants:
+        - name: NotOperational
+          condition: Module not Operational.
+        - name: InvalidInput
+          condition: An argument CbcKey::new refuses with InvalidInput.
+        - name: AlgorithmRestricted
+          condition: The active profile does not permit AES-CBC at the key's size.
+    preconditions:
+      - description: Module must be Operational.
+    postconditions:
+      - description: On Ok, the caller runs the key's destructor in place once; on Err, slot is not written.
+    thread_safety: thread-safe
+    security:
+      constant_time: false
+      handles_secrets: true
+      fips_approved: true
+      fips_gate: Operational
+
+  - name: "CtrKey::new_in_place"
+    module: oxicrypt-aes
+    description: "Hidden constructor that builds the key as CtrKey::new does, in a MaybeUninit slot the caller provides, expanding the schedule there so the key is not moved by the module's code; a value already in the slot is overwritten without being dropped, and on an error the slot is not written; on success the caller must run the key's destructor in place, for example by embedding the slot in a type whose Drop does so, as the C key handle does, since a slot left without its destructor run leaves the schedule unwiped."
+    signature: "pub fn new_in_place<'a>(slot: &'a mut MaybeUninit<Self>, key: &[u8]) -> Result<&'a mut Self, Error>"
+    parameters:
+      - name: slot
+        type: "&'a mut MaybeUninit<CtrKey>"
+        direction: out
+        description: The key's final location, treated as uninitialised.
+      - name: key
+        type: "&[u8]"
+        direction: in
+        description: AES key bytes.
+        constraints:
+          size: "16, 24 or 32"
+    returns:
+      type: "Result<&'a mut CtrKey, Error>"
+      description: A reference to the key in slot.
+      error_variants:
+        - name: NotOperational
+          condition: Module not Operational.
+        - name: InvalidInput
+          condition: An argument CtrKey::new refuses with InvalidInput.
+        - name: AlgorithmRestricted
+          condition: The active profile does not permit AES-CTR at the key's size.
+    preconditions:
+      - description: Module must be Operational.
+    postconditions:
+      - description: On Ok, the caller runs the key's destructor in place once; on Err, slot is not written.
+    thread_safety: thread-safe
+    security:
+      constant_time: false
+      handles_secrets: true
+      fips_approved: true
+      fips_gate: Operational
+
+  - name: "GcmKey::new_in_place"
+    module: oxicrypt-aes
+    description: "Hidden constructor that builds the key as GcmKey::new does, in a MaybeUninit slot the caller provides, expanding the schedule there so the key is not moved by the module's code; a value already in the slot is overwritten without being dropped, and on an error the slot is not written; on success the caller must run the key's destructor in place, for example by embedding the slot in a type whose Drop does so, as the C key handle does, since a slot left without its destructor run leaves the schedule unwiped."
+    signature: "pub fn new_in_place<'a>(slot: &'a mut MaybeUninit<Self>, key: &[u8]) -> Result<&'a mut Self, Error>"
+    parameters:
+      - name: slot
+        type: "&'a mut MaybeUninit<GcmKey>"
+        direction: out
+        description: The key's final location, treated as uninitialised.
+      - name: key
+        type: "&[u8]"
+        direction: in
+        description: AES key bytes.
+        constraints:
+          size: "16, 24 or 32"
+    returns:
+      type: "Result<&'a mut GcmKey, Error>"
+      description: A reference to the key in slot.
+      error_variants:
+        - name: NotOperational
+          condition: Module not Operational.
+        - name: InvalidInput
+          condition: An argument GcmKey::new refuses with InvalidInput.
+        - name: AlgorithmRestricted
+          condition: The active profile does not permit AES-GCM at the key's size.
+    preconditions:
+      - description: Module must be Operational.
+    postconditions:
+      - description: On Ok, the caller runs the key's destructor in place once; on Err, slot is not written.
+    thread_safety: thread-safe
+    security:
+      constant_time: false
+      handles_secrets: true
+      fips_approved: true
+      fips_gate: Operational
+
+  - name: "GcmKey::new_with_count_in_place"
+    module: oxicrypt-aes
+    description: "Hidden constructor that builds the key as GcmKey::new_with_count does, in a MaybeUninit slot the caller provides, expanding the schedule there so the key is not moved by the module's code; a value already in the slot is overwritten without being dropped, and on an error the slot is not written; on success the caller must run the key's destructor in place, for example by embedding the slot in a type whose Drop does so, as the C key handle does, since a slot left without its destructor run leaves the schedule unwiped."
+    signature: "pub fn new_with_count_in_place<'a>(slot: &'a mut MaybeUninit<Self>, key: &[u8], used: u64) -> Result<&'a mut Self, Error>"
+    parameters:
+      - name: slot
+        type: "&'a mut MaybeUninit<GcmKey>"
+        direction: out
+        description: The key's final location, treated as uninitialised.
+      - name: key
+        type: "&[u8]"
+        direction: in
+        description: AES key bytes.
+        constraints:
+          size: "16, 24 or 32"
+      - name: used
+        type: u64
+        direction: in
+        description: Encryptions already performed under these key bytes; above 2^32 refused with InvalidInput.
+    returns:
+      type: "Result<&'a mut GcmKey, Error>"
+      description: A reference to the key in slot.
+      error_variants:
+        - name: NotOperational
+          condition: Module not Operational.
+        - name: InvalidInput
+          condition: An argument GcmKey::new_with_count refuses with InvalidInput.
+        - name: AlgorithmRestricted
+          condition: The active profile does not permit AES-GCM at the key's size.
+    preconditions:
+      - description: Module must be Operational.
+    postconditions:
+      - description: On Ok, the caller runs the key's destructor in place once; on Err, slot is not written.
+    thread_safety: thread-safe
+    security:
+      constant_time: false
+      handles_secrets: true
+      fips_approved: true
+      fips_gate: Operational
+
+  - name: "GcmKey::new_with_limit_in_place"
+    module: oxicrypt-aes
+    description: "Hidden constructor that builds the key as GcmKey::new_with_limit does, in a MaybeUninit slot the caller provides, expanding the schedule there so the key is not moved by the module's code; a value already in the slot is overwritten without being dropped, and on an error the slot is not written; on success the caller must run the key's destructor in place, for example by embedding the slot in a type whose Drop does so, as the C key handle does, since a slot left without its destructor run leaves the schedule unwiped."
+    signature: "pub fn new_with_limit_in_place<'a>(slot: &'a mut MaybeUninit<Self>, key: &[u8], limit: u64) -> Result<&'a mut Self, Error>"
+    parameters:
+      - name: slot
+        type: "&'a mut MaybeUninit<GcmKey>"
+        direction: out
+        description: The key's final location, treated as uninitialised.
+      - name: key
+        type: "&[u8]"
+        direction: in
+        description: AES key bytes.
+        constraints:
+          size: "16, 24 or 32"
+      - name: limit
+        type: u64
+        direction: in
+        description: The number of encryptions this instance may perform; 0 or above 2^32 refused with InvalidInput.
+    returns:
+      type: "Result<&'a mut GcmKey, Error>"
+      description: A reference to the key in slot.
+      error_variants:
+        - name: NotOperational
+          condition: Module not Operational.
+        - name: InvalidInput
+          condition: An argument GcmKey::new_with_limit refuses with InvalidInput.
+        - name: AlgorithmRestricted
+          condition: The active profile does not permit AES-GCM at the key's size.
+    preconditions:
+      - description: Module must be Operational.
+    postconditions:
+      - description: On Ok, the caller runs the key's destructor in place once; on Err, slot is not written.
+    thread_safety: thread-safe
+    security:
+      constant_time: false
+      handles_secrets: true
+      fips_approved: true
+      fips_gate: Operational
+
+  - name: "CcmKey::new_in_place"
+    module: oxicrypt-aes
+    description: "Hidden constructor that builds the key as CcmKey::new does, in a MaybeUninit slot the caller provides, expanding the schedule there so the key is not moved by the module's code; a value already in the slot is overwritten without being dropped, and on an error the slot is not written; on success the caller must run the key's destructor in place, for example by embedding the slot in a type whose Drop does so, as the C key handle does, since a slot left without its destructor run leaves the schedule unwiped."
+    signature: "pub fn new_in_place<'a>(slot: &'a mut MaybeUninit<Self>, key: &[u8], tag_len: usize) -> Result<&'a mut Self, Error>"
+    parameters:
+      - name: slot
+        type: "&'a mut MaybeUninit<CcmKey>"
+        direction: out
+        description: The key's final location, treated as uninitialised.
+      - name: key
+        type: "&[u8]"
+        direction: in
+        description: AES key bytes.
+        constraints:
+          size: "16, 24 or 32"
+      - name: tag_len
+        type: usize
+        direction: in
+        description: Tag length in bytes, one of 8, 10, 12, 14 or 16.
+    returns:
+      type: "Result<&'a mut CcmKey, Error>"
+      description: A reference to the key in slot.
+      error_variants:
+        - name: NotOperational
+          condition: Module not Operational.
+        - name: InvalidInput
+          condition: An argument CcmKey::new refuses with InvalidInput.
+        - name: AlgorithmRestricted
+          condition: The active profile does not permit AES-CCM at the key's size.
+    preconditions:
+      - description: Module must be Operational.
+    postconditions:
+      - description: On Ok, the caller runs the key's destructor in place once; on Err, slot is not written.
+    thread_safety: thread-safe
+    security:
+      constant_time: false
+      handles_secrets: true
+      fips_approved: true
+      fips_gate: Operational
+
+  - name: "CcmKey::new_with_count_in_place"
+    module: oxicrypt-aes
+    description: "Hidden constructor that builds the key as CcmKey::new_with_count does, in a MaybeUninit slot the caller provides, expanding the schedule there so the key is not moved by the module's code; a value already in the slot is overwritten without being dropped, and on an error the slot is not written; on success the caller must run the key's destructor in place, for example by embedding the slot in a type whose Drop does so, as the C key handle does, since a slot left without its destructor run leaves the schedule unwiped."
+    signature: "pub fn new_with_count_in_place<'a>(slot: &'a mut MaybeUninit<Self>, key: &[u8], tag_len: usize, used: u64) -> Result<&'a mut Self, Error>"
+    parameters:
+      - name: slot
+        type: "&'a mut MaybeUninit<CcmKey>"
+        direction: out
+        description: The key's final location, treated as uninitialised.
+      - name: key
+        type: "&[u8]"
+        direction: in
+        description: AES key bytes.
+        constraints:
+          size: "16, 24 or 32"
+      - name: tag_len
+        type: usize
+        direction: in
+        description: Tag length in bytes, one of 8, 10, 12, 14 or 16.
+      - name: used
+        type: u64
+        direction: in
+        description: Block-cipher invocations already performed under these key bytes; above 2^61 refused with InvalidInput.
+    returns:
+      type: "Result<&'a mut CcmKey, Error>"
+      description: A reference to the key in slot.
+      error_variants:
+        - name: NotOperational
+          condition: Module not Operational.
+        - name: InvalidInput
+          condition: An argument CcmKey::new_with_count refuses with InvalidInput.
+        - name: AlgorithmRestricted
+          condition: The active profile does not permit AES-CCM at the key's size.
+    preconditions:
+      - description: Module must be Operational.
+    postconditions:
+      - description: On Ok, the caller runs the key's destructor in place once; on Err, slot is not written.
+    thread_safety: thread-safe
+    security:
+      constant_time: false
+      handles_secrets: true
+      fips_approved: true
+      fips_gate: Operational
+
+  - name: "KwKey::new_in_place"
+    module: oxicrypt-aes
+    description: "Hidden constructor that builds the key as KwKey::new does, in a MaybeUninit slot the caller provides, expanding the schedule there so the key is not moved by the module's code; a value already in the slot is overwritten without being dropped, and on an error the slot is not written; on success the caller must run the key's destructor in place, for example by embedding the slot in a type whose Drop does so, as the C key handle does, since a slot left without its destructor run leaves the schedule unwiped."
+    signature: "pub fn new_in_place<'a>(slot: &'a mut MaybeUninit<Self>, key: &[u8]) -> Result<&'a mut Self, Error>"
+    parameters:
+      - name: slot
+        type: "&'a mut MaybeUninit<KwKey>"
+        direction: out
+        description: The key's final location, treated as uninitialised.
+      - name: key
+        type: "&[u8]"
+        direction: in
+        description: AES key bytes.
+        constraints:
+          size: "16, 24 or 32"
+    returns:
+      type: "Result<&'a mut KwKey, Error>"
+      description: A reference to the key in slot.
+      error_variants:
+        - name: NotOperational
+          condition: Module not Operational.
+        - name: InvalidInput
+          condition: An argument KwKey::new refuses with InvalidInput.
+        - name: AlgorithmRestricted
+          condition: The active profile does not permit AES-KW at the key's size.
+    preconditions:
+      - description: Module must be Operational.
+    postconditions:
+      - description: On Ok, the caller runs the key's destructor in place once; on Err, slot is not written.
+    thread_safety: thread-safe
+    security:
+      constant_time: false
+      handles_secrets: true
+      fips_approved: true
+      fips_gate: Operational
+
+  - name: mode_error_variants
+    module: oxicrypt-aes
+    description: "Hidden function yielding one value of every ModeError variant in declaration order, Rbg carrying RbgError::Busy and Module carrying Error::InvalidInput; the successor of each value is an exhaustive match inside oxicrypt-aes, so a variant added to the enum does not compile until the match inside this function has an arm for it, and a crate mapping the non-exhaustive enum iterates it to cover every variant."
+    signature: "pub fn mode_error_variants() -> impl Iterator<Item = ModeError>"
+    returns:
+      type: "impl Iterator<Item = ModeError>"
+      description: The eleven variants.
+    thread_safety: thread-safe
+    security:
+      constant_time: false
+      handles_secrets: false
+      fips_approved: false
+      fips_gate: null
+
+  - name: "seam::schedule_wipes"
+    module: oxicrypt-aes
+    description: "Hidden count of the AES round-key schedules wiped by their key's Drop in this process so far, every key type and size counted; available with the fault-injection feature."
+    signature: "pub fn schedule_wipes() -> u64"
+    returns:
+      type: u64
+      description: The process-wide count.
+    thread_safety: thread-safe
+    security:
+      constant_time: false
+      handles_secrets: false
+      fips_approved: false
+      fips_gate: null
+
   - name: gcm_encrypt
     module: oxicrypt-aes
     family: aes-mode-encrypt
-    description: AES-GCM authenticated encryption.
+    description: AES-GCM authenticated encryption under a 96-bit IV the module draws from the caller's DRBG (SP 800-38D §8.2.2); returns the IV and the 128-bit tag.
     signature: >-
-      pub fn gcm_encrypt<B: BlockCipher>(cipher: &B, iv: &[u8; 12],
-      aad: &[u8], plaintext: &[u8], ciphertext: &mut [u8],
-      tag: &mut [u8; 16]) -> Result<(), ModeError>
+      pub fn gcm_encrypt<R: oxicrypt_module::Rbg>(key: &GcmKey, drbg: &mut R,
+      aad: &[u8], plaintext: &[u8], ciphertext_out: &mut [u8]) -> Result<GcmSealed, ModeError>
     parameters:
-      - name: cipher
-        type: "&impl BlockCipher"
+      - name: key
+        type: "&GcmKey"
         direction: in
-        description: "AES key schedule (Aes128Key, Aes192Key, or Aes256Key)."
-      - name: iv
-        type: "&[u8; 12]"
-        direction: in
-        description: 96-bit initialization vector; MUST be unique for every encryption under the same key.
-        constraints:
-          size: 12
-          encoding: raw
+        description: "AES key bound to GCM, built from 16, 24 or 32 bytes."
+      - name: drbg
+        type: "&mut R where R: oxicrypt_module::Rbg"
+        direction: inout
+        description: An instantiated oxicrypt-drbg DRBG of at least 96-bit strength, whose one 12-byte fill produces the IV, any other Rbg implementation being outside the approved service.
       - name: aad
         type: "&[u8]"
         direction: in
         description: Additional authenticated data.
         constraints:
-          valid_range: "0..=2^64 - 1 bytes"
+          valid_range: "0..=2^61 - 1 bytes"
       - name: plaintext
         type: "&[u8]"
         direction: in
         description: Data to encrypt.
         constraints:
           valid_range: "0..=2^36 - 32 bytes"
-      - name: ciphertext
+      - name: ciphertext_out
         type: "&mut [u8]"
         direction: out
         description: Output buffer for encrypted data.
         constraints:
           size: "plaintext.len()"
-      - name: tag
-        type: "&mut [u8; 16]"
-        direction: out
-        description: Output buffer for 128-bit authentication tag.
-        constraints:
-          size: 16
     returns:
-      type: "Result<(), ModeError>"
-      description: Ok on success.
+      type: "Result<GcmSealed, ModeError>"
+      description: The IV drawn from drbg and the authentication tag, with no output written on a state, profile, length, strength, buffer-length or generator refusal, and ciphertext_out possibly partly written after a module error during encryption.
       error_variants:
-        - name: LengthMismatch
-          condition: ciphertext.len() != plaintext.len()
+        - name: Module
+          condition: NotOperational unless the module is Operational, or AlgorithmRestricted when the active profile does not permit AES-GCM at the key's size.
         - name: InvalidPayloadLength
-          condition: Plaintext exceeds GCM maximum.
+          condition: Plaintext longer than 2^36 - 32 bytes.
+        - name: InvalidAadLength
+          condition: AAD longer than 2^61 - 1 bytes.
+        - name: LengthMismatch
+          condition: ciphertext_out.len() != plaintext.len()
+        - name: RbgTooWeak
+          condition: drbg.strength_bits() is below 96.
+        - name: Module
+          condition: KeyExhausted when the key's invocation count has reached its limit; checked after RbgTooWeak and before the IV is drawn.
+        - name: Rbg
+          condition: The DRBG produced no IV; carries its RbgError unchanged, for example Uninstantiated. The reserved invocation is not released.
     preconditions:
       - description: Module must be Operational.
-      - description: IV must be unique for this key.
+      - description: drbg is instantiated and healthy.
     postconditions:
-      - description: ciphertext contains the encrypted data.
-      - description: tag contains the 128-bit GCM authentication tag.
+      - description: ciphertext_out contains the encrypted data.
+      - description: The returned GcmSealed holds the 12-byte IV and the 16-byte tag; both are public and travel with the ciphertext.
+      - description: No output is written on a state, profile, length, strength, buffer-length or generator refusal; a module error during encryption can leave ciphertext_out partly written.
+      - description: Once drawn, the IV buffer is zeroized inside the module on every exit.
     thread_safety: thread-safe
     security:
       constant_time: false  # AES table-based; disclosed
@@ -4619,33 +5212,32 @@ functions:
       fips_approved: true
       fips_gate: Operational
     pitfalls:
-      - description: GCM IV reuse is catastrophic; never use the same IV twice with the same key. Use a counter or DRBG to generate IVs.
+      - description: A process duplicated after DRBG instantiation (a fork, a virtual machine snapshot) emits the same next IV in each copy; re-instantiate the DRBG in each copy before encrypting.
         wrong: |
-          let iv = [0u8; 12];  // Static IV — fatal for multi-message use
-          gcm_encrypt(&key, &iv, &[], &msg1, &mut ct1, &mut tag1)?;
-          gcm_encrypt(&key, &iv, &[], &msg2, &mut ct2, &mut tag2)?;
+          let mut drbg = HmacDrbgSha256::instantiate_from_module(b"")?;
+          // fork(); both processes now hold the same DRBG state
+          let sealed = gcm_encrypt(&key, &mut drbg, &[], &msg, &mut ct)?;
         right: |
-          let mut iv_counter: u128 = 0;
-          let iv = &iv_counter.to_be_bytes()[4..];  // 96-bit counter
-          gcm_encrypt(&key, iv.try_into().unwrap(), &[], &msg, &mut ct, &mut tag)?;
-          iv_counter += 1;
+          // after fork(), in each process:
+          let mut drbg = HmacDrbgSha256::instantiate_from_module(b"")?;
+          let sealed = gcm_encrypt(&key, &mut drbg, &[], &msg, &mut ct)?;
 
   - name: gcm_decrypt
     module: oxicrypt-aes
     family: aes-mode-decrypt
     description: AES-GCM authenticated decryption; verifies the tag before writing plaintext_out.
     signature: >-
-      pub fn gcm_decrypt<B: BlockCipher>(cipher: &B, iv: &[u8], aad: &[u8],
+      pub fn gcm_decrypt(key: &GcmKey, iv: &[u8], aad: &[u8],
       ciphertext: &[u8], tag: &[u8; 16], plaintext_out: &mut [u8]) -> Result<(), ModeError>
     parameters:
-      - name: cipher
-        type: "&impl BlockCipher"
+      - name: key
+        type: "&GcmKey"
         direction: in
-        description: "AES key schedule (Aes128Key, Aes192Key, or Aes256Key)."
+        description: "AES key bound to GCM, built from 16, 24 or 32 bytes."
       - name: iv
         type: "&[u8]"
         direction: in
-        description: Initialization vector; must be 12 bytes (returns Err(InvalidIvLength) otherwise).
+        description: The IV the encrypting party returned, GcmSealed::iv from gcm_encrypt; must be 12 bytes (returns Err(InvalidIvLength) otherwise).
         constraints:
           size: 12
       - name: aad
@@ -4659,7 +5251,7 @@ functions:
       - name: tag
         type: "&[u8; 16]"
         direction: in
-        description: 128-bit authentication tag from gcm_encrypt.
+        description: 128-bit authentication tag, GcmSealed::tag from gcm_encrypt.
         constraints:
           size: 16
       - name: plaintext_out
@@ -4671,6 +5263,12 @@ functions:
     returns:
       type: "Result<(), ModeError>"
       error_variants:
+        - name: Module
+          condition: NotOperational unless the module is Operational, or AlgorithmRestricted when the active profile does not permit AES-GCM at the key's size.
+        - name: InvalidPayloadLength
+          condition: Ciphertext longer than 2^36 - 32 bytes.
+        - name: InvalidAadLength
+          condition: AAD longer than 2^61 - 1 bytes.
         - name: InvalidIvLength
           condition: iv.len() != 12
         - name: LengthMismatch
@@ -4682,21 +5280,228 @@ functions:
       - description: Tag, IV, and AAD must match what was used during encryption.
     postconditions:
       - description: If Ok, plaintext_out contains decrypted data.
-      - description: If TagMismatch, plaintext_out content is undefined — discard it.
+      - description: If Err, plaintext_out is not written, except after a module error that occurs once the tag has verified, which leaves it zeroized.
     thread_safety: thread-safe
     security:
-      constant_time: false  # AES table-based; tag comparison is constant-time
+      constant_time: false  # AES S-box indexed by secret data; tag compared with no early exit, its timing not measured
       handles_secrets: true
       fips_approved: true
       fips_gate: Operational
     pitfalls:
-      - description: Do NOT use plaintext_out if gcm_decrypt returns Err(TagMismatch); the buffer may contain attacker-controlled partially decrypted data.
+      - description: Do NOT use plaintext_out if gcm_decrypt returns Err; on TagMismatch it holds what the caller put there, not decrypted data.
         wrong: |
           let _ = gcm_decrypt(&key, &iv, &aad, &ct, &tag, &mut pt);
-          process(&pt);  // BUG: may use tampered data if tag failed
+          process(&pt);  // BUG: processes unauthenticated input if the tag failed
         right: |
           gcm_decrypt(&key, &iv, &aad, &ct, &tag, &mut pt)?;
           process(&pt);  // safe: only reached if authentication passed
+
+  # ── AES-CCM (SP 800-38C) ──────────────────────────────────────────
+
+  - name: "CcmKey::new_with_count"
+    module: oxicrypt-aes
+    description: Build a CCM key as CcmKey::new does, with its invocation count preloaded to the block-cipher invocations earlier instances of the same key bytes performed, summed by the operator across processes and restarts.
+    signature: "pub fn new_with_count(key: &[u8], tag_len: usize, used: u64) -> Result<Self, Error>"
+    parameters:
+      - name: key
+        type: "&[u8]"
+        direction: in
+        description: AES key bytes.
+        constraints:
+          size: "16, 24 or 32"
+      - name: tag_len
+        type: usize
+        direction: in
+        description: Tag length in bytes, one of 8, 10, 12, 14 or 16, fixed for every call under the key.
+      - name: used
+        type: u64
+        direction: in
+        description: Block-cipher invocations already performed under these key bytes, as read from CcmKey::invocations.
+        constraints:
+          valid_range: "0..=2^61"
+    returns:
+      type: "Result<CcmKey, Error>"
+      description: A key whose count starts at used and whose limit is 2^61; a key built with used = 2^61 refuses every operation.
+      error_variants:
+        - name: NotOperational
+          condition: Module not Operational.
+        - name: InvalidInput
+          condition: key is not 16, 24 or 32 bytes, tag_len is not in the set, or used is above 2^61 (checked after the module and profile gates).
+        - name: AlgorithmRestricted
+          condition: The active profile does not permit AES-CCM at the key's size.
+    preconditions:
+      - description: Module must be Operational.
+    thread_safety: thread-safe
+    security:
+      constant_time: false
+      handles_secrets: true
+      fips_approved: true
+      fips_gate: Operational
+
+  - name: "CcmKey::invocations"
+    module: oxicrypt-aes
+    description: Read the number of block-cipher invocations reserved under this key by encryptions and decryptions, each decryption charged one ceil(pt_len / 16) more than an encryption of the same lengths and failed decryptions included, plus any preloaded by CcmKey::new_with_count.
+    signature: "pub fn invocations(&self) -> u64"
+    parameters:
+      - name: self
+        type: "&CcmKey"
+        direction: in
+        description: The key.
+    returns:
+      type: u64
+      description: The current invocation count, at most 2^61; no module gate, since the count is not a service output.
+    thread_safety: thread-safe
+    security:
+      constant_time: true
+      handles_secrets: false
+      fips_approved: false
+      fips_gate: null
+
+  - name: "CcmKey::tag_len"
+    module: oxicrypt-aes
+    description: Read the key's tag length in bytes, one of 8, 10, 12, 14 or 16, fixed at construction; the length ccm_encrypt writes and ccm_decrypt verifies.
+    signature: "pub const fn tag_len(&self) -> usize"
+    parameters:
+      - name: self
+        type: "&CcmKey"
+        direction: in
+        description: The key.
+    returns:
+      type: usize
+      description: The tag length in bytes; no module gate, since the length is not a service output.
+    thread_safety: thread-safe
+    security:
+      constant_time: true
+      handles_secrets: false
+      fips_approved: false
+      fips_gate: null
+
+  - name: ccm_encrypt
+    module: oxicrypt-aes
+    family: aes-mode-encrypt
+    description: AES-CCM generation-encryption (SP 800-38C §6.1) that writes the payload ciphertext to ciphertext_out and the tag of the key's tag length to tag_out.
+    signature: >-
+      pub fn ccm_encrypt(key: &CcmKey, nonce: &[u8], aad: &[u8],
+      plaintext: &[u8], ciphertext_out: &mut [u8], tag_out: &mut [u8]) -> Result<(), ModeError>
+    parameters:
+      - name: key
+        type: "&CcmKey"
+        direction: in
+        description: AES key bound to CCM, carrying the tag length.
+      - name: nonce
+        type: "&[u8]"
+        direction: in
+        description: A nonce never used before under this key.
+        constraints:
+          size: "7..=13"
+      - name: aad
+        type: "&[u8]"
+        direction: in
+        description: Associated data.
+      - name: plaintext
+        type: "&[u8]"
+        direction: in
+        description: The payload, shorter than 2^(8 * (15 - nonce.len())) bytes.
+      - name: ciphertext_out
+        type: "&mut [u8]"
+        direction: out
+        description: Output buffer for the payload ciphertext.
+        constraints:
+          size: "plaintext.len()"
+      - name: tag_out
+        type: "&mut [u8]"
+        direction: out
+        description: Output buffer for the tag.
+        constraints:
+          size: "the key's tag length"
+    returns:
+      type: "Result<(), ModeError>"
+      error_variants:
+        - name: Module
+          condition: NotOperational unless the module is Operational, AlgorithmRestricted when the active profile does not permit AES-CCM at the key's size, or KeyExhausted when the encryption's invocations would take the key's count past 2^61.
+        - name: InvalidTagLength
+          condition: tag_out.len() is not the key's tag length (returned before the invocations are charged).
+        - name: LengthMismatch
+          condition: ciphertext_out.len() != plaintext.len() (returned before the invocations are charged).
+        - name: InvalidNonceLength
+          condition: nonce.len() is outside 7..=13 (returned before the invocations are charged).
+        - name: InvalidPayloadLength
+          condition: plaintext.len() is not representable in the 15 - nonce.len() byte length field (returned before the invocations are charged).
+        - name: InvalidAadLength
+          condition: aad.len() is above 2^64 - 2^16 (returned before the invocations are charged).
+    preconditions:
+      - description: Module must be Operational.
+    postconditions:
+      - description: If Ok, ciphertext_out holds C and tag_out holds T, the pair that ccm_decrypt under the same key, nonce and aad verifies.
+    thread_safety: thread-safe
+    security:
+      constant_time: false
+      handles_secrets: true
+      fips_approved: true
+      fips_gate: Operational
+
+  - name: ccm_decrypt
+    module: oxicrypt-aes
+    family: aes-mode-decrypt
+    description: AES-CCM decryption-verification (SP 800-38C §6.2) that verifies the tag before writing plaintext_out and returns the one error TagMismatch for every invalid input.
+    signature: >-
+      pub fn ccm_decrypt(key: &CcmKey, nonce: &[u8], aad: &[u8],
+      ciphertext: &[u8], tag: &[u8], plaintext_out: &mut [u8]) -> Result<(), ModeError>
+    parameters:
+      - name: key
+        type: "&CcmKey"
+        direction: in
+        description: AES key bound to CCM, carrying the tag length.
+      - name: nonce
+        type: "&[u8]"
+        direction: in
+        description: The nonce the encrypting party used.
+        constraints:
+          size: "7..=13"
+      - name: aad
+        type: "&[u8]"
+        direction: in
+        description: Associated data.
+      - name: ciphertext
+        type: "&[u8]"
+        direction: in
+        description: The payload ciphertext, without the tag.
+      - name: tag
+        type: "&[u8]"
+        direction: in
+        description: The transmitted tag.
+        constraints:
+          size: "the key's tag length"
+      - name: plaintext_out
+        type: "&mut [u8]"
+        direction: out
+        description: Output buffer, written only after the tag verifies.
+        constraints:
+          size: "ciphertext.len()"
+    returns:
+      type: "Result<(), ModeError>"
+      error_variants:
+        - name: Module
+          condition: NotOperational unless the module is Operational, AlgorithmRestricted when the active profile does not permit AES-CCM at the key's size, or KeyExhausted when the decryption's invocations would take the key's count past 2^61.
+        - name: InvalidTagLength
+          condition: tag.len() is not the key's tag length (returned before the invocations are charged).
+        - name: LengthMismatch
+          condition: plaintext_out.len() != ciphertext.len() (returned before the invocations are charged).
+        - name: TagMismatch
+          condition: Any invalid input, after the invocations are charged in full - a nonce length outside 7..=13, a payload length the nonce's length field cannot represent, or a tag that does not verify (compared with no early exit; the comparison's timing is not measured by the constant-time harness).
+    preconditions:
+      - description: Module must be Operational.
+    postconditions:
+      - description: If Ok, plaintext_out contains the verified payload.
+      - description: An empty ciphertext with a verifying tag (Clen = Tlen) returns Ok with an empty payload, where SP 800-38C §6.2 step 1 returns INVALID; the crate's encryption of an empty payload produces C = T.
+      - description: On any error plaintext_out has not been written, except that a module error after verification leaves it zeroised.
+      - description: Each TagMismatch is an INVALID result the operator counts under the key (SP 800-38C Appendix B); the module does not count them.
+    thread_safety: thread-safe
+    security:
+      constant_time: false  # AES S-box indexed by secret data; tag compared with no early exit, its timing not measured
+      handles_secrets: true
+      fips_approved: true
+      fips_gate: Operational
 
   # ── AES-ECB (SP 800-38A §6.1) ─────────────────────────────────────
 
@@ -4705,13 +5510,13 @@ functions:
     family: aes-mode-encrypt
     description: AES-ECB encrypt; identical plaintext blocks produce identical ciphertext, so do not use for general-purpose encryption.
     signature: >-
-      pub fn ecb_encrypt<B: BlockCipher>(cipher: &B, input: &[u8],
+      pub fn ecb_encrypt(key: &EcbKey, input: &[u8],
       output: &mut [u8]) -> Result<(), ModeError>
     parameters:
-      - name: cipher
-        type: "&impl BlockCipher"
+      - name: key
+        type: "&EcbKey"
         direction: in
-        description: "AES key schedule."
+        description: "AES key for the raw block cipher, built from 16, 24 or 32 bytes."
       - name: input
         type: "&[u8]"
         direction: in
@@ -4723,8 +5528,12 @@ functions:
     returns:
       type: "Result<(), ModeError>"
       error_variants:
+        - name: Module
+          condition: NotOperational unless the module is Operational, or AlgorithmRestricted when the active profile does not permit AES-ECB at the key's size.
         - name: NotBlockAligned
           condition: "input.len() != output.len() or input.len() % 16 != 0"
+        - name: InvalidPayloadLength
+          condition: input is empty (SP 800-38A Appendix A).
     thread_safety: thread-safe
     security:
       constant_time: false
@@ -4737,13 +5546,13 @@ functions:
     family: aes-mode-decrypt
     description: AES-ECB decrypt.
     signature: >-
-      pub fn ecb_decrypt<B: BlockCipher>(cipher: &B, input: &[u8],
+      pub fn ecb_decrypt(key: &EcbKey, input: &[u8],
       output: &mut [u8]) -> Result<(), ModeError>
     parameters:
-      - name: cipher
-        type: "&impl BlockCipher"
+      - name: key
+        type: "&EcbKey"
         direction: in
-        description: "AES key schedule."
+        description: "AES key for the raw block cipher, built from 16, 24 or 32 bytes."
       - name: input
         type: "&[u8]"
         direction: in
@@ -4755,8 +5564,14 @@ functions:
     returns:
       type: "Result<(), ModeError>"
       error_variants:
+        - name: Module
+          condition: NotOperational unless the module is Operational, or AlgorithmRestricted when the active profile does not permit AES-ECB at the key's size.
         - name: NotBlockAligned
           condition: "input.len() != output.len() or input.len() % 16 != 0"
+        - name: InvalidPayloadLength
+          condition: input is empty (SP 800-38A Appendix A).
+    postconditions:
+      - description: If Err, output is not written, except after a module error while the decryption runs, which leaves it zeroized.
     thread_safety: thread-safe
     security:
       constant_time: false
@@ -4771,32 +5586,36 @@ functions:
     family: aes-mode-encrypt
     description: AES-CBC encrypt; IV must be 16 bytes and unpredictable (SP 800-38A), input a multiple of 16 with no padding applied.
     signature: >-
-      pub fn cbc_encrypt<B: BlockCipher>(cipher: &B, iv: &[u8; 16],
-      input: &[u8], output: &mut [u8]) -> Result<(), ModeError>
+      pub fn cbc_encrypt(key: &CbcKey, iv: &[u8; 16],
+      plaintext: &[u8], ciphertext_out: &mut [u8]) -> Result<(), ModeError>
     parameters:
-      - name: cipher
-        type: "&impl BlockCipher"
+      - name: key
+        type: "&CbcKey"
         direction: in
-        description: "AES key schedule."
+        description: "AES key bound to CBC, built from 16, 24 or 32 bytes."
       - name: iv
         type: "&[u8; 16]"
         direction: in
         description: "16-byte IV."
         constraints:
           size: 16
-      - name: input
+      - name: plaintext
         type: "&[u8]"
         direction: in
         description: Plaintext.
-      - name: output
+      - name: ciphertext_out
         type: "&mut [u8]"
         direction: out
         description: Output buffer.
     returns:
       type: "Result<(), ModeError>"
       error_variants:
+        - name: Module
+          condition: NotOperational unless the module is Operational, or AlgorithmRestricted when the active profile does not permit AES-CBC at the key's size.
         - name: NotBlockAligned
           condition: "input.len() != output.len() or input.len() % 16 != 0"
+        - name: InvalidPayloadLength
+          condition: input is empty (SP 800-38A Appendix A).
     thread_safety: thread-safe
     security:
       constant_time: false
@@ -4809,32 +5628,38 @@ functions:
     family: aes-mode-decrypt
     description: AES-CBC decrypt.
     signature: >-
-      pub fn cbc_decrypt<B: BlockCipher>(cipher: &B, iv: &[u8; 16],
-      input: &[u8], output: &mut [u8]) -> Result<(), ModeError>
+      pub fn cbc_decrypt(key: &CbcKey, iv: &[u8; 16],
+      ciphertext: &[u8], plaintext_out: &mut [u8]) -> Result<(), ModeError>
     parameters:
-      - name: cipher
-        type: "&impl BlockCipher"
+      - name: key
+        type: "&CbcKey"
         direction: in
-        description: "AES key schedule."
+        description: "AES key bound to CBC, built from 16, 24 or 32 bytes."
       - name: iv
         type: "&[u8; 16]"
         direction: in
         description: "16-byte IV used during encryption."
         constraints:
           size: 16
-      - name: input
+      - name: ciphertext
         type: "&[u8]"
         direction: in
         description: Ciphertext.
-      - name: output
+      - name: plaintext_out
         type: "&mut [u8]"
         direction: out
         description: Output buffer.
     returns:
       type: "Result<(), ModeError>"
       error_variants:
+        - name: Module
+          condition: NotOperational unless the module is Operational, or AlgorithmRestricted when the active profile does not permit AES-CBC at the key's size.
         - name: NotBlockAligned
           condition: "input.len() != output.len() or input.len() % 16 != 0"
+        - name: InvalidPayloadLength
+          condition: input is empty (SP 800-38A Appendix A).
+    postconditions:
+      - description: If Err, plaintext_out is not written, except after a module error while the decryption runs, which leaves it zeroized.
     thread_safety: thread-safe
     security:
       constant_time: false
@@ -4844,18 +5669,18 @@ functions:
 
   # ── AES-CTR (SP 800-38A §6.5) ─────────────────────────────────────
 
-  - name: ctr_xor
+  - name: ctr
     module: oxicrypt-aes
-    description: AES-CTR encrypt/decrypt (the same XOR operation) over an icb-seeded full 128-bit big-endian counter (SP 800-38A Appendix F.5); input/output may be any length.
+    description: AES-CTR encrypt/decrypt (the same XOR operation) over a counter-seeded full 128-bit big-endian counter (SP 800-38A Appendix F.5).
     signature: >-
-      pub fn ctr_xor<B: BlockCipher>(cipher: &B, icb: &[u8; 16],
+      pub fn ctr(key: &CtrKey, counter: &[u8; 16],
       input: &[u8], output: &mut [u8]) -> Result<(), ModeError>
     parameters:
-      - name: cipher
-        type: "&impl BlockCipher"
+      - name: key
+        type: "&CtrKey"
         direction: in
-        description: "AES key schedule."
-      - name: icb
+        description: "AES key bound to CTR, built from 16, 24 or 32 bytes."
+      - name: counter
         type: "&[u8; 16]"
         direction: in
         description: "Initial counter block (16 bytes)."
@@ -4873,7 +5698,11 @@ functions:
       type: "Result<(), ModeError>"
       error_variants:
         - name: Module
-          condition: The module is not in SelfTest or Operational.
+          condition: NotOperational unless the module is Operational, or AlgorithmRestricted when the active profile does not permit AES-CTR at the key's size.
+        - name: LengthMismatch
+          condition: output.len() != input.len()
+    postconditions:
+      - description: If Err, output is not written, except after a module error while the operation runs, which leaves it zeroized.
     thread_safety: thread-safe
     security:
       constant_time: false
@@ -4881,23 +5710,104 @@ functions:
       fips_approved: true
       fips_gate: Operational
     pitfalls:
-      - description: CTR ICB must be unique per (key, message) pair; reusing an ICB XORs two plaintexts together, making both trivially recoverable.
+      - description: The initial counter block must be unique per (key, message) pair; reusing one XORs two plaintexts together, making both trivially recoverable.
 
-  # ── AES-KW / AES-KWP — inverse cipher direction ──────────────────
+  # ── AES-KW / AES-KWP — forward and inverse cipher directions ─────
 
-  - name: kw_wrap_inverse_cipher
+  - name: kw_wrap
+    module: oxicrypt-aes
+    family: aes-mode-encrypt
+    description: AES-KW wrap (RFC 3394 / SP 800-38F §6.2 KW-AE) with the forward cipher, ICV A6A6A6A6A6A6A6A6.
+    signature: >-
+      pub fn kw_wrap(key: &KwKey,
+      plaintext: &[u8], ciphertext_out: &mut [u8])
+      -> Result<(), ModeError>
+    parameters:
+      - name: key
+        type: "&KwKey"
+        direction: in
+        description: "AES key bound to KW and KWP, built from 16, 24 or 32 bytes."
+      - name: plaintext
+        type: "&[u8]"
+        direction: in
+        description: "Plaintext to wrap: a multiple of 8 bytes, at least 16."
+      - name: ciphertext_out
+        type: "&mut [u8]"
+        direction: out
+        description: "Wrapped output."
+        constraints:
+          size: "plaintext.len() + 8"
+    returns:
+      type: "Result<(), ModeError>"
+      error_variants:
+        - name: Module
+          condition: NotOperational unless the module is Operational, or AlgorithmRestricted when the active profile does not permit AES-KW at the key's size.
+        - name: LengthMismatch
+          condition: The plaintext is shorter than 16 bytes or not a multiple of 8, or ciphertext_out is not plaintext.len() + 8 bytes.
+        - name: InvalidPayloadLength
+          condition: "plaintext of 2^54 semiblocks or more (SP 800-38F section 5.3.1 Table 1)"
+    postconditions:
+      - description: If Err, every byte the wrap wrote is zeroized on an error after the service gates; a length refusal writes nothing.
+    thread_safety: thread-safe
+    security:
+      constant_time: false
+      handles_secrets: true
+      fips_approved: true
+      fips_gate: Operational
+
+  - name: kwp_wrap
+    module: oxicrypt-aes
+    family: aes-mode-encrypt
+    description: AES-KWP wrap (RFC 5649 / SP 800-38F §6.3 KWP-AE) with the forward cipher, alternative IV A65959A6 || [mli]_32.
+    signature: >-
+      pub fn kwp_wrap(key: &KwKey,
+      plaintext: &[u8], ciphertext_out: &mut [u8])
+      -> Result<usize, ModeError>
+    parameters:
+      - name: key
+        type: "&KwKey"
+        direction: in
+        description: "AES key bound to KW and KWP, built from 16, 24 or 32 bytes."
+      - name: plaintext
+        type: "&[u8]"
+        direction: in
+        description: "Plaintext to wrap, 1 to 2^32 - 1 bytes."
+      - name: ciphertext_out
+        type: "&mut [u8]"
+        direction: out
+        description: "Wrapped output, written to the front of the buffer."
+        constraints:
+          size: ">= ((plaintext.len() + 7) / 8) * 8 + 8"
+    returns:
+      type: "Result<usize, ModeError>"
+      description: "The wrapped length, ((plaintext.len() + 7) / 8) * 8 + 8 bytes."
+      error_variants:
+        - name: Module
+          condition: NotOperational unless the module is Operational, or AlgorithmRestricted when the active profile does not permit AES-KWP at the key's size.
+        - name: LengthMismatch
+          condition: The plaintext is empty or longer than 2^32 - 1 bytes, or ciphertext_out is shorter than the wrapped length.
+    postconditions:
+      - description: If Err, every byte the wrap wrote is zeroized on an error after the service gates; a length refusal writes nothing.
+    thread_safety: thread-safe
+    security:
+      constant_time: false
+      handles_secrets: true
+      fips_approved: true
+      fips_gate: Operational
+
+  - name: kw_wrap_inverse
     module: oxicrypt-aes
     family: aes-mode-encrypt
     description: AES-KW wrap (RFC 3394 / SP 800-38F §6.2 KW-AE) with the inverse cipher direction (ACVP kwCipher = "inverse"); the W function uses the AES inverse cipher, ICV A6A6A6A6A6A6A6A6 unchanged.
     signature: >-
-      pub fn kw_wrap_inverse_cipher<B: BlockCipher>(cipher: &B,
+      pub fn kw_wrap_inverse(key: &KwKey,
       plaintext: &[u8], ciphertext_out: &mut [u8])
       -> Result<(), ModeError>
     parameters:
-      - name: cipher
-        type: "&impl BlockCipher"
+      - name: key
+        type: "&KwKey"
         direction: in
-        description: "AES key schedule."
+        description: "AES key bound to KW and KWP, built from 16, 24 or 32 bytes."
       - name: plaintext
         type: "&[u8]"
         direction: in
@@ -4910,8 +5820,14 @@ functions:
       type: "Result<(), ModeError>"
       description: "LengthMismatch if buffer sizes are wrong."
       error_variants:
+        - name: Module
+          condition: NotOperational unless the module is Operational, or AlgorithmRestricted when the active profile does not permit AES-KW at the key's size.
         - name: LengthMismatch
           condition: The plaintext or output buffer length is not valid for KW-AE.
+        - name: InvalidPayloadLength
+          condition: "plaintext of 2^54 semiblocks or more (SP 800-38F section 5.3.1 Table 1)"
+    postconditions:
+      - description: If Err, every byte the wrap wrote is zeroized on an error after the service gates; a length refusal writes nothing.
     thread_safety: thread-safe
     security:
       constant_time: false
@@ -4919,19 +5835,19 @@ functions:
       fips_approved: true
       fips_gate: Operational
 
-  - name: kw_unwrap_inverse_cipher
+  - name: kw_unwrap_inverse
     module: oxicrypt-aes
     family: aes-mode-decrypt
-    description: AES-KW unwrap (SP 800-38F §6.2 KW-AD) with the inverse cipher direction (ACVP kwCipher = "inverse"); returns TagMismatch on ICV verification failure.
+    description: AES-KW unwrap (SP 800-38F §6.2 KW-AD) with the inverse cipher direction (ACVP kwCipher = "inverse"); returns TagMismatch on ICV verification failure; plaintext_out is zeroized on every error after the service gates.
     signature: >-
-      pub fn kw_unwrap_inverse_cipher<B: BlockCipher>(cipher: &B,
+      pub fn kw_unwrap_inverse(key: &KwKey,
       ciphertext: &[u8], plaintext_out: &mut [u8])
       -> Result<(), ModeError>
     parameters:
-      - name: cipher
-        type: "&impl BlockCipher"
+      - name: key
+        type: "&KwKey"
         direction: in
-        description: "AES key schedule."
+        description: "AES key bound to KW and KWP, built from 16, 24 or 32 bytes."
       - name: ciphertext
         type: "&[u8]"
         direction: in
@@ -4942,12 +5858,16 @@ functions:
         description: "Unwrapped output."
     returns:
       type: "Result<(), ModeError>"
-      description: "TagMismatch on ICV failure (constant-time check); LengthMismatch on size error."
+      description: "TagMismatch on ICV failure; LengthMismatch on size error."
       error_variants:
+        - name: Module
+          condition: NotOperational unless the module is Operational, or AlgorithmRestricted when the active profile does not permit AES-KW at the key's size.
         - name: TagMismatch
-          condition: The ICV did not verify; checked in constant time.
+          condition: The ICV did not verify.
         - name: LengthMismatch
           condition: The ciphertext or output buffer length is not valid for KW-AD.
+        - name: InvalidPayloadLength
+          condition: ciphertext of more than 2^54 semiblocks
     thread_safety: thread-safe
     security:
       constant_time: true
@@ -4955,19 +5875,19 @@ functions:
       fips_approved: true
       fips_gate: Operational
 
-  - name: kwp_wrap_inverse_cipher
+  - name: kwp_wrap_inverse
     module: oxicrypt-aes
     family: aes-mode-encrypt
     description: AES-KWP wrap (RFC 5649 / SP 800-38F §6.3 KWP-AE) with the inverse cipher direction (ACVP kwCipher = "inverse"); alternative IV A65959A6 || [mli]_32 unchanged.
     signature: >-
-      pub fn kwp_wrap_inverse_cipher<B: BlockCipher>(cipher: &B,
+      pub fn kwp_wrap_inverse(key: &KwKey,
       plaintext: &[u8], ciphertext_out: &mut [u8])
-      -> Result<(), ModeError>
+      -> Result<usize, ModeError>
     parameters:
-      - name: cipher
-        type: "&impl BlockCipher"
+      - name: key
+        type: "&KwKey"
         direction: in
-        description: "AES key schedule."
+        description: "AES key bound to KW and KWP, built from 16, 24 or 32 bytes."
       - name: plaintext
         type: "&[u8]"
         direction: in
@@ -4975,13 +5895,19 @@ functions:
       - name: ciphertext_out
         type: "&mut [u8]"
         direction: out
-        description: "Wrapped output."
+        description: "Wrapped output, written to the front of the buffer."
+        constraints:
+          size: ">= ((plaintext.len() + 7) / 8) * 8 + 8"
     returns:
-      type: "Result<(), ModeError>"
-      description: "LengthMismatch on size error."
+      type: "Result<usize, ModeError>"
+      description: "The wrapped length, ((plaintext.len() + 7) / 8) * 8 + 8 bytes."
       error_variants:
+        - name: Module
+          condition: NotOperational unless the module is Operational, or AlgorithmRestricted when the active profile does not permit AES-KWP at the key's size.
         - name: LengthMismatch
           condition: The plaintext or output buffer length is not valid for KWP-AE.
+    postconditions:
+      - description: If Err, every byte the wrap wrote is zeroized on an error after the service gates; a length refusal writes nothing.
     thread_safety: thread-safe
     security:
       constant_time: false
@@ -4989,19 +5915,19 @@ functions:
       fips_approved: true
       fips_gate: Operational
 
-  - name: kwp_unwrap_inverse_cipher
+  - name: kwp_unwrap_inverse
     module: oxicrypt-aes
     family: aes-mode-decrypt
-    description: AES-KWP unwrap (SP 800-38F §6.3 KWP-AD) with the inverse cipher direction (ACVP kwCipher = "inverse"); returns TagMismatch on ICV-prefix mismatch, inconsistent mli, or non-zero pad, and returns the recovered plaintext byte length on success.
+    description: AES-KWP unwrap (SP 800-38F §6.3 KWP-AD) with the inverse cipher direction (ACVP kwCipher = "inverse"); returns TagMismatch on ICV-prefix mismatch, inconsistent mli, or non-zero pad, and returns the recovered plaintext byte length on success; plaintext_out_scratch is zeroized on every error after the service gates.
     signature: >-
-      pub fn kwp_unwrap_inverse_cipher<B: BlockCipher>(cipher: &B,
+      pub fn kwp_unwrap_inverse(key: &KwKey,
       ciphertext: &[u8], plaintext_out_scratch: &mut [u8])
       -> Result<usize, ModeError>
     parameters:
-      - name: cipher
-        type: "&impl BlockCipher"
+      - name: key
+        type: "&KwKey"
         direction: in
-        description: "AES key schedule."
+        description: "AES key bound to KW and KWP, built from 16, 24 or 32 bytes."
       - name: ciphertext
         type: "&[u8]"
         direction: in
@@ -5012,10 +5938,12 @@ functions:
         description: "Padded plaintext scratch."
     returns:
       type: "Result<usize, ModeError>"
-      description: "Recovered `mli` (plaintext byte length) on success; TagMismatch on ICV/pad failure (constant-time check); LengthMismatch on size error."
+      description: "Recovered `mli` (plaintext byte length) on success; TagMismatch on ICV/pad failure; LengthMismatch on size error."
       error_variants:
+        - name: Module
+          condition: NotOperational unless the module is Operational, or AlgorithmRestricted when the active profile does not permit AES-KWP at the key's size.
         - name: TagMismatch
-          condition: The ICV prefix, the encoded message length, or the padding did not verify; checked in constant time.
+          condition: ICV prefix, length-indicator range or padding fault, accumulated into one mask
         - name: LengthMismatch
           condition: The ciphertext or scratch buffer length is not valid for KWP-AD.
     thread_safety: thread-safe
@@ -5970,125 +6898,176 @@ functions:
 
   # ── CMAC (SP 800-38B) ────────────────────────────────────────────
 
-  - name: cmac_aes128
+  - name: CmacKey
+    module: oxicrypt-cmac
+    kind: struct
+    description: AES key bound to CMAC with its subkeys K1 and K2 and a MAC length fixed at construction, built by CmacKey::new(key, mac_len) from 16, 24 or 32 bytes with mac_len in 8..=16, any other key or MAC length refused with InvalidInput, and gated on the CMAC-AES service for that size; SP 800-38B Appendix B recommends at most 2^48 messages per key, which the key does not count; not Clone.
+    security:
+      contains_secret: true
+      zeroize_on_drop: true
+      constant_time: false
+
+  - name: "CmacKey::mac_len"
+    module: oxicrypt-cmac
+    description: Read the key's MAC length in bytes, from 8 to 16, fixed at construction; the length cmac writes and cmac_verify compares.
+    signature: "pub const fn mac_len(&self) -> usize"
+    parameters:
+      - name: self
+        type: "&CmacKey"
+        direction: in
+        description: The key.
+    returns:
+      type: usize
+      description: The MAC length in bytes; no module gate, since the length is not a service output.
+    thread_safety: thread-safe
+    security:
+      constant_time: true
+      handles_secrets: false
+      fips_approved: false
+      fips_gate: null
+
+  - name: "CmacKey::new_in_place"
+    module: oxicrypt-cmac
+    description: "Hidden constructor that builds the key as CmacKey::new does, in a MaybeUninit slot the caller provides, deriving the schedule, K1 and K2 there so the key is not moved by the module's code; a value already in the slot is overwritten without being dropped, and on an error the slot is either unwritten or holds a key whose schedule and subkeys are zero, which needs no drop; on success the caller must run the key's destructor in place, for example by embedding the slot in a type whose Drop does so, as the C key handle does, since a slot left without its destructor run leaves the schedule and subkeys unwiped."
+    signature: "pub fn new_in_place<'a>(slot: &'a mut MaybeUninit<Self>, key: &[u8], mac_len: usize) -> Result<&'a mut Self, Error>"
+    parameters:
+      - name: slot
+        type: "&'a mut MaybeUninit<CmacKey>"
+        direction: out
+        description: The key's final location, treated as uninitialised.
+      - name: key
+        type: "&[u8]"
+        direction: in
+        description: AES key bytes.
+        constraints:
+          size: "16, 24 or 32"
+      - name: mac_len
+        type: usize
+        direction: in
+        description: MAC length in bytes, from 8 to 16.
+    returns:
+      type: "Result<&'a mut CmacKey, Error>"
+      description: A reference to the key in slot.
+      error_variants:
+        - name: NotOperational
+          condition: Module not Operational, including a module that enters its error state during the derivation.
+        - name: InvalidInput
+          condition: key is not 16, 24 or 32 bytes, or mac_len is outside 8..=16.
+        - name: AlgorithmRestricted
+          condition: The active profile does not permit CMAC at the key's size.
+    preconditions:
+      - description: Module must be Operational.
+    postconditions:
+      - description: On Ok, the caller runs the key's destructor in place once; on Err, the slot holds no key material.
+    thread_safety: thread-safe
+    security:
+      constant_time: false
+      handles_secrets: true
+      fips_approved: true
+      fips_gate: Operational
+
+  - name: "seam::error_after_next_expansion"
+    module: oxicrypt-cmac
+    description: "Hidden test hook that makes the next CMAC key derivation put the module into its error state after the AES schedule is expanded and before K1 and K2 are derived, so the derivation fails with key material in the key; the error state is permanent for the process; available with the fault-injection feature."
+    signature: "pub fn error_after_next_expansion()"
+    returns:
+      type: "()"
+      description: Nothing.
+    thread_safety: thread-safe
+    security:
+      constant_time: false
+      handles_secrets: false
+      fips_approved: false
+      fips_gate: null
+
+  - name: cmac
     module: oxicrypt-cmac
     family: cmac-aes
-    description: One-shot AES-128-CMAC (SP 800-38B) over a raw 16-byte key, building the key schedule internally and returning a 16-byte tag.
-    signature: "pub fn cmac_aes128(key: &[u8; 16], msg: &[u8]) -> Result<[u8; 16], Error>"
+    description: AES-CMAC (SP 800-38B §6.2) of a message under a CmacKey, writing the 128-bit tag truncated to the key's MAC length.
+    signature: "pub fn cmac(key: &CmacKey, message: &[u8], mac_out: &mut [u8]) -> Result<(), ModeError>"
     parameters:
       - name: key
-        type: "&[u8; 16]"
+        type: "&CmacKey"
         direction: in
-        description: 128-bit AES key.
-        constraints:
-          size: 16
-      - name: msg
+        description: CMAC key, which fixes the MAC length.
+      - name: message
         type: "&[u8]"
         direction: in
         description: Message to authenticate.
+      - name: mac_out
+        type: "&mut [u8]"
+        direction: out
+        description: Output buffer for the MAC.
+        constraints:
+          size: "the key's MAC length"
     returns:
-      type: "Result<[u8; 16], Error>"
-      description: 16-byte CMAC tag.
+      type: "Result<(), ModeError>"
+      description: Ok on success.
       error_variants:
-        - name: NotOperational
-          condition: Module not initialized.
+        - name: Module
+          condition: NotOperational unless the module is Operational, or AlgorithmRestricted when the active profile does not permit CMAC at the key's size.
+        - name: LengthMismatch
+          condition: mac_out.len() is not the key's MAC length.
     preconditions:
       - description: Module must be Operational.
     thread_safety: thread-safe
     security:
-      constant_time: false  # AES table-based
+      constant_time: false  # The cmac_verify target of the constant-time harness tools/ct-validation measures that the time of a refused MAC does not depend on where it differs from the tag; nothing else about the comparison's timing is measured.
       handles_secrets: true
       fips_approved: true
       fips_gate: Operational
     example:
       language: rust
       code: |
-        let tag = oxicrypt_cmac::cmac_aes128(&[0u8; 16], b"message")?;
-        assert_eq!(tag.len(), 16);
+        let key = oxicrypt_cmac::CmacKey::new(&[0u8; 16], 16)?;
+        let mut mac = [0u8; 16];
+        oxicrypt_cmac::cmac(&key, b"message", &mut mac)?;
 
-  - name: cmac_aes192
+  - name: cmac_verify
     module: oxicrypt-cmac
     family: cmac-aes
-    description: One-shot AES-192-CMAC.
-    signature: "pub fn cmac_aes192(key: &[u8; 24], msg: &[u8]) -> Result<[u8; 16], Error>"
+    description: AES-CMAC verification (SP 800-38B §6.3) of a MAC of the key's fixed MAC length over a message, comparing every byte with no early exit.
+    signature: "pub fn cmac_verify(key: &CmacKey, message: &[u8], mac: &[u8]) -> Result<(), ModeError>"
     parameters:
       - name: key
-        type: "&[u8; 24]"
+        type: "&CmacKey"
         direction: in
-        description: 192-bit AES key.
-        constraints:
-          size: 24
-      - name: msg
+        description: CMAC key, which fixes the MAC length.
+      - name: message
         type: "&[u8]"
         direction: in
-        description: Message to authenticate.
+        description: Message the MAC was computed over.
+      - name: mac
+        type: "&[u8]"
+        direction: in
+        description: Received MAC.
+        constraints:
+          size: "the key's MAC length"
     returns:
-      type: "Result<[u8; 16], Error>"
-      description: 16-byte CMAC tag.
+      type: "Result<(), ModeError>"
+      description: Ok when mac is the tag of message under key truncated to the key's MAC length.
       error_variants:
-        - name: NotOperational
-          condition: Module not initialized.
+        - name: Module
+          condition: NotOperational when the module is not Operational; AlgorithmRestricted when the profile forbids CMAC at the key's size.
+        - name: InvalidTagLength
+          condition: mac.len() is not the key's MAC length.
+        - name: TagMismatch
+          condition: mac is not the tag.
+    preconditions:
+      - description: Module must be Operational.
     thread_safety: thread-safe
     security:
-      constant_time: false
+      constant_time: false  # The cmac_verify target of the constant-time harness tools/ct-validation measures that the time of a refused MAC does not depend on where it differs from the tag; nothing else about the comparison's timing is measured.
       handles_secrets: true
       fips_approved: true
       fips_gate: Operational
-
-  - name: cmac_aes256
-    module: oxicrypt-cmac
-    family: cmac-aes
-    description: One-shot AES-256-CMAC.
-    signature: "pub fn cmac_aes256(key: &[u8; 32], msg: &[u8]) -> Result<[u8; 16], Error>"
-    parameters:
-      - name: key
-        type: "&[u8; 32]"
-        direction: in
-        description: 256-bit AES key.
-        constraints:
-          size: 32
-      - name: msg
-        type: "&[u8]"
-        direction: in
-        description: Message to authenticate.
-    returns:
-      type: "Result<[u8; 16], Error>"
-      description: 16-byte CMAC tag.
-      error_variants:
-        - name: NotOperational
-          condition: Module not initialized.
-    thread_safety: thread-safe
-    security:
-      constant_time: false
-      handles_secrets: true
-      fips_approved: true
-      fips_gate: Operational
-
-  - name: cmac_tag
-    module: oxicrypt-cmac
-    description: Generic CMAC over any BlockCipher, without the profile gate and refusing outside SelfTest and Operational; an internal composition helper, callers needing FIPS gating use the typed variants.
-    signature: "pub fn cmac_tag<B: BlockCipher>(cipher: &B, msg: &[u8]) -> Result<[u8; 16], Error>"
-    parameters:
-      - name: cipher
-        type: "&impl BlockCipher"
-        direction: in
-        description: Pre-built AES key schedule.
-      - name: msg
-        type: "&[u8]"
-        direction: in
-        description: Message to authenticate.
-    returns:
-      type: "Result<[u8; 16], Error>"
-      description: 16-byte CMAC tag.
-      error_variants:
-        - name: NotOperational
-          condition: The module is not in SelfTest or Operational.
-    thread_safety: thread-safe
-    security:
-      constant_time: false
-      handles_secrets: true
-      fips_approved: true
-      fips_gate: null
+    example:
+      language: rust
+      code: |
+        let key = oxicrypt_cmac::CmacKey::new(&[0u8; 16], 16)?;
+        let mut mac = [0u8; 16];
+        oxicrypt_cmac::cmac(&key, b"message", &mut mac)?;
+        oxicrypt_cmac::cmac_verify(&key, b"message", &mac)?;
 
   # ── KDF — HKDF (SP 800-56Cr2 / RFC 5869) ─────────────────────────
 
@@ -6884,12 +7863,12 @@ functions:
       - description: The raw ECDH shared secret must not be used directly as a symmetric key; always derive through a KDF (HKDF, SP 800-56Cr2).
         wrong: |
           let key_bytes = compute_shared_secret_p256(&d, &pk)?;
-          let aes_key = Aes256Key::new(&key_bytes)?;  // WRONG — no KDF
+          let aes_key = GcmKey::new(&key_bytes)?;  // WRONG — no KDF
         right: |
           let z = compute_shared_secret_p256(&d, &pk)?;
           let mut okm = [0u8; 32];
           hkdf_sha256(&salt, &z, &info, &mut okm)?;
-          let aes_key = Aes256Key::new(&okm)?;
+          let aes_key = GcmKey::new(&okm)?;
 
   - name: compute_shared_secret_p384
     module: oxicrypt-ecdh
@@ -7058,12 +8037,12 @@ functions:
       - description: The raw DH shared secret must not be used directly as a symmetric key; always derive through a KDF (HKDF, SP 800-56Cr2).
         wrong: |
           let z = compute_shared_secret_3072(&x, &y)?;
-          let aes_key = Aes256Key::new(&z[..32])?;  // WRONG — no KDF
+          let aes_key = GcmKey::new(&z[..32])?;  // WRONG — no KDF
         right: |
           let z = compute_shared_secret_3072(&x, &y)?;
           let mut okm = [0u8; 32];
           hkdf_sha256(&salt, &z, &info, &mut okm)?;
-          let aes_key = Aes256Key::new(&okm)?;
+          let aes_key = GcmKey::new(&okm)?;
 
   - name: generate_keypair_3072
     module: oxicrypt-dh
@@ -10320,45 +11299,53 @@ functions:
         - name: InvalidInput
           condition: "out_len exceeds 65535 or 255 hash blocks, the label is empty or longer than 249 bytes, or the context is longer than 255 bytes (RFC 8446 §7.1); out is zeroized."
 
-  # AES-256-GCM with opaque OxiAes256Key handle; one-shot only.
+  # AES modes: one opaque key handle type per mode, built from 16, 24 or 32 key bytes.
 
-  - name: oxi_aes256_new
+  - name: oxi_aes_gcm_key_new
     module: oxicrypt-ffi
-    description: Allocate a new AES-256 key handle from raw 32-byte key material, writing an owned OxiAes256Key pointer through out_handle; the caller MUST release it with oxi_aes256_free.
-    signature: "int oxi_aes256_new(OxiAes256Key **out_handle, const uint8_t *key)"
+    description: "Constructs an AES-GCM key handle from key_len bytes of key material with a count of 0 and a limit of 2^32 encryptions, writing it through out for release with oxi_aes_gcm_key_free."
+    signature: "int oxi_aes_gcm_key_new(const uint8_t *key, uintptr_t key_len, OxiAesGcmKey **out)"
     parameters:
-      - name: out_handle
-        type: "OxiAes256Key **"
-        direction: out
-        description: "Receives the heap-allocated handle pointer on success."
       - name: key
         type: "const uint8_t *"
         direction: in
-        description: "32-byte AES-256 key material."
+        description: "key_len bytes of key material."
+      - name: key_len
+        type: "uintptr_t"
+        direction: in
+        description: "16, 24 or 32."
+      - name: out
+        type: "OxiAesGcmKey **"
+        direction: out
+        description: "Receives the handle on success."
     returns:
       type: int
       description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
       error_variants:
         - name: NullPointer
-          condition: A pointer argument that the call requires was NULL.
+          condition: "A required pointer was NULL, or a pointer was NULL with a non-zero length."
         - name: NotOperational
-          condition: oxi_init has not completed successfully, or the module has entered the terminal Error state.
+          condition: "oxi_init has not completed successfully, or the module has entered the terminal Error state."
+        - name: InvalidInput
+          condition: "key_len is not 16, 24 or 32, a tag or MAC length or count is outside its range, or out overlaps key."
         - name: AlgorithmRestricted
-          condition: The active algorithm profile does not permit this service.
+          condition: "The active algorithm profile does not permit this service at the key's size."
+        - name: Internal
+          condition: "The module could not allocate the handle; *out is unchanged."
     security:
       constant_time: false
       handles_secrets: true
       fips_approved: true
 
-  - name: oxi_aes256_free
+  - name: oxi_aes_gcm_key_free
     module: oxicrypt-ffi
-    description: Free an AES-256 key handle; NULL-safe.
-    signature: "void oxi_aes256_free(OxiAes256Key *handle)"
+    description: "Frees an AES-GCM key handle after zeroizing its key material, and frees nothing for NULL or a handle of another mode, which stays live to be freed by its own mode's _key_free."
+    signature: "void oxi_aes_gcm_key_free(OxiAesGcmKey *key)"
     parameters:
-      - name: handle
-        type: "OxiAes256Key *"
+      - name: key
+        type: "OxiAesGcmKey *"
         direction: in
-        description: "Handle from oxi_aes256_new, or NULL."
+        description: "Handle from oxi_aes_gcm_key_new, or NULL."
     returns:
       type: void
     security:
@@ -10366,554 +11353,1280 @@ functions:
       handles_secrets: true
       fips_approved: true
 
-  - name: oxi_aes256_gcm_encrypt
+  - name: oxi_aes_gcm_key_new_with_count
     module: oxicrypt-ffi
-    description: AES-256-GCM authenticated encryption (one-shot); iv = 12 bytes, ciphertext >= pt_len bytes, tag = 16 bytes.
-    signature: >-
-      int oxi_aes256_gcm_encrypt(const OxiAes256Key *key,
-      const uint8_t *iv, const uint8_t *aad, size_t aad_len,
-      const uint8_t *plaintext, size_t pt_len,
-      uint8_t *ciphertext, uint8_t *tag)
+    description: "Constructs an AES-GCM key handle with its encryption count preloaded to used, at most 2^32, as read from oxi_aes_gcm_key_invocations on an earlier instance of the same key bytes."
+    signature: "int oxi_aes_gcm_key_new_with_count(const uint8_t *key, uintptr_t key_len, uint64_t used, OxiAesGcmKey **out)"
     parameters:
       - name: key
-        type: const OxiAes256Key *
+        type: "const uint8_t *"
         direction: in
-        description: Live handle from oxi_aes256_new
-      - name: iv
-        type: const uint8_t *
+        description: "key_len bytes of key material."
+      - name: key_len
+        type: "uintptr_t"
         direction: in
-        description: 12-byte nonce
-      - name: aad
-        type: const uint8_t *
+        description: "16, 24 or 32."
+      - name: used
+        type: "uint64_t"
         direction: in
-      - name: aad_len
-        type: size_t
-        direction: in
-      - name: plaintext
-        type: const uint8_t *
-        direction: in
-      - name: pt_len
-        type: size_t
-        direction: in
-      - name: ciphertext
-        type: uint8_t *
+      - name: out
+        type: "OxiAesGcmKey **"
         direction: out
-        description: ">= pt_len bytes"
-      - name: tag
-        type: uint8_t *
-        direction: out
-        description: 16-byte tag
+        description: "Receives the handle on success."
     returns:
       type: int
       description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
       error_variants:
         - name: NullPointer
-          condition: A pointer argument that the call requires was NULL.
-        - name: InvalidIvLength
-          condition: The supplied IV length is not the length this mode requires.
+          condition: "A required pointer was NULL, or a pointer was NULL with a non-zero length."
+        - name: NotOperational
+          condition: "oxi_init has not completed successfully, or the module has entered the terminal Error state."
+        - name: InvalidInput
+          condition: "key_len is not 16, 24 or 32, a tag or MAC length or count is outside its range, or out overlaps key."
         - name: AlgorithmRestricted
-          condition: The active algorithm profile does not permit this service.
+          condition: "The active algorithm profile does not permit this service at the key's size."
+        - name: Internal
+          condition: "The module could not allocate the handle; *out is unchanged."
     security:
       constant_time: false
       handles_secrets: true
       fips_approved: true
 
-  - name: oxi_aes256_gcm_decrypt
+  - name: oxi_aes_gcm_key_new_with_limit
     module: oxicrypt-ffi
-    description: AES-256-GCM authenticated decryption (one-shot); returns OxiResult::TagMismatch (=22) on authentication failure, and on any non-Ok return the plaintext buffer is UNDEFINED and MUST NOT be used.
-    signature: >-
-      int oxi_aes256_gcm_decrypt(const OxiAes256Key *key,
-      const uint8_t *iv, const uint8_t *aad, size_t aad_len,
-      const uint8_t *ciphertext, size_t ct_len,
-      uint8_t *plaintext, const uint8_t *tag)
+    description: "Constructs an AES-GCM key handle whose instance permits limit encryptions, from 1 to 2^32, as its share of the 2^32 under the key bytes."
+    signature: "int oxi_aes_gcm_key_new_with_limit(const uint8_t *key, uintptr_t key_len, uint64_t limit, OxiAesGcmKey **out)"
     parameters:
       - name: key
-        type: const OxiAes256Key *
+        type: "const uint8_t *"
         direction: in
-        description: Live handle from oxi_aes256_new
-      - name: iv
-        type: const uint8_t *
+        description: "key_len bytes of key material."
+      - name: key_len
+        type: "uintptr_t"
         direction: in
-        description: 12-byte nonce
-      - name: aad
-        type: const uint8_t *
+        description: "16, 24 or 32."
+      - name: limit
+        type: "uint64_t"
         direction: in
-      - name: aad_len
-        type: size_t
-        direction: in
-      - name: ciphertext
-        type: const uint8_t *
-        direction: in
-      - name: ct_len
-        type: size_t
-        direction: in
-      - name: plaintext
-        type: uint8_t *
+      - name: out
+        type: "OxiAesGcmKey **"
         direction: out
-        description: ">= ct_len bytes; UNDEFINED on non-Ok"
-      - name: tag
-        type: const uint8_t *
-        direction: in
-        description: 16-byte tag
+        description: "Receives the handle on success."
     returns:
       type: int
       description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
       error_variants:
-        - name: TagMismatch
-          condition: The cryptographic verification ran cleanly and the result disagreed with the claimed value.
         - name: NullPointer
-          condition: A pointer argument that the call requires was NULL.
-        - name: InvalidIvLength
-          condition: The supplied IV length is not the length this mode requires.
+          condition: "A required pointer was NULL, or a pointer was NULL with a non-zero length."
+        - name: NotOperational
+          condition: "oxi_init has not completed successfully, or the module has entered the terminal Error state."
+        - name: InvalidInput
+          condition: "key_len is not 16, 24 or 32, a tag or MAC length or count is outside its range, or out overlaps key."
         - name: AlgorithmRestricted
-          condition: The active algorithm profile does not permit this service.
+          condition: "The active algorithm profile does not permit this service at the key's size."
+        - name: Internal
+          condition: "The module could not allocate the handle; *out is unchanged."
+    security:
+      constant_time: false
+      handles_secrets: true
+      fips_approved: true
+
+  - name: oxi_aes_gcm_key_invocations
+    module: oxicrypt-ffi
+    description: "Writes to out the number of encryptions reserved under the AES-GCM key handle, including any preloaded count."
+    signature: "int oxi_aes_gcm_key_invocations(const OxiAesGcmKey *key, uint64_t *out)"
+    parameters:
+      - name: key
+        type: "const OxiAesGcmKey *"
+        direction: in
+        description: "Live OxiAesGcmKey handle."
+      - name: out
+        type: "uint64_t *"
+        direction: out
+        description: "Receives the count."
+    returns:
+      type: int
+      description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
+      error_variants:
+        - name: NullPointer
+          condition: "A required pointer was NULL, or a pointer was NULL with a non-zero length."
+        - name: NotOperational
+          condition: "oxi_init has not completed successfully, or the module has entered the terminal Error state."
+        - name: InvalidInput
+          condition: "The handle is of another mode, a length exceeds isize::MAX or wraps the address space, or a writable range overlaps another range or a handle."
+    security:
+      constant_time: false
+      handles_secrets: false
+      fips_approved: true
+
+  - name: oxi_aes_ccm_key_new
+    module: oxicrypt-ffi
+    description: "Constructs an AES-CCM key handle from key_len bytes of key material with a tag length of tag_len bytes fixed for the key, writing it through out for release with oxi_aes_ccm_key_free."
+    signature: "int oxi_aes_ccm_key_new(const uint8_t *key, uintptr_t key_len, uintptr_t tag_len, OxiAesCcmKey **out)"
+    parameters:
+      - name: key
+        type: "const uint8_t *"
+        direction: in
+        description: "key_len bytes of key material."
+      - name: key_len
+        type: "uintptr_t"
+        direction: in
+        description: "16, 24 or 32."
+      - name: tag_len
+        type: "uintptr_t"
+        direction: in
+        description: "8, 10, 12, 14 or 16."
+      - name: out
+        type: "OxiAesCcmKey **"
+        direction: out
+        description: "Receives the handle on success."
+    returns:
+      type: int
+      description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
+      error_variants:
+        - name: NullPointer
+          condition: "A required pointer was NULL, or a pointer was NULL with a non-zero length."
+        - name: NotOperational
+          condition: "oxi_init has not completed successfully, or the module has entered the terminal Error state."
+        - name: InvalidInput
+          condition: "key_len is not 16, 24 or 32, a tag or MAC length or count is outside its range, or out overlaps key."
+        - name: AlgorithmRestricted
+          condition: "The active algorithm profile does not permit this service at the key's size."
+        - name: Internal
+          condition: "The module could not allocate the handle; *out is unchanged."
+    security:
+      constant_time: false
+      handles_secrets: true
+      fips_approved: true
+
+  - name: oxi_aes_ccm_key_free
+    module: oxicrypt-ffi
+    description: "Frees an AES-CCM key handle after zeroizing its key material, and frees nothing for NULL or a handle of another mode, which stays live to be freed by its own mode's _key_free."
+    signature: "void oxi_aes_ccm_key_free(OxiAesCcmKey *key)"
+    parameters:
+      - name: key
+        type: "OxiAesCcmKey *"
+        direction: in
+        description: "Handle from oxi_aes_ccm_key_new, or NULL."
+    returns:
+      type: void
+    security:
+      constant_time: false
+      handles_secrets: true
+      fips_approved: true
+
+  - name: oxi_aes_ccm_key_new_with_count
+    module: oxicrypt-ffi
+    description: "Constructs an AES-CCM key handle with its block-cipher invocation count preloaded to used, at most 2^61, as read from oxi_aes_ccm_key_invocations on an earlier instance of the same key bytes."
+    signature: "int oxi_aes_ccm_key_new_with_count(const uint8_t *key, uintptr_t key_len, uintptr_t tag_len, uint64_t used, OxiAesCcmKey **out)"
+    parameters:
+      - name: key
+        type: "const uint8_t *"
+        direction: in
+        description: "key_len bytes of key material."
+      - name: key_len
+        type: "uintptr_t"
+        direction: in
+        description: "16, 24 or 32."
+      - name: tag_len
+        type: "uintptr_t"
+        direction: in
+        description: "8, 10, 12, 14 or 16."
+      - name: used
+        type: "uint64_t"
+        direction: in
+      - name: out
+        type: "OxiAesCcmKey **"
+        direction: out
+        description: "Receives the handle on success."
+    returns:
+      type: int
+      description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
+      error_variants:
+        - name: NullPointer
+          condition: "A required pointer was NULL, or a pointer was NULL with a non-zero length."
+        - name: NotOperational
+          condition: "oxi_init has not completed successfully, or the module has entered the terminal Error state."
+        - name: InvalidInput
+          condition: "key_len is not 16, 24 or 32, a tag or MAC length or count is outside its range, or out overlaps key."
+        - name: AlgorithmRestricted
+          condition: "The active algorithm profile does not permit this service at the key's size."
+        - name: Internal
+          condition: "The module could not allocate the handle; *out is unchanged."
+    security:
+      constant_time: false
+      handles_secrets: true
+      fips_approved: true
+
+  - name: oxi_aes_ccm_key_invocations
+    module: oxicrypt-ffi
+    description: "Writes to out the number of block-cipher invocations reserved under the AES-CCM key handle, including any preloaded count."
+    signature: "int oxi_aes_ccm_key_invocations(const OxiAesCcmKey *key, uint64_t *out)"
+    parameters:
+      - name: key
+        type: "const OxiAesCcmKey *"
+        direction: in
+        description: "Live OxiAesCcmKey handle."
+      - name: out
+        type: "uint64_t *"
+        direction: out
+        description: "Receives the count."
+    returns:
+      type: int
+      description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
+      error_variants:
+        - name: NullPointer
+          condition: "A required pointer was NULL, or a pointer was NULL with a non-zero length."
+        - name: NotOperational
+          condition: "oxi_init has not completed successfully, or the module has entered the terminal Error state."
+        - name: InvalidInput
+          condition: "The handle is of another mode, a length exceeds isize::MAX or wraps the address space, or a writable range overlaps another range or a handle."
+    security:
+      constant_time: false
+      handles_secrets: false
+      fips_approved: true
+
+  - name: oxi_aes_cbc_key_new
+    module: oxicrypt-ffi
+    description: "Constructs an AES-CBC key handle from key_len bytes of key material, writing it through out for release with oxi_aes_cbc_key_free."
+    signature: "int oxi_aes_cbc_key_new(const uint8_t *key, uintptr_t key_len, OxiAesCbcKey **out)"
+    parameters:
+      - name: key
+        type: "const uint8_t *"
+        direction: in
+        description: "key_len bytes of key material."
+      - name: key_len
+        type: "uintptr_t"
+        direction: in
+        description: "16, 24 or 32."
+      - name: out
+        type: "OxiAesCbcKey **"
+        direction: out
+        description: "Receives the handle on success."
+    returns:
+      type: int
+      description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
+      error_variants:
+        - name: NullPointer
+          condition: "A required pointer was NULL, or a pointer was NULL with a non-zero length."
+        - name: NotOperational
+          condition: "oxi_init has not completed successfully, or the module has entered the terminal Error state."
+        - name: InvalidInput
+          condition: "key_len is not 16, 24 or 32, a tag or MAC length or count is outside its range, or out overlaps key."
+        - name: AlgorithmRestricted
+          condition: "The active algorithm profile does not permit this service at the key's size."
+        - name: Internal
+          condition: "The module could not allocate the handle; *out is unchanged."
+    security:
+      constant_time: false
+      handles_secrets: true
+      fips_approved: true
+
+  - name: oxi_aes_cbc_key_free
+    module: oxicrypt-ffi
+    description: "Frees an AES-CBC key handle after zeroizing its key material, and frees nothing for NULL or a handle of another mode, which stays live to be freed by its own mode's _key_free."
+    signature: "void oxi_aes_cbc_key_free(OxiAesCbcKey *key)"
+    parameters:
+      - name: key
+        type: "OxiAesCbcKey *"
+        direction: in
+        description: "Handle from oxi_aes_cbc_key_new, or NULL."
+    returns:
+      type: void
+    security:
+      constant_time: false
+      handles_secrets: true
+      fips_approved: true
+
+  - name: oxi_aes_ctr_key_new
+    module: oxicrypt-ffi
+    description: "Constructs an AES-CTR key handle from key_len bytes of key material, writing it through out for release with oxi_aes_ctr_key_free."
+    signature: "int oxi_aes_ctr_key_new(const uint8_t *key, uintptr_t key_len, OxiAesCtrKey **out)"
+    parameters:
+      - name: key
+        type: "const uint8_t *"
+        direction: in
+        description: "key_len bytes of key material."
+      - name: key_len
+        type: "uintptr_t"
+        direction: in
+        description: "16, 24 or 32."
+      - name: out
+        type: "OxiAesCtrKey **"
+        direction: out
+        description: "Receives the handle on success."
+    returns:
+      type: int
+      description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
+      error_variants:
+        - name: NullPointer
+          condition: "A required pointer was NULL, or a pointer was NULL with a non-zero length."
+        - name: NotOperational
+          condition: "oxi_init has not completed successfully, or the module has entered the terminal Error state."
+        - name: InvalidInput
+          condition: "key_len is not 16, 24 or 32, a tag or MAC length or count is outside its range, or out overlaps key."
+        - name: AlgorithmRestricted
+          condition: "The active algorithm profile does not permit this service at the key's size."
+        - name: Internal
+          condition: "The module could not allocate the handle; *out is unchanged."
+    security:
+      constant_time: false
+      handles_secrets: true
+      fips_approved: true
+
+  - name: oxi_aes_ctr_key_free
+    module: oxicrypt-ffi
+    description: "Frees an AES-CTR key handle after zeroizing its key material, and frees nothing for NULL or a handle of another mode, which stays live to be freed by its own mode's _key_free."
+    signature: "void oxi_aes_ctr_key_free(OxiAesCtrKey *key)"
+    parameters:
+      - name: key
+        type: "OxiAesCtrKey *"
+        direction: in
+        description: "Handle from oxi_aes_ctr_key_new, or NULL."
+    returns:
+      type: void
+    security:
+      constant_time: false
+      handles_secrets: true
+      fips_approved: true
+
+  - name: oxi_aes_kw_key_new
+    module: oxicrypt-ffi
+    description: "Constructs an AES key-wrap (KW and KWP, forward and inverse cipher) key handle from key_len bytes of key material, writing it through out for release with oxi_aes_kw_key_free."
+    signature: "int oxi_aes_kw_key_new(const uint8_t *key, uintptr_t key_len, OxiAesKwKey **out)"
+    parameters:
+      - name: key
+        type: "const uint8_t *"
+        direction: in
+        description: "key_len bytes of key material."
+      - name: key_len
+        type: "uintptr_t"
+        direction: in
+        description: "16, 24 or 32."
+      - name: out
+        type: "OxiAesKwKey **"
+        direction: out
+        description: "Receives the handle on success."
+    returns:
+      type: int
+      description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
+      error_variants:
+        - name: NullPointer
+          condition: "A required pointer was NULL, or a pointer was NULL with a non-zero length."
+        - name: NotOperational
+          condition: "oxi_init has not completed successfully, or the module has entered the terminal Error state."
+        - name: InvalidInput
+          condition: "key_len is not 16, 24 or 32, a tag or MAC length or count is outside its range, or out overlaps key."
+        - name: AlgorithmRestricted
+          condition: "The active algorithm profile does not permit this service at the key's size."
+        - name: Internal
+          condition: "The module could not allocate the handle; *out is unchanged."
+    security:
+      constant_time: false
+      handles_secrets: true
+      fips_approved: true
+
+  - name: oxi_aes_kw_key_free
+    module: oxicrypt-ffi
+    description: "Frees an AES key-wrap (KW and KWP, forward and inverse cipher) key handle after zeroizing its key material, and frees nothing for NULL or a handle of another mode, which stays live to be freed by its own mode's _key_free."
+    signature: "void oxi_aes_kw_key_free(OxiAesKwKey *key)"
+    parameters:
+      - name: key
+        type: "OxiAesKwKey *"
+        direction: in
+        description: "Handle from oxi_aes_kw_key_new, or NULL."
+    returns:
+      type: void
+    security:
+      constant_time: false
+      handles_secrets: true
+      fips_approved: true
+
+  - name: oxi_aes_cmac_key_new
+    module: oxicrypt-ffi
+    description: "Constructs an CMAC key handle from key_len bytes of key material with a MAC length of mac_len bytes fixed for the key, writing it through out for release with oxi_aes_cmac_key_free."
+    signature: "int oxi_aes_cmac_key_new(const uint8_t *key, uintptr_t key_len, uintptr_t mac_len, OxiAesCmacKey **out)"
+    parameters:
+      - name: key
+        type: "const uint8_t *"
+        direction: in
+        description: "key_len bytes of key material."
+      - name: key_len
+        type: "uintptr_t"
+        direction: in
+        description: "16, 24 or 32."
+      - name: mac_len
+        type: "uintptr_t"
+        direction: in
+        description: "8 to 16."
+      - name: out
+        type: "OxiAesCmacKey **"
+        direction: out
+        description: "Receives the handle on success."
+    returns:
+      type: int
+      description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
+      error_variants:
+        - name: NullPointer
+          condition: "A required pointer was NULL, or a pointer was NULL with a non-zero length."
+        - name: NotOperational
+          condition: "oxi_init has not completed successfully, or the module has entered the terminal Error state."
+        - name: InvalidInput
+          condition: "key_len is not 16, 24 or 32, a tag or MAC length or count is outside its range, or out overlaps key."
+        - name: AlgorithmRestricted
+          condition: "The active algorithm profile does not permit this service at the key's size."
+        - name: Internal
+          condition: "The module could not allocate the handle; *out is unchanged."
+    security:
+      constant_time: false
+      handles_secrets: true
+      fips_approved: true
+
+  - name: oxi_aes_cmac_key_free
+    module: oxicrypt-ffi
+    description: "Frees a CMAC key handle after zeroizing its key material, and frees nothing for NULL or a handle of another mode, which stays live to be freed by its own mode's _key_free."
+    signature: "void oxi_aes_cmac_key_free(OxiAesCmacKey *key)"
+    parameters:
+      - name: key
+        type: "OxiAesCmacKey *"
+        direction: in
+        description: "Handle from oxi_aes_cmac_key_new, or NULL."
+    returns:
+      type: void
+    security:
+      constant_time: false
+      handles_secrets: true
+      fips_approved: true
+
+  - name: oxi_aes_gcm_seal
+    module: oxicrypt-ffi
+    description: "AES-GCM authenticated encryption (SP 800-38D) under a 96-bit IV the module draws from the caller's DRBG handle, writing the ciphertext, IV and tag only on success."
+    signature: "int oxi_aes_gcm_seal(const OxiAesGcmKey *key, OxiDrbg *drbg, const uint8_t *aad, uintptr_t aad_len, const uint8_t *plaintext, uintptr_t pt_len, uint8_t *ciphertext, uint8_t *iv_out, uint8_t *tag_out)"
+    parameters:
+      - name: key
+        type: "const OxiAesGcmKey *"
+        direction: in
+        description: "Live OxiAesGcmKey handle."
+      - name: drbg
+        type: "OxiDrbg *"
+        direction: in
+        description: "Instantiated DRBG handle the IV is drawn from."
+      - name: aad
+        type: "const uint8_t *"
+        direction: in
+      - name: aad_len
+        type: "uintptr_t"
+        direction: in
+      - name: plaintext
+        type: "const uint8_t *"
+        direction: in
+      - name: pt_len
+        type: "uintptr_t"
+        direction: in
+      - name: ciphertext
+        type: "uint8_t *"
+        direction: out
+        description: "pt_len writable bytes, disjoint from every other range."
+      - name: iv_out
+        type: "uint8_t *"
+        direction: out
+        description: "12 writable bytes."
+      - name: tag_out
+        type: "uint8_t *"
+        direction: out
+        description: "16 writable bytes."
+    returns:
+      type: int
+      description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
+      error_variants:
+        - name: NullPointer
+          condition: "A required pointer was NULL, or a pointer was NULL with a non-zero length."
+        - name: NotOperational
+          condition: "oxi_init has not completed successfully, or the module has entered the terminal Error state."
+        - name: InvalidInput
+          condition: "The handle is of another mode, a length exceeds isize::MAX or wraps the address space, or a writable range overlaps another range or a handle."
+        - name: AlgorithmRestricted
+          condition: "The active algorithm profile does not permit this service at the key's size."
+        - name: Busy
+          condition: "The DRBG handle is in use by another call."
+        - name: Uninstantiated
+          condition: "The DRBG handle was never instantiated."
+        - name: InvalidPayloadLength
+          condition: "The payload length exceeds the mode's bound, or is 0 where the mode requires a positive length."
+        - name: InvalidAadLength
+          condition: "The associated data exceeds the mode's bound."
+        - name: KeyExhausted
+          condition: "The key's invocation count has reached its limit; nothing was written."
+        - name: Internal
+          condition: "The module could not allocate its staging buffer."
     security:
       constant_time: true
       handles_secrets: true
       fips_approved: true
 
-  - name: oxi_aes256_cbc_encrypt
+  - name: oxi_aes_gcm_open
     module: oxicrypt-ffi
-    description: AES-256-CBC encryption (one-shot, SP 800-38A §6.2), confidentiality only; input_len MUST be a positive multiple of 16 (padding is the caller's responsibility), else OxiResult::NotBlockAligned (=20).
-    signature: >-
-      int oxi_aes256_cbc_encrypt(const OxiAes256Key *key,
-      const uint8_t *iv, const uint8_t *input, size_t input_len,
-      uint8_t *output)
+    description: "AES-GCM authenticated decryption (SP 800-38D) that writes the plaintext only once the tag has verified."
+    signature: "int oxi_aes_gcm_open(const OxiAesGcmKey *key, const uint8_t *iv, const uint8_t *aad, uintptr_t aad_len, const uint8_t *ciphertext, uintptr_t ct_len, const uint8_t *tag, uint8_t *plaintext)"
     parameters:
       - name: key
-        type: const OxiAes256Key *
+        type: "const OxiAesGcmKey *"
         direction: in
-        description: Live handle from oxi_aes256_new
+        description: "Live OxiAesGcmKey handle."
       - name: iv
-        type: const uint8_t *
+        type: "const uint8_t *"
         direction: in
-        description: 16-byte IV
-      - name: input
-        type: const uint8_t *
+        description: "12 bytes."
+      - name: aad
+        type: "const uint8_t *"
         direction: in
-      - name: input_len
-        type: size_t
+      - name: aad_len
+        type: "uintptr_t"
         direction: in
-        description: Positive multiple of 16
-      - name: output
-        type: uint8_t *
+      - name: ciphertext
+        type: "const uint8_t *"
+        direction: in
+      - name: ct_len
+        type: "uintptr_t"
+        direction: in
+      - name: tag
+        type: "const uint8_t *"
+        direction: in
+        description: "16 bytes."
+      - name: plaintext
+        type: "uint8_t *"
         direction: out
-        description: input_len writable bytes
+        description: "ct_len writable bytes, disjoint from every other range."
+    returns:
+      type: int
+      description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
+      error_variants:
+        - name: TagMismatch
+          condition: "The cryptographic verification ran cleanly and the result disagreed with the claimed value."
+        - name: NullPointer
+          condition: "A required pointer was NULL, or a pointer was NULL with a non-zero length."
+        - name: NotOperational
+          condition: "oxi_init has not completed successfully, or the module has entered the terminal Error state."
+        - name: InvalidInput
+          condition: "The handle is of another mode, a length exceeds isize::MAX or wraps the address space, or a writable range overlaps another range or a handle."
+        - name: AlgorithmRestricted
+          condition: "The active algorithm profile does not permit this service at the key's size."
+        - name: InvalidPayloadLength
+          condition: "The payload length exceeds the mode's bound, or is 0 where the mode requires a positive length."
+        - name: InvalidAadLength
+          condition: "The associated data exceeds the mode's bound."
+        - name: Internal
+          condition: "The module could not allocate its staging buffer."
+    security:
+      constant_time: true
+      handles_secrets: true
+      fips_approved: true
+
+  - name: oxi_aes_ccm_seal
+    module: oxicrypt-ffi
+    description: "AES-CCM authenticated encryption (SP 800-38C) under a caller nonce unique under the key, writing the ciphertext and a tag of the key's tag length only on success."
+    signature: "int oxi_aes_ccm_seal(const OxiAesCcmKey *key, const uint8_t *nonce, uintptr_t nonce_len, const uint8_t *aad, uintptr_t aad_len, const uint8_t *pt, uintptr_t pt_len, uint8_t *ct, uint8_t *tag)"
+    parameters:
+      - name: key
+        type: "const OxiAesCcmKey *"
+        direction: in
+        description: "Live OxiAesCcmKey handle."
+      - name: nonce
+        type: "const uint8_t *"
+        direction: in
+      - name: nonce_len
+        type: "uintptr_t"
+        direction: in
+        description: "7 to 13."
+      - name: aad
+        type: "const uint8_t *"
+        direction: in
+      - name: aad_len
+        type: "uintptr_t"
+        direction: in
+      - name: pt
+        type: "const uint8_t *"
+        direction: in
+      - name: pt_len
+        type: "uintptr_t"
+        direction: in
+      - name: ct
+        type: "uint8_t *"
+        direction: out
+        description: "pt_len writable bytes, disjoint from every other range."
+      - name: tag
+        type: "uint8_t *"
+        direction: out
+        description: "The key's tag length in writable bytes."
     returns:
       type: int
       description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
       error_variants:
         - name: NullPointer
-          condition: A pointer argument that the call requires was NULL.
-        - name: NotBlockAligned
-          condition: The input length is not a multiple of the cipher block size where the mode requires alignment.
-        - name: LengthMismatch
-          condition: The input and output buffer lengths are inconsistent with each other.
+          condition: "A required pointer was NULL, or a pointer was NULL with a non-zero length."
+        - name: NotOperational
+          condition: "oxi_init has not completed successfully, or the module has entered the terminal Error state."
+        - name: InvalidInput
+          condition: "The handle is of another mode, a length exceeds isize::MAX or wraps the address space, or a writable range overlaps another range or a handle."
         - name: AlgorithmRestricted
-          condition: The active algorithm profile does not permit this service.
+          condition: "The active algorithm profile does not permit this service at the key's size."
+        - name: InvalidNonceLength
+          condition: "The nonce length is outside 7 to 13 bytes."
+        - name: InvalidPayloadLength
+          condition: "The payload length exceeds the mode's bound, or is 0 where the mode requires a positive length."
+        - name: InvalidAadLength
+          condition: "The associated data exceeds the mode's bound."
+        - name: KeyExhausted
+          condition: "The key's invocation count has reached its limit; nothing was written."
+        - name: Internal
+          condition: "The module could not allocate its staging buffer."
     security:
-      constant_time: false
+      constant_time: true
       handles_secrets: true
       fips_approved: true
 
-  - name: oxi_aes256_cbc_decrypt
+  - name: oxi_aes_ccm_open
     module: oxicrypt-ffi
-    description: AES-256-CBC decryption (one-shot, SP 800-38A §6.2); the ciphertext must be block-aligned, the output buffer at least its length, and no authentication is performed.
-    signature: >-
-      int oxi_aes256_cbc_decrypt(const OxiAes256Key *key,
-      const uint8_t *iv, const uint8_t *input, size_t input_len,
-      uint8_t *output)
+    description: "AES-CCM authenticated decryption (SP 800-38C) that returns TagMismatch for every invalid input and writes the plaintext only once the tag has verified."
+    signature: "int oxi_aes_ccm_open(const OxiAesCcmKey *key, const uint8_t *nonce, uintptr_t nonce_len, const uint8_t *aad, uintptr_t aad_len, const uint8_t *ct, uintptr_t ct_len, const uint8_t *tag, uint8_t *pt)"
     parameters:
       - name: key
-        type: const OxiAes256Key *
+        type: "const OxiAesCcmKey *"
         direction: in
-        description: Live handle from oxi_aes256_new
-      - name: iv
-        type: const uint8_t *
+        description: "Live OxiAesCcmKey handle."
+      - name: nonce
+        type: "const uint8_t *"
         direction: in
-        description: 16-byte IV
-      - name: input
-        type: const uint8_t *
+      - name: nonce_len
+        type: "uintptr_t"
         direction: in
-      - name: input_len
-        type: size_t
+      - name: aad
+        type: "const uint8_t *"
         direction: in
-        description: Positive multiple of 16
-      - name: output
-        type: uint8_t *
+      - name: aad_len
+        type: "uintptr_t"
+        direction: in
+      - name: ct
+        type: "const uint8_t *"
+        direction: in
+        description: "Ciphertext without its tag."
+      - name: ct_len
+        type: "uintptr_t"
+        direction: in
+      - name: tag
+        type: "const uint8_t *"
+        direction: in
+        description: "The key's tag length in bytes."
+      - name: pt
+        type: "uint8_t *"
         direction: out
-        description: input_len writable bytes
+        description: "ct_len writable bytes, disjoint from every other range."
     returns:
       type: int
       description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
       error_variants:
+        - name: TagMismatch
+          condition: "The cryptographic verification ran cleanly and the result disagreed with the claimed value."
         - name: NullPointer
-          condition: A pointer argument that the call requires was NULL.
-        - name: NotBlockAligned
-          condition: The input length is not a multiple of the cipher block size where the mode requires alignment.
-        - name: LengthMismatch
-          condition: The input and output buffer lengths are inconsistent with each other.
+          condition: "A required pointer was NULL, or a pointer was NULL with a non-zero length."
+        - name: NotOperational
+          condition: "oxi_init has not completed successfully, or the module has entered the terminal Error state."
+        - name: InvalidInput
+          condition: "The handle is of another mode, a length exceeds isize::MAX or wraps the address space, or a writable range overlaps another range or a handle."
         - name: AlgorithmRestricted
-          condition: The active algorithm profile does not permit this service.
+          condition: "The active algorithm profile does not permit this service at the key's size."
+        - name: KeyExhausted
+          condition: "The key's invocation count has reached its limit; nothing was written."
+        - name: Internal
+          condition: "The module could not allocate its staging buffer."
     security:
-      constant_time: false
+      constant_time: true
       handles_secrets: true
       fips_approved: true
 
-  - name: oxi_aes256_ctr
+  - name: oxi_aes_cbc_encrypt
     module: oxicrypt-ffi
-    description: AES-256-CTR XOR (one-shot, SP 800-38A §6.5), one entry point for both directions; icb is the full 16-byte initial counter block, and (key, icb) MUST NOT be reused.
-    signature: >-
-      int oxi_aes256_ctr(const OxiAes256Key *key,
-      const uint8_t *icb, const uint8_t *input, size_t len,
-      uint8_t *output)
+    description: "AES-CBC encryption (SP 800-38A §6.2) of a positive multiple of 16 bytes under an unpredictable 16-byte IV, writing out only on success."
+    signature: "int oxi_aes_cbc_encrypt(const OxiAesCbcKey *key, const uint8_t *iv, const uint8_t *in, uintptr_t len, uint8_t *out)"
     parameters:
       - name: key
-        type: const OxiAes256Key *
+        type: "const OxiAesCbcKey *"
         direction: in
-        description: Live handle from oxi_aes256_new
-      - name: icb
-        type: const uint8_t *
+        description: "Live OxiAesCbcKey handle."
+      - name: iv
+        type: "const uint8_t *"
         direction: in
-        description: 16-byte initial counter block
-      - name: input
-        type: const uint8_t *
+        description: "16 bytes."
+      - name: in
+        type: "const uint8_t *"
         direction: in
       - name: len
-        type: size_t
+        type: "uintptr_t"
         direction: in
-        description: Any length
-      - name: output
-        type: uint8_t *
-        direction: out
-        description: len writable bytes
-    returns:
-      type: int
-      description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
-      error_variants:
-        - name: NullPointer
-          condition: A pointer argument that the call requires was NULL.
-        - name: AlgorithmRestricted
-          condition: The active algorithm profile does not permit this service.
-    security:
-      constant_time: false
-      handles_secrets: true
-      fips_approved: true
-
-  - name: oxi_aes256_ccm_encrypt
-    module: oxicrypt-ffi
-    description: AES-256-CCM authenticated encryption (one-shot, SP 800-38C); nonce length 7..=13, tag length in {4,6,8,10,12,14,16}, output buffer pt_len + tlen bytes laid out as C || T. aad/plaintext may be NULL when their length is 0.
-    signature: >-
-      int oxi_aes256_ccm_encrypt(const OxiAes256Key *key,
-      const uint8_t *nonce, size_t nonce_len,
-      const uint8_t *aad, size_t aad_len,
-      const uint8_t *plaintext, size_t pt_len,
-      size_t tlen, uint8_t *out)
-    parameters:
-      - name: key
-        type: const OxiAes256Key *
-        direction: in
-        description: Live handle from oxi_aes256_new
-      - name: nonce
-        type: const uint8_t *
-        direction: in
-      - name: nonce_len
-        type: size_t
-        direction: in
-        description: 7..=13 per SP 800-38C
-      - name: aad
-        type: const uint8_t *
-        direction: in
-      - name: aad_len
-        type: size_t
-        direction: in
-      - name: plaintext
-        type: const uint8_t *
-        direction: in
-      - name: pt_len
-        type: size_t
-        direction: in
-      - name: tlen
-        type: size_t
-        direction: in
-        description: "Tag length: {4,6,8,10,12,14,16}"
       - name: out
-        type: uint8_t *
+        type: "uint8_t *"
         direction: out
-        description: pt_len + tlen writable bytes; layout C || T
+        description: "len writable bytes, disjoint from in, iv and the handle."
     returns:
       type: int
       description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
       error_variants:
         - name: NullPointer
-          condition: A pointer argument that the call requires was NULL.
-        - name: InvalidIvLength
-          condition: The supplied IV length is not the length this mode requires.
-        - name: LengthMismatch
-          condition: The input and output buffer lengths are inconsistent with each other.
+          condition: "A required pointer was NULL, or a pointer was NULL with a non-zero length."
+        - name: NotOperational
+          condition: "oxi_init has not completed successfully, or the module has entered the terminal Error state."
+        - name: InvalidInput
+          condition: "The handle is of another mode, a length exceeds isize::MAX or wraps the address space, or a writable range overlaps another range or a handle."
         - name: AlgorithmRestricted
-          condition: The active algorithm profile does not permit this service.
-    security:
-      constant_time: false
-      handles_secrets: true
-      fips_approved: true
-
-  - name: oxi_aes256_ccm_decrypt
-    module: oxicrypt-ffi
-    description: AES-256-CCM authenticated decryption (one-shot, SP 800-38C); ciphertext is the full C || T buffer, recovered plaintext written to out.
-    signature: >-
-      int oxi_aes256_ccm_decrypt(const OxiAes256Key *key,
-      const uint8_t *nonce, size_t nonce_len,
-      const uint8_t *aad, size_t aad_len,
-      const uint8_t *ciphertext, size_t ct_len,
-      size_t tlen, uint8_t *out)
-    parameters:
-      - name: key
-        type: const OxiAes256Key *
-        direction: in
-        description: Live handle from oxi_aes256_new
-      - name: nonce
-        type: const uint8_t *
-        direction: in
-      - name: nonce_len
-        type: size_t
-        direction: in
-        description: 7..=13 per SP 800-38C
-      - name: aad
-        type: const uint8_t *
-        direction: in
-      - name: aad_len
-        type: size_t
-        direction: in
-      - name: ciphertext
-        type: const uint8_t *
-        direction: in
-        description: C || T packed buffer
-      - name: ct_len
-        type: size_t
-        direction: in
-        description: pt_len + tlen
-      - name: tlen
-        type: size_t
-        direction: in
-        description: "Tag length: {4,6,8,10,12,14,16}"
-      - name: out
-        type: uint8_t *
-        direction: out
-        description: ct_len - tlen writable bytes; UNDEFINED on TagMismatch (zeroised by upstream)
-    returns:
-      type: int
-      description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
-      error_variants:
-        - name: TagMismatch
-          condition: The cryptographic verification ran cleanly and the result disagreed with the claimed value.
-        - name: NullPointer
-          condition: A pointer argument that the call requires was NULL.
-        - name: InvalidIvLength
-          condition: The supplied IV length is not the length this mode requires.
-        - name: LengthMismatch
-          condition: The input and output buffer lengths are inconsistent with each other.
-        - name: AlgorithmRestricted
-          condition: The active algorithm profile does not permit this service.
+          condition: "The active algorithm profile does not permit this service at the key's size."
+        - name: NotBlockAligned
+          condition: "The input length is not a multiple of 16."
+        - name: InvalidPayloadLength
+          condition: "The payload length exceeds the mode's bound, or is 0 where the mode requires a positive length."
+        - name: Internal
+          condition: "The module could not allocate its staging buffer."
     security:
       constant_time: true
       handles_secrets: true
       fips_approved: true
 
-  - name: oxi_aes256_cmac
+  - name: oxi_aes_cbc_decrypt
     module: oxicrypt-ffi
-    description: CMAC-AES-256 (one-shot, SP 800-38B) over an arbitrary-length message, tag always 16 bytes; gated on Service::CmacAes256. msg may be NULL when msg_len == 0.
-    signature: >-
-      int oxi_aes256_cmac(const OxiAes256Key *key,
-      const uint8_t *msg, size_t msg_len, uint8_t *tag)
+    description: "AES-CBC decryption (SP 800-38A §6.2) of a positive multiple of 16 bytes, writing out only on success."
+    signature: "int oxi_aes_cbc_decrypt(const OxiAesCbcKey *key, const uint8_t *iv, const uint8_t *in, uintptr_t len, uint8_t *out)"
     parameters:
       - name: key
-        type: const OxiAes256Key *
+        type: "const OxiAesCbcKey *"
         direction: in
-        description: Live handle from oxi_aes256_new
+        description: "Live OxiAesCbcKey handle."
+      - name: iv
+        type: "const uint8_t *"
+        direction: in
+        description: "16 bytes."
+      - name: in
+        type: "const uint8_t *"
+        direction: in
+      - name: len
+        type: "uintptr_t"
+        direction: in
+      - name: out
+        type: "uint8_t *"
+        direction: out
+        description: "len writable bytes, disjoint from in, iv and the handle."
+    returns:
+      type: int
+      description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
+      error_variants:
+        - name: NullPointer
+          condition: "A required pointer was NULL, or a pointer was NULL with a non-zero length."
+        - name: NotOperational
+          condition: "oxi_init has not completed successfully, or the module has entered the terminal Error state."
+        - name: InvalidInput
+          condition: "The handle is of another mode, a length exceeds isize::MAX or wraps the address space, or a writable range overlaps another range or a handle."
+        - name: AlgorithmRestricted
+          condition: "The active algorithm profile does not permit this service at the key's size."
+        - name: NotBlockAligned
+          condition: "The input length is not a multiple of 16."
+        - name: InvalidPayloadLength
+          condition: "The payload length exceeds the mode's bound, or is 0 where the mode requires a positive length."
+        - name: Internal
+          condition: "The module could not allocate its staging buffer."
+    security:
+      constant_time: true
+      handles_secrets: true
+      fips_approved: true
+
+  - name: oxi_aes_ctr
+    module: oxicrypt-ffi
+    description: "AES-CTR (SP 800-38A §6.5) XOR of len bytes with the keystream from a 16-byte initial counter block incremented as a 128-bit integer, writing out only on success."
+    signature: "int oxi_aes_ctr(const OxiAesCtrKey *key, const uint8_t *counter, const uint8_t *in, uintptr_t len, uint8_t *out)"
+    parameters:
+      - name: key
+        type: "const OxiAesCtrKey *"
+        direction: in
+        description: "Live OxiAesCtrKey handle."
+      - name: counter
+        type: "const uint8_t *"
+        direction: in
+        description: "16 bytes."
+      - name: in
+        type: "const uint8_t *"
+        direction: in
+      - name: len
+        type: "uintptr_t"
+        direction: in
+      - name: out
+        type: "uint8_t *"
+        direction: out
+        description: "len writable bytes, disjoint from in, counter and the handle."
+    returns:
+      type: int
+      description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
+      error_variants:
+        - name: NullPointer
+          condition: "A required pointer was NULL, or a pointer was NULL with a non-zero length."
+        - name: NotOperational
+          condition: "oxi_init has not completed successfully, or the module has entered the terminal Error state."
+        - name: InvalidInput
+          condition: "The handle is of another mode, a length exceeds isize::MAX or wraps the address space, or a writable range overlaps another range or a handle."
+        - name: AlgorithmRestricted
+          condition: "The active algorithm profile does not permit this service at the key's size."
+        - name: Internal
+          condition: "The module could not allocate its staging buffer."
+    security:
+      constant_time: true
+      handles_secrets: true
+      fips_approved: true
+
+  - name: oxi_aes_kw_wrap
+    module: oxicrypt-ffi
+    description: "AES-KW wrap (SP 800-38F §6.2) of pt_len bytes, a multiple of 8 of at least 16, into pt_len + 8 bytes written only on success."
+    signature: "int oxi_aes_kw_wrap(const OxiAesKwKey *key, const uint8_t *pt, uintptr_t pt_len, uint8_t *out)"
+    parameters:
+      - name: key
+        type: "const OxiAesKwKey *"
+        direction: in
+        description: "Live OxiAesKwKey handle."
+      - name: pt
+        type: "const uint8_t *"
+        direction: in
+      - name: pt_len
+        type: "uintptr_t"
+        direction: in
+      - name: out
+        type: "uint8_t *"
+        direction: out
+        description: "pt_len + 8 writable bytes."
+    returns:
+      type: int
+      description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
+      error_variants:
+        - name: NullPointer
+          condition: "A required pointer was NULL, or a pointer was NULL with a non-zero length."
+        - name: NotOperational
+          condition: "oxi_init has not completed successfully, or the module has entered the terminal Error state."
+        - name: InvalidInput
+          condition: "The handle is of another mode, a length exceeds isize::MAX or wraps the address space, or a writable range overlaps another range or a handle."
+        - name: AlgorithmRestricted
+          condition: "The active algorithm profile does not permit this service at the key's size."
+        - name: LengthMismatch
+          condition: "A length the mode does not accept."
+        - name: InvalidPayloadLength
+          condition: "The payload length exceeds the mode's bound, or is 0 where the mode requires a positive length."
+        - name: Internal
+          condition: "The module could not allocate its staging buffer."
+    security:
+      constant_time: true
+      handles_secrets: true
+      fips_approved: true
+
+  - name: oxi_aes_kw_unwrap
+    module: oxicrypt-ffi
+    description: "AES-KW unwrap (SP 800-38F §6.2) of ct_len bytes into ct_len - 8 bytes, written to out only once the integrity check value has verified."
+    signature: "int oxi_aes_kw_unwrap(const OxiAesKwKey *key, const uint8_t *ct, uintptr_t ct_len, uint8_t *out)"
+    parameters:
+      - name: key
+        type: "const OxiAesKwKey *"
+        direction: in
+        description: "Live OxiAesKwKey handle."
+      - name: ct
+        type: "const uint8_t *"
+        direction: in
+      - name: ct_len
+        type: "uintptr_t"
+        direction: in
+      - name: out
+        type: "uint8_t *"
+        direction: out
+        description: "ct_len - 8 writable bytes; untouched on any failure."
+    returns:
+      type: int
+      description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
+      error_variants:
+        - name: TagMismatch
+          condition: "The cryptographic verification ran cleanly and the result disagreed with the claimed value."
+        - name: NullPointer
+          condition: "A required pointer was NULL, or a pointer was NULL with a non-zero length."
+        - name: NotOperational
+          condition: "oxi_init has not completed successfully, or the module has entered the terminal Error state."
+        - name: InvalidInput
+          condition: "The handle is of another mode, a length exceeds isize::MAX or wraps the address space, or a writable range overlaps another range or a handle."
+        - name: AlgorithmRestricted
+          condition: "The active algorithm profile does not permit this service at the key's size."
+        - name: LengthMismatch
+          condition: "A length the mode does not accept."
+        - name: InvalidPayloadLength
+          condition: "The payload length exceeds the mode's bound, or is 0 where the mode requires a positive length."
+        - name: Internal
+          condition: "The module could not allocate its staging buffer."
+    security:
+      constant_time: true
+      handles_secrets: true
+      fips_approved: true
+
+  - name: oxi_aes_kwp_wrap
+    module: oxicrypt-ffi
+    description: "AES-KWP wrap (SP 800-38F §6.3) of 1 to 2^32 - 1 bytes, writing the wrapped key to out and its length to written only on success."
+    signature: "int oxi_aes_kwp_wrap(const OxiAesKwKey *key, const uint8_t *pt, uintptr_t pt_len, uint8_t *out, uintptr_t out_cap, uintptr_t *written)"
+    parameters:
+      - name: key
+        type: "const OxiAesKwKey *"
+        direction: in
+        description: "Live OxiAesKwKey handle."
+      - name: pt
+        type: "const uint8_t *"
+        direction: in
+      - name: pt_len
+        type: "uintptr_t"
+        direction: in
+      - name: out
+        type: "uint8_t *"
+        direction: out
+        description: "out_cap writable bytes."
+      - name: out_cap
+        type: "uintptr_t"
+        direction: in
+        description: "At least ((pt_len + 7) / 8) * 8 + 8."
+      - name: written
+        type: "uintptr_t *"
+        direction: out
+        description: "Receives the wrapped length."
+    returns:
+      type: int
+      description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
+      error_variants:
+        - name: BufferTooSmall
+          condition: "out_cap is below the result's length; nothing was written."
+        - name: NullPointer
+          condition: "A required pointer was NULL, or a pointer was NULL with a non-zero length."
+        - name: NotOperational
+          condition: "oxi_init has not completed successfully, or the module has entered the terminal Error state."
+        - name: InvalidInput
+          condition: "The handle is of another mode, a length exceeds isize::MAX or wraps the address space, or a writable range overlaps another range or a handle."
+        - name: AlgorithmRestricted
+          condition: "The active algorithm profile does not permit this service at the key's size."
+        - name: LengthMismatch
+          condition: "A length the mode does not accept."
+        - name: Internal
+          condition: "The module could not allocate its staging buffer."
+    security:
+      constant_time: true
+      handles_secrets: true
+      fips_approved: true
+
+  - name: oxi_aes_kwp_unwrap
+    module: oxicrypt-ffi
+    description: "AES-KWP unwrap (SP 800-38F §6.3), writing the unwrapped key to out and its length to written only once the integrity check value and padding have verified."
+    signature: "int oxi_aes_kwp_unwrap(const OxiAesKwKey *key, const uint8_t *ct, uintptr_t ct_len, uint8_t *out, uintptr_t out_cap, uintptr_t *written)"
+    parameters:
+      - name: key
+        type: "const OxiAesKwKey *"
+        direction: in
+        description: "Live OxiAesKwKey handle."
+      - name: ct
+        type: "const uint8_t *"
+        direction: in
+      - name: ct_len
+        type: "uintptr_t"
+        direction: in
+      - name: out
+        type: "uint8_t *"
+        direction: out
+        description: "out_cap writable bytes; untouched on any failure."
+      - name: out_cap
+        type: "uintptr_t"
+        direction: in
+        description: "At least the unwrapped length."
+      - name: written
+        type: "uintptr_t *"
+        direction: out
+        description: "Receives the unwrapped length; untouched on any failure."
+    returns:
+      type: int
+      description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
+      error_variants:
+        - name: TagMismatch
+          condition: "The cryptographic verification ran cleanly and the result disagreed with the claimed value."
+        - name: BufferTooSmall
+          condition: "out_cap is below the result's length; nothing was written."
+        - name: NullPointer
+          condition: "A required pointer was NULL, or a pointer was NULL with a non-zero length."
+        - name: NotOperational
+          condition: "oxi_init has not completed successfully, or the module has entered the terminal Error state."
+        - name: InvalidInput
+          condition: "The handle is of another mode, a length exceeds isize::MAX or wraps the address space, or a writable range overlaps another range or a handle."
+        - name: AlgorithmRestricted
+          condition: "The active algorithm profile does not permit this service at the key's size."
+        - name: LengthMismatch
+          condition: "A length the mode does not accept."
+        - name: Internal
+          condition: "The module could not allocate its staging buffer."
+    security:
+      constant_time: true
+      handles_secrets: true
+      fips_approved: true
+
+  - name: oxi_aes_kw_wrap_inverse
+    module: oxicrypt-ffi
+    description: "AES-KW wrap with the inverse cipher (SP 800-38F §6.4) (SP 800-38F §6.2) of pt_len bytes, a multiple of 8 of at least 16, into pt_len + 8 bytes written only on success."
+    signature: "int oxi_aes_kw_wrap_inverse(const OxiAesKwKey *key, const uint8_t *pt, uintptr_t pt_len, uint8_t *out)"
+    parameters:
+      - name: key
+        type: "const OxiAesKwKey *"
+        direction: in
+        description: "Live OxiAesKwKey handle."
+      - name: pt
+        type: "const uint8_t *"
+        direction: in
+      - name: pt_len
+        type: "uintptr_t"
+        direction: in
+      - name: out
+        type: "uint8_t *"
+        direction: out
+        description: "pt_len + 8 writable bytes."
+    returns:
+      type: int
+      description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
+      error_variants:
+        - name: NullPointer
+          condition: "A required pointer was NULL, or a pointer was NULL with a non-zero length."
+        - name: NotOperational
+          condition: "oxi_init has not completed successfully, or the module has entered the terminal Error state."
+        - name: InvalidInput
+          condition: "The handle is of another mode, a length exceeds isize::MAX or wraps the address space, or a writable range overlaps another range or a handle."
+        - name: AlgorithmRestricted
+          condition: "The active algorithm profile does not permit this service at the key's size."
+        - name: LengthMismatch
+          condition: "A length the mode does not accept."
+        - name: InvalidPayloadLength
+          condition: "The payload length exceeds the mode's bound, or is 0 where the mode requires a positive length."
+        - name: Internal
+          condition: "The module could not allocate its staging buffer."
+    security:
+      constant_time: true
+      handles_secrets: true
+      fips_approved: true
+
+  - name: oxi_aes_kw_unwrap_inverse
+    module: oxicrypt-ffi
+    description: "AES-KW unwrap with the inverse cipher (SP 800-38F §6.4) (SP 800-38F §6.2) of ct_len bytes into ct_len - 8 bytes, written to out only once the integrity check value has verified."
+    signature: "int oxi_aes_kw_unwrap_inverse(const OxiAesKwKey *key, const uint8_t *ct, uintptr_t ct_len, uint8_t *out)"
+    parameters:
+      - name: key
+        type: "const OxiAesKwKey *"
+        direction: in
+        description: "Live OxiAesKwKey handle."
+      - name: ct
+        type: "const uint8_t *"
+        direction: in
+      - name: ct_len
+        type: "uintptr_t"
+        direction: in
+      - name: out
+        type: "uint8_t *"
+        direction: out
+        description: "ct_len - 8 writable bytes; untouched on any failure."
+    returns:
+      type: int
+      description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
+      error_variants:
+        - name: TagMismatch
+          condition: "The cryptographic verification ran cleanly and the result disagreed with the claimed value."
+        - name: NullPointer
+          condition: "A required pointer was NULL, or a pointer was NULL with a non-zero length."
+        - name: NotOperational
+          condition: "oxi_init has not completed successfully, or the module has entered the terminal Error state."
+        - name: InvalidInput
+          condition: "The handle is of another mode, a length exceeds isize::MAX or wraps the address space, or a writable range overlaps another range or a handle."
+        - name: AlgorithmRestricted
+          condition: "The active algorithm profile does not permit this service at the key's size."
+        - name: LengthMismatch
+          condition: "A length the mode does not accept."
+        - name: InvalidPayloadLength
+          condition: "The payload length exceeds the mode's bound, or is 0 where the mode requires a positive length."
+        - name: Internal
+          condition: "The module could not allocate its staging buffer."
+    security:
+      constant_time: true
+      handles_secrets: true
+      fips_approved: true
+
+  - name: oxi_aes_kwp_wrap_inverse
+    module: oxicrypt-ffi
+    description: "AES-KWP wrap with the inverse cipher (SP 800-38F §6.4) (SP 800-38F §6.3) of 1 to 2^32 - 1 bytes, writing the wrapped key to out and its length to written only on success."
+    signature: "int oxi_aes_kwp_wrap_inverse(const OxiAesKwKey *key, const uint8_t *pt, uintptr_t pt_len, uint8_t *out, uintptr_t out_cap, uintptr_t *written)"
+    parameters:
+      - name: key
+        type: "const OxiAesKwKey *"
+        direction: in
+        description: "Live OxiAesKwKey handle."
+      - name: pt
+        type: "const uint8_t *"
+        direction: in
+      - name: pt_len
+        type: "uintptr_t"
+        direction: in
+      - name: out
+        type: "uint8_t *"
+        direction: out
+        description: "out_cap writable bytes."
+      - name: out_cap
+        type: "uintptr_t"
+        direction: in
+        description: "At least ((pt_len + 7) / 8) * 8 + 8."
+      - name: written
+        type: "uintptr_t *"
+        direction: out
+        description: "Receives the wrapped length."
+    returns:
+      type: int
+      description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
+      error_variants:
+        - name: BufferTooSmall
+          condition: "out_cap is below the result's length; nothing was written."
+        - name: NullPointer
+          condition: "A required pointer was NULL, or a pointer was NULL with a non-zero length."
+        - name: NotOperational
+          condition: "oxi_init has not completed successfully, or the module has entered the terminal Error state."
+        - name: InvalidInput
+          condition: "The handle is of another mode, a length exceeds isize::MAX or wraps the address space, or a writable range overlaps another range or a handle."
+        - name: AlgorithmRestricted
+          condition: "The active algorithm profile does not permit this service at the key's size."
+        - name: LengthMismatch
+          condition: "A length the mode does not accept."
+        - name: Internal
+          condition: "The module could not allocate its staging buffer."
+    security:
+      constant_time: true
+      handles_secrets: true
+      fips_approved: true
+
+  - name: oxi_aes_kwp_unwrap_inverse
+    module: oxicrypt-ffi
+    description: "AES-KWP unwrap with the inverse cipher (SP 800-38F §6.4) (SP 800-38F §6.3), writing the unwrapped key to out and its length to written only once the integrity check value and padding have verified."
+    signature: "int oxi_aes_kwp_unwrap_inverse(const OxiAesKwKey *key, const uint8_t *ct, uintptr_t ct_len, uint8_t *out, uintptr_t out_cap, uintptr_t *written)"
+    parameters:
+      - name: key
+        type: "const OxiAesKwKey *"
+        direction: in
+        description: "Live OxiAesKwKey handle."
+      - name: ct
+        type: "const uint8_t *"
+        direction: in
+      - name: ct_len
+        type: "uintptr_t"
+        direction: in
+      - name: out
+        type: "uint8_t *"
+        direction: out
+        description: "out_cap writable bytes; untouched on any failure."
+      - name: out_cap
+        type: "uintptr_t"
+        direction: in
+        description: "At least the unwrapped length."
+      - name: written
+        type: "uintptr_t *"
+        direction: out
+        description: "Receives the unwrapped length; untouched on any failure."
+    returns:
+      type: int
+      description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
+      error_variants:
+        - name: TagMismatch
+          condition: "The cryptographic verification ran cleanly and the result disagreed with the claimed value."
+        - name: BufferTooSmall
+          condition: "out_cap is below the result's length; nothing was written."
+        - name: NullPointer
+          condition: "A required pointer was NULL, or a pointer was NULL with a non-zero length."
+        - name: NotOperational
+          condition: "oxi_init has not completed successfully, or the module has entered the terminal Error state."
+        - name: InvalidInput
+          condition: "The handle is of another mode, a length exceeds isize::MAX or wraps the address space, or a writable range overlaps another range or a handle."
+        - name: AlgorithmRestricted
+          condition: "The active algorithm profile does not permit this service at the key's size."
+        - name: LengthMismatch
+          condition: "A length the mode does not accept."
+        - name: Internal
+          condition: "The module could not allocate its staging buffer."
+    security:
+      constant_time: true
+      handles_secrets: true
+      fips_approved: true
+
+  - name: oxi_aes_cmac
+    module: oxicrypt-ffi
+    description: "Computes the CMAC (SP 800-38B §6.2) of msg_len bytes into a MAC of the key's MAC length, written only on success."
+    signature: "int oxi_aes_cmac(const OxiAesCmacKey *key, const uint8_t *msg, uintptr_t msg_len, uint8_t *mac)"
+    parameters:
+      - name: key
+        type: "const OxiAesCmacKey *"
+        direction: in
+        description: "Live OxiAesCmacKey handle."
       - name: msg
-        type: const uint8_t *
+        type: "const uint8_t *"
         direction: in
       - name: msg_len
-        type: size_t
+        type: "uintptr_t"
         direction: in
-      - name: tag
-        type: uint8_t *
+      - name: mac
+        type: "uint8_t *"
         direction: out
-        description: 16-byte tag
+        description: "The key's MAC length in writable bytes."
     returns:
       type: int
       description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
       error_variants:
         - name: NullPointer
-          condition: A pointer argument that the call requires was NULL.
+          condition: "A required pointer was NULL, or a pointer was NULL with a non-zero length."
+        - name: NotOperational
+          condition: "oxi_init has not completed successfully, or the module has entered the terminal Error state."
+        - name: InvalidInput
+          condition: "The handle is of another mode, a length exceeds isize::MAX or wraps the address space, or a writable range overlaps another range or a handle."
         - name: AlgorithmRestricted
-          condition: The active algorithm profile does not permit this service.
+          condition: "The active algorithm profile does not permit this service at the key's size."
+        - name: Internal
+          condition: "The module could not allocate its staging buffer."
     security:
-      constant_time: true
+      constant_time: false  # Mirrors oxicrypt_cmac::cmac: the AES S-box is indexed by secret data; the CMAC subkey derivation is measured branch-free by the harness target cmac_subkey.
       handles_secrets: true
       fips_approved: true
 
-  - name: oxi_aes256_kw_wrap
+  - name: oxi_aes_cmac_verify
     module: oxicrypt-ffi
-    description: AES-256-KW wrap (SP 800-38F §6.2 KW-AE); pt_len MUST be a positive multiple of 8 and at least 16 bytes, output pt_len + 8 bytes (plaintext + 8-byte ICV).
-    signature: >-
-      int oxi_aes256_kw_wrap(const OxiAes256Key *key,
-      const uint8_t *plaintext, size_t pt_len, uint8_t *out)
+    description: "Verifies a MAC of the key's MAC length as the CMAC (SP 800-38B §6.3) of msg_len bytes, comparing every byte with no early exit."
+    signature: "int oxi_aes_cmac_verify(const OxiAesCmacKey *key, const uint8_t *msg, uintptr_t msg_len, const uint8_t *mac)"
     parameters:
       - name: key
-        type: const OxiAes256Key *
+        type: "const OxiAesCmacKey *"
         direction: in
-        description: Live handle from oxi_aes256_new
-      - name: plaintext
-        type: const uint8_t *
+        description: "Live OxiAesCmacKey handle."
+      - name: msg
+        type: "const uint8_t *"
         direction: in
-      - name: pt_len
-        type: size_t
+      - name: msg_len
+        type: "uintptr_t"
         direction: in
-        description: Positive multiple of 8, >= 16
-      - name: out
-        type: uint8_t *
-        direction: out
-        description: pt_len + 8 writable bytes
-    returns:
-      type: int
-      description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
-      error_variants:
-        - name: NullPointer
-          condition: A pointer argument that the call requires was NULL.
-        - name: NotBlockAligned
-          condition: The input length is not a multiple of the cipher block size where the mode requires alignment.
-        - name: LengthMismatch
-          condition: The input and output buffer lengths are inconsistent with each other.
-        - name: AlgorithmRestricted
-          condition: The active algorithm profile does not permit this service.
-    security:
-      constant_time: true
-      handles_secrets: true
-      fips_approved: true
-
-  - name: oxi_aes256_kw_unwrap
-    module: oxicrypt-ffi
-    description: AES-256-KW unwrap (SP 800-38F §6.2 KW-AD); ct_len MUST be a positive multiple of 8 and at least 24 bytes, output ct_len - 8 bytes.
-    signature: >-
-      int oxi_aes256_kw_unwrap(const OxiAes256Key *key,
-      const uint8_t *ciphertext, size_t ct_len, uint8_t *out)
-    parameters:
-      - name: key
-        type: const OxiAes256Key *
+      - name: mac
+        type: "const uint8_t *"
         direction: in
-        description: Live handle from oxi_aes256_new
-      - name: ciphertext
-        type: const uint8_t *
-        direction: in
-      - name: ct_len
-        type: size_t
-        direction: in
-        description: Positive multiple of 8, >= 24
-      - name: out
-        type: uint8_t *
-        direction: out
-        description: ct_len - 8 writable bytes
+        description: "The key's MAC length in bytes."
     returns:
       type: int
       description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
       error_variants:
         - name: TagMismatch
-          condition: The cryptographic verification ran cleanly and the result disagreed with the claimed value.
+          condition: "The cryptographic verification ran cleanly and the result disagreed with the claimed value."
         - name: NullPointer
-          condition: A pointer argument that the call requires was NULL.
-        - name: NotBlockAligned
-          condition: The input length is not a multiple of the cipher block size where the mode requires alignment.
-        - name: LengthMismatch
-          condition: The input and output buffer lengths are inconsistent with each other.
+          condition: "A required pointer was NULL, or a pointer was NULL with a non-zero length."
+        - name: NotOperational
+          condition: "oxi_init has not completed successfully, or the module has entered the terminal Error state."
+        - name: InvalidInput
+          condition: "The handle is of another mode, a length exceeds isize::MAX or wraps the address space, or a writable range overlaps another range or a handle."
         - name: AlgorithmRestricted
-          condition: The active algorithm profile does not permit this service.
+          condition: "The active algorithm profile does not permit this service at the key's size."
     security:
-      constant_time: true
-      handles_secrets: true
-      fips_approved: true
-
-  - name: oxi_aes256_kwp_wrap
-    module: oxicrypt-ffi
-    description: AES-256-KWP wrap (SP 800-38F §6.3 KWP-AE / RFC 5649); accepts any plaintext length in 1..=2^32-1 bytes, output ((pt_len + 7) / 8) * 8 + 8 bytes (padded plaintext + 8-byte AIV).
-    signature: >-
-      int oxi_aes256_kwp_wrap(const OxiAes256Key *key,
-      const uint8_t *plaintext, size_t pt_len, uint8_t *out)
-    parameters:
-      - name: key
-        type: const OxiAes256Key *
-        direction: in
-        description: Live handle from oxi_aes256_new
-      - name: plaintext
-        type: const uint8_t *
-        direction: in
-      - name: pt_len
-        type: size_t
-        direction: in
-        description: 1..=2^32-1
-      - name: out
-        type: uint8_t *
-        direction: out
-        description: ((pt_len+7)/8)*8 + 8 writable bytes
-    returns:
-      type: int
-      description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
-      error_variants:
-        - name: NullPointer
-          condition: A pointer argument that the call requires was NULL.
-        - name: LengthMismatch
-          condition: The input and output buffer lengths are inconsistent with each other.
-        - name: AlgorithmRestricted
-          condition: The active algorithm profile does not permit this service.
-    security:
-      constant_time: true
-      handles_secrets: true
-      fips_approved: true
-
-  - name: oxi_aes256_kwp_unwrap
-    module: oxicrypt-ffi
-    description: AES-256-KWP unwrap (SP 800-38F §6.3 KWP-AD / RFC 5649); ct_len MUST be a positive multiple of 8 and at least 16 bytes, out_scratch holds ct_len - 8 bytes with the first *out_len recovered.
-    signature: >-
-      int oxi_aes256_kwp_unwrap(const OxiAes256Key *key,
-      const uint8_t *ciphertext, size_t ct_len,
-      uint8_t *out_scratch, size_t *out_len)
-    parameters:
-      - name: key
-        type: const OxiAes256Key *
-        direction: in
-        description: Live handle from oxi_aes256_new
-      - name: ciphertext
-        type: const uint8_t *
-        direction: in
-      - name: ct_len
-        type: size_t
-        direction: in
-        description: Positive multiple of 8, >= 16
-      - name: out_scratch
-        type: uint8_t *
-        direction: out
-        description: ct_len - 8 writable bytes (padded plaintext scratch)
-      - name: out_len
-        type: size_t *
-        direction: out
-        description: Recovered plaintext length on success; unmodified on non-Ok
-    returns:
-      type: int
-      description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
-      error_variants:
-        - name: TagMismatch
-          condition: The cryptographic verification ran cleanly and the result disagreed with the claimed value.
-        - name: NullPointer
-          condition: A pointer argument that the call requires was NULL.
-        - name: NotBlockAligned
-          condition: The input length is not a multiple of the cipher block size where the mode requires alignment.
-        - name: LengthMismatch
-          condition: The input and output buffer lengths are inconsistent with each other.
-        - name: AlgorithmRestricted
-          condition: The active algorithm profile does not permit this service.
-    security:
-      constant_time: true
+      constant_time: false  # Mirrors oxicrypt_cmac::cmac_verify: the compare has no early exit and the harness target cmac_verify measures that a refused MAC's timing does not depend on where it differs; nothing else about the comparison's timing is measured.
       handles_secrets: true
       fips_approved: true
 
@@ -14984,7 +16697,7 @@ functions:
 
   - name: oxi_test_last_freed_bytes_zero
     module: oxicrypt-ffi
-    description: "Report whether the last freed DRBG handle read as all zero before its memory was released; available with the fault-injection feature"
+    description: "Report whether the last handle allocation the module wiped and released, a DRBG handle or an AES key handle, read as all zero before its memory was released; available with the fault-injection feature"
     signature: >-
       int oxi_test_last_freed_bytes_zero(void)
     returns:
@@ -19016,39 +20729,103 @@ functions:
       handles_secrets: true
       fips_approved: false
 
-  - name: "Module::aes256_key"
+  - name: "Module::aes_gcm_key"
     module: oxicrypt
-    description: "An AES-256 key handle; the crate makes no copy of the key."
-    signature: "pub fn Module::aes256_key(self, key: &[u8; 32]) -> Result<Aes256Key, Error>"
+    description: "An AES-GCM key handle with a count of 0 and a limit of 2^32 encryptions; calls oxi_aes_gcm_key_new and makes no copy of the key."
+    signature: "pub fn Module::aes_gcm_key(self, key: &[u8]) -> Result<AesGcmKey, Error>"
     returns:
-      type: "Result<Aes256Key, Error>"
+      type: "Result<AesGcmKey, Error>"
       description: "The key handle."
+      error_variants:
+        - name: InvalidInput
+          condition: "The key is not 16, 24 or 32 bytes."
+        - name: AlgorithmRestricted
+          condition: "The active profile does not allow the key size."
     thread_safety: thread-safe
     security:
       constant_time: false
       handles_secrets: true
       fips_approved: false
 
-  - name: "Module::aes256_gcm_encrypt"
+  - name: "Module::aes_gcm_key_with_count"
     module: oxicrypt
-    description: "AES-256-GCM encryption into a caller slice of the plaintext's length, zeroed on every error."
-    signature: "pub fn Module::aes256_gcm_encrypt(self, key: &Aes256Key, nonce: &[u8; 12], aad: &[u8], plaintext: &[u8], ciphertext_out: &mut [u8]) -> Result<[u8; 16], Error>"
+    description: "An AES-GCM key handle with its count preloaded to the encryptions earlier instances of the key performed; calls oxi_aes_gcm_key_new_with_count."
+    signature: "pub fn Module::aes_gcm_key_with_count(self, key: &[u8], used: u64) -> Result<AesGcmKey, Error>"
     returns:
-      type: "Result<[u8; 16], Error>"
-      description: "The tag."
+      type: "Result<AesGcmKey, Error>"
+      description: "The key handle; a used of 2^32 builds an exhausted key."
+      error_variants:
+        - name: InvalidInput
+          condition: "The key is not 16, 24 or 32 bytes, or used is above 2^32."
+        - name: AlgorithmRestricted
+          condition: "The active profile does not allow the key size."
+    thread_safety: thread-safe
+    security:
+      constant_time: false
+      handles_secrets: true
+      fips_approved: false
+
+  - name: "Module::aes_gcm_key_with_limit"
+    module: oxicrypt
+    description: "An AES-GCM key handle limited to this instance's share of the 2^32 encryptions permitted under the key; calls oxi_aes_gcm_key_new_with_limit."
+    signature: "pub fn Module::aes_gcm_key_with_limit(self, key: &[u8], limit: u64) -> Result<AesGcmKey, Error>"
+    returns:
+      type: "Result<AesGcmKey, Error>"
+      description: "The key handle."
+      error_variants:
+        - name: InvalidInput
+          condition: "The key is not 16, 24 or 32 bytes, or limit is 0 or above 2^32."
+        - name: AlgorithmRestricted
+          condition: "The active profile does not allow the key size."
+    thread_safety: thread-safe
+    security:
+      constant_time: false
+      handles_secrets: true
+      fips_approved: false
+
+  - name: "Module::aes_gcm_invocations"
+    module: oxicrypt
+    description: "The number of encryptions reserved under the key; calls oxi_aes_gcm_key_invocations."
+    signature: "pub fn Module::aes_gcm_invocations(self, key: &AesGcmKey) -> Result<u64, Error>"
+    returns:
+      type: "Result<u64, Error>"
+      description: "The count."
+    thread_safety: thread-safe
+    security:
+      constant_time: false
+      handles_secrets: true
+      fips_approved: false
+
+  - name: "Module::aes_gcm_seal"
+    module: oxicrypt
+    description: "AES-GCM encryption into a caller slice of the plaintext's length under a 96-bit IV the module draws from drbg; calls oxi_aes_gcm_seal, and ciphertext_out is zeroed on every error."
+    signature: "pub fn Module::aes_gcm_seal(self, key: &AesGcmKey, drbg: &mut Drbg, aad: &[u8], plaintext: &[u8], ciphertext_out: &mut [u8]) -> Result<GcmSealed, Error>"
+    returns:
+      type: "Result<GcmSealed, Error>"
+      description: "The IV and the tag."
       error_variants:
         - name: LengthMismatch
           condition: "ciphertext_out is not the plaintext's length, refused before calling."
+        - name: InvalidPayloadLength
+          condition: "The plaintext is longer than 2^36 - 32 bytes, refused before calling."
+        - name: InvalidAadLength
+          condition: "The AAD is longer than 2^61 - 1 bytes, refused before calling."
+        - name: KeyExhausted
+          condition: "The key has reached its limit; no IV is drawn."
+        - name: Uninstantiated
+          condition: "The DRBG was not instantiated."
+        - name: AlgorithmRestricted
+          condition: "The active profile does not allow the key size or the DRBG."
     thread_safety: thread-safe
     security:
       constant_time: false
       handles_secrets: true
       fips_approved: false
 
-  - name: "Module::aes256_gcm_decrypt"
+  - name: "Module::aes_gcm_open"
     module: oxicrypt
-    description: "AES-256-GCM decryption into a caller slice of the ciphertext's length, zeroed on every error."
-    signature: "pub fn Module::aes256_gcm_decrypt(self, key: &Aes256Key, nonce: &[u8; 12], aad: &[u8], ciphertext: &[u8], plaintext_out: &mut [u8], tag: &[u8; 16]) -> Result<(), Error>"
+    description: "AES-GCM decryption into a caller slice of the ciphertext's length; calls oxi_aes_gcm_open, and plaintext_out is zeroed on every error."
+    signature: "pub fn Module::aes_gcm_open(self, key: &AesGcmKey, iv: &[u8; AES_GCM_IV_LEN], aad: &[u8], ciphertext: &[u8], tag: &[u8; AES_GCM_TAG_LEN], plaintext_out: &mut [u8]) -> Result<(), Error>"
     returns:
       type: "Result<(), Error>"
       description: "Ok when the tag verified."
@@ -19063,23 +20840,26 @@ functions:
       handles_secrets: true
       fips_approved: false
 
-  - name: "Module::aes256_gcm_encrypt_vec"
+  - name: "Module::aes_gcm_seal_vec"
     module: oxicrypt
-    description: "Module::aes256_gcm_encrypt into a new vector."
-    signature: "pub fn Module::aes256_gcm_encrypt_vec(self, key: &Aes256Key, nonce: &[u8; 12], aad: &[u8], plaintext: &[u8]) -> Result<(Vec<u8>, [u8; 16]), Error>"
+    description: "Module::aes_gcm_seal into a vector it allocates."
+    signature: "pub fn Module::aes_gcm_seal_vec(self, key: &AesGcmKey, drbg: &mut Drbg, aad: &[u8], plaintext: &[u8]) -> Result<(Vec<u8>, GcmSealed), Error>"
     returns:
-      type: "Result<(Vec<u8>, [u8; 16]), Error>"
-      description: "The ciphertext and tag."
+      type: "Result<(Vec<u8>, GcmSealed), Error>"
+      description: "The ciphertext, the IV and the tag."
+      error_variants:
+        - name: InvalidPayloadLength
+          condition: "The plaintext is over the SP 800-38D limit, refused before allocating."
     thread_safety: thread-safe
     security:
       constant_time: false
       handles_secrets: true
       fips_approved: false
 
-  - name: "Module::aes256_gcm_decrypt_vec"
+  - name: "Module::aes_gcm_open_vec"
     module: oxicrypt
-    description: "Module::aes256_gcm_decrypt into a new vector, zeroed before it is freed on an error."
-    signature: "pub fn Module::aes256_gcm_decrypt_vec(self, key: &Aes256Key, nonce: &[u8; 12], aad: &[u8], ciphertext: &[u8], tag: &[u8; 16]) -> Result<Vec<u8>, Error>"
+    description: "Module::aes_gcm_open into a vector it allocates, zeroed before it is freed on an error."
+    signature: "pub fn Module::aes_gcm_open_vec(self, key: &AesGcmKey, iv: &[u8; AES_GCM_IV_LEN], aad: &[u8], ciphertext: &[u8], tag: &[u8; AES_GCM_TAG_LEN]) -> Result<Vec<u8>, Error>"
     returns:
       type: "Result<Vec<u8>, Error>"
       description: "The plaintext."
@@ -19090,6 +20870,429 @@ functions:
     security:
       constant_time: false
       handles_secrets: true
+      fips_approved: false
+
+  - name: "Module::aes_ccm_key"
+    module: oxicrypt
+    description: "An AES-CCM key handle with a tag length fixed for the key and a count of 0; calls oxi_aes_ccm_key_new."
+    signature: "pub fn Module::aes_ccm_key(self, key: &[u8], tag_len: usize) -> Result<AesCcmKey, Error>"
+    returns:
+      type: "Result<AesCcmKey, Error>"
+      description: "The key handle."
+      error_variants:
+        - name: InvalidInput
+          condition: "The key is not 16, 24 or 32 bytes, or tag_len is not 8, 10, 12, 14 or 16."
+        - name: AlgorithmRestricted
+          condition: "The active profile does not allow the key size."
+    thread_safety: thread-safe
+    security:
+      constant_time: false
+      handles_secrets: true
+      fips_approved: false
+
+  - name: "Module::aes_ccm_key_with_count"
+    module: oxicrypt
+    description: "An AES-CCM key handle with its count of block-cipher invocations preloaded to used; calls oxi_aes_ccm_key_new_with_count."
+    signature: "pub fn Module::aes_ccm_key_with_count(self, key: &[u8], tag_len: usize, used: u64) -> Result<AesCcmKey, Error>"
+    returns:
+      type: "Result<AesCcmKey, Error>"
+      description: "The key handle."
+      error_variants:
+        - name: InvalidInput
+          condition: "The key or tag length is invalid, or used is above 2^61."
+        - name: AlgorithmRestricted
+          condition: "The active profile does not allow the key size."
+    thread_safety: thread-safe
+    security:
+      constant_time: false
+      handles_secrets: true
+      fips_approved: false
+
+  - name: "Module::aes_ccm_invocations"
+    module: oxicrypt
+    description: "The number of block-cipher invocations reserved under the key; calls oxi_aes_ccm_key_invocations."
+    signature: "pub fn Module::aes_ccm_invocations(self, key: &AesCcmKey) -> Result<u64, Error>"
+    returns:
+      type: "Result<u64, Error>"
+      description: "The count."
+    thread_safety: thread-safe
+    security:
+      constant_time: false
+      handles_secrets: true
+      fips_approved: false
+
+  - name: "Module::aes_ccm_seal"
+    module: oxicrypt
+    description: "AES-CCM encryption under a caller nonce unique under the key, into a ciphertext slice of the plaintext's length and a tag slice of the key's tag length; calls oxi_aes_ccm_seal, and both outputs are zeroed on every error."
+    signature: "pub fn Module::aes_ccm_seal(self, key: &AesCcmKey, nonce: &[u8], aad: &[u8], plaintext: &[u8], ciphertext_out: &mut [u8], tag_out: &mut [u8]) -> Result<(), Error>"
+    returns:
+      type: "Result<(), Error>"
+      description: "Ok when both outputs were written."
+      error_variants:
+        - name: LengthMismatch
+          condition: "An output is not its required length, refused before calling."
+        - name: InvalidNonceLength
+          condition: "The nonce is not 7 to 13 bytes."
+        - name: InvalidPayloadLength
+          condition: "The nonce's length field cannot represent the plaintext length."
+        - name: InvalidAadLength
+          condition: "The AAD is above the SP 800-38C bound."
+        - name: KeyExhausted
+          condition: "The encryption would take the key past 2^61 block-cipher invocations."
+    thread_safety: thread-safe
+    security:
+      constant_time: false
+      handles_secrets: true
+      fips_approved: false
+
+  - name: "Module::aes_ccm_open"
+    module: oxicrypt
+    description: "AES-CCM decryption of a ciphertext without its tag into a caller slice of its length; calls oxi_aes_ccm_open, and plaintext_out is zeroed on every error."
+    signature: "pub fn Module::aes_ccm_open(self, key: &AesCcmKey, nonce: &[u8], aad: &[u8], ciphertext: &[u8], tag: &[u8], plaintext_out: &mut [u8]) -> Result<(), Error>"
+    returns:
+      type: "Result<(), Error>"
+      description: "Ok when the tag verified."
+      error_variants:
+        - name: TagMismatch
+          condition: "Any invalid input the library sees: a tag that does not verify, a nonce outside 7 to 13 bytes, or a length the nonce's length field cannot represent."
+        - name: InvalidTagLength
+          condition: "tag is not the key's tag length, refused before calling."
+        - name: LengthMismatch
+          condition: "plaintext_out is not the ciphertext's length, refused before calling."
+        - name: KeyExhausted
+          condition: "The decryption would take the key past 2^61 block-cipher invocations."
+    thread_safety: thread-safe
+    security:
+      constant_time: false
+      handles_secrets: true
+      fips_approved: false
+
+  - name: "Module::aes_cbc_key"
+    module: oxicrypt
+    description: "An AES-CBC key handle; calls oxi_aes_cbc_key_new."
+    signature: "pub fn Module::aes_cbc_key(self, key: &[u8]) -> Result<AesCbcKey, Error>"
+    returns:
+      type: "Result<AesCbcKey, Error>"
+      description: "The key handle."
+      error_variants:
+        - name: InvalidInput
+          condition: "The key is not 16, 24 or 32 bytes."
+        - name: AlgorithmRestricted
+          condition: "The active profile does not allow the key size."
+    thread_safety: thread-safe
+    security:
+      constant_time: false
+      handles_secrets: true
+      fips_approved: false
+
+  - name: "Module::aes_cbc_encrypt"
+    module: oxicrypt
+    description: "AES-CBC encryption under an unpredictable IV into a caller slice of the input's length; calls oxi_aes_cbc_encrypt, and out is zeroed on every error."
+    signature: "pub fn Module::aes_cbc_encrypt(self, key: &AesCbcKey, iv: &[u8; 16], data: &[u8], out: &mut [u8]) -> Result<(), Error>"
+    returns:
+      type: "Result<(), Error>"
+      description: "Ok when out was written."
+      error_variants:
+        - name: LengthMismatch
+          condition: "out is not the input's length, refused before calling."
+        - name: NotBlockAligned
+          condition: "The input is not a multiple of 16 bytes."
+        - name: InvalidPayloadLength
+          condition: "The input is empty."
+    thread_safety: thread-safe
+    security:
+      constant_time: false
+      handles_secrets: true
+      fips_approved: false
+
+  - name: "Module::aes_cbc_decrypt"
+    module: oxicrypt
+    description: "AES-CBC decryption into a caller slice of the input's length; calls oxi_aes_cbc_decrypt, and out is zeroed on every error."
+    signature: "pub fn Module::aes_cbc_decrypt(self, key: &AesCbcKey, iv: &[u8; 16], data: &[u8], out: &mut [u8]) -> Result<(), Error>"
+    returns:
+      type: "Result<(), Error>"
+      description: "Ok when out was written."
+      error_variants:
+        - name: LengthMismatch
+          condition: "out is not the input's length, refused before calling."
+        - name: NotBlockAligned
+          condition: "The input is not a multiple of 16 bytes."
+        - name: InvalidPayloadLength
+          condition: "The input is empty."
+    thread_safety: thread-safe
+    security:
+      constant_time: false
+      handles_secrets: true
+      fips_approved: false
+
+  - name: "Module::aes_ctr_key"
+    module: oxicrypt
+    description: "An AES-CTR key handle; calls oxi_aes_ctr_key_new."
+    signature: "pub fn Module::aes_ctr_key(self, key: &[u8]) -> Result<AesCtrKey, Error>"
+    returns:
+      type: "Result<AesCtrKey, Error>"
+      description: "The key handle."
+      error_variants:
+        - name: InvalidInput
+          condition: "The key is not 16, 24 or 32 bytes."
+        - name: AlgorithmRestricted
+          condition: "The active profile does not allow the key size."
+    thread_safety: thread-safe
+    security:
+      constant_time: false
+      handles_secrets: true
+      fips_approved: false
+
+  - name: "Module::aes_ctr"
+    module: oxicrypt
+    description: "AES-CTR from a 16-byte initial counter block into a caller slice of the input's length, for encryption and decryption alike; calls oxi_aes_ctr, and out is zeroed on every error."
+    signature: "pub fn Module::aes_ctr(self, key: &AesCtrKey, counter: &[u8; 16], data: &[u8], out: &mut [u8]) -> Result<(), Error>"
+    returns:
+      type: "Result<(), Error>"
+      description: "Ok when out was written."
+      error_variants:
+        - name: LengthMismatch
+          condition: "out is not the input's length, refused before calling."
+    thread_safety: thread-safe
+    security:
+      constant_time: false
+      handles_secrets: true
+      fips_approved: false
+
+  - name: "Module::aes_kw_key"
+    module: oxicrypt
+    description: "An AES key-wrap key handle for KW and KWP in both cipher directions; calls oxi_aes_kw_key_new."
+    signature: "pub fn Module::aes_kw_key(self, key: &[u8]) -> Result<AesKwKey, Error>"
+    returns:
+      type: "Result<AesKwKey, Error>"
+      description: "The key handle."
+      error_variants:
+        - name: InvalidInput
+          condition: "The key is not 16, 24 or 32 bytes."
+        - name: AlgorithmRestricted
+          condition: "The active profile does not allow the key size."
+    thread_safety: thread-safe
+    security:
+      constant_time: false
+      handles_secrets: true
+      fips_approved: false
+
+  - name: "Module::aes_kw_wrap"
+    module: oxicrypt
+    description: "AES-KW wrap into out of exactly plaintext.len() + 8 bytes; calls oxi_aes_kw_wrap, and out is zeroed on every error."
+    signature: "pub fn Module::aes_kw_wrap(self, key: &AesKwKey, plaintext: &[u8], out: &mut [u8]) -> Result<(), Error>"
+    returns:
+      type: "Result<(), Error>"
+      description: "Ok when out was written."
+      error_variants:
+        - name: LengthMismatch
+          condition: "out is not plaintext.len() + 8 bytes (refused before calling), or the plaintext is not a multiple of 8."
+        - name: InvalidPayloadLength
+          condition: "The plaintext length is one KW does not accept."
+    thread_safety: thread-safe
+    security:
+      constant_time: false
+      handles_secrets: true
+      fips_approved: false
+
+  - name: "Module::aes_kw_unwrap"
+    module: oxicrypt
+    description: "AES-KW unwrap into out of exactly ciphertext.len() - 8 bytes; calls oxi_aes_kw_unwrap, and out is zeroed on every error."
+    signature: "pub fn Module::aes_kw_unwrap(self, key: &AesKwKey, ciphertext: &[u8], out: &mut [u8]) -> Result<(), Error>"
+    returns:
+      type: "Result<(), Error>"
+      description: "Ok when the integrity check value verified."
+      error_variants:
+        - name: TagMismatch
+          condition: "The integrity check value did not verify."
+        - name: LengthMismatch
+          condition: "out is not ciphertext.len() - 8 bytes (refused before calling), or the ciphertext is not a multiple of 8."
+        - name: InvalidPayloadLength
+          condition: "The ciphertext length is one KW does not accept."
+    thread_safety: thread-safe
+    security:
+      constant_time: false
+      handles_secrets: true
+      fips_approved: false
+
+  - name: "Module::aes_kw_wrap_inverse"
+    module: oxicrypt
+    description: "AES-KW wrap with the inverse cipher, as Module::aes_kw_wrap; calls oxi_aes_kw_wrap_inverse."
+    signature: "pub fn Module::aes_kw_wrap_inverse(self, key: &AesKwKey, plaintext: &[u8], out: &mut [u8]) -> Result<(), Error>"
+    returns:
+      type: "Result<(), Error>"
+      description: "Ok when out was written."
+      error_variants:
+        - name: LengthMismatch
+          condition: "out is not plaintext.len() + 8 bytes, or the plaintext is not a multiple of 8."
+    thread_safety: thread-safe
+    security:
+      constant_time: false
+      handles_secrets: true
+      fips_approved: false
+
+  - name: "Module::aes_kw_unwrap_inverse"
+    module: oxicrypt
+    description: "AES-KW unwrap with the forward cipher, the inverse of Module::aes_kw_wrap_inverse; calls oxi_aes_kw_unwrap_inverse."
+    signature: "pub fn Module::aes_kw_unwrap_inverse(self, key: &AesKwKey, ciphertext: &[u8], out: &mut [u8]) -> Result<(), Error>"
+    returns:
+      type: "Result<(), Error>"
+      description: "Ok when the integrity check value verified."
+      error_variants:
+        - name: TagMismatch
+          condition: "The integrity check value did not verify."
+    thread_safety: thread-safe
+    security:
+      constant_time: false
+      handles_secrets: true
+      fips_approved: false
+
+  - name: "Module::aes_kwp_wrap"
+    module: oxicrypt
+    description: "AES-KWP wrap into the front of out, whose length is the capacity; calls oxi_aes_kwp_wrap, and out is zeroed on every error."
+    signature: "pub fn Module::aes_kwp_wrap(self, key: &AesKwKey, plaintext: &[u8], out: &mut [u8]) -> Result<usize, Error>"
+    returns:
+      type: "Result<usize, Error>"
+      description: "The wrapped length."
+      error_variants:
+        - name: BufferTooSmall
+          condition: "out is shorter than the wrapped length."
+        - name: LengthMismatch
+          condition: "The plaintext length is one KWP does not accept."
+    thread_safety: thread-safe
+    security:
+      constant_time: false
+      handles_secrets: true
+      fips_approved: false
+
+  - name: "Module::aes_kwp_unwrap"
+    module: oxicrypt
+    description: "AES-KWP unwrap into the front of out, whose length is the capacity; calls oxi_aes_kwp_unwrap, and out is zeroed on every error."
+    signature: "pub fn Module::aes_kwp_unwrap(self, key: &AesKwKey, ciphertext: &[u8], out: &mut [u8]) -> Result<usize, Error>"
+    returns:
+      type: "Result<usize, Error>"
+      description: "The unwrapped length."
+      error_variants:
+        - name: TagMismatch
+          condition: "The integrity check value or padding did not verify; takes precedence over BufferTooSmall."
+        - name: BufferTooSmall
+          condition: "out is shorter than the unwrapped length."
+        - name: LengthMismatch
+          condition: "The ciphertext length is one KWP does not accept."
+    thread_safety: thread-safe
+    security:
+      constant_time: false
+      handles_secrets: true
+      fips_approved: false
+
+  - name: "Module::aes_kwp_wrap_inverse"
+    module: oxicrypt
+    description: "AES-KWP wrap with the inverse cipher, as Module::aes_kwp_wrap; calls oxi_aes_kwp_wrap_inverse."
+    signature: "pub fn Module::aes_kwp_wrap_inverse(self, key: &AesKwKey, plaintext: &[u8], out: &mut [u8]) -> Result<usize, Error>"
+    returns:
+      type: "Result<usize, Error>"
+      description: "The wrapped length."
+      error_variants:
+        - name: BufferTooSmall
+          condition: "out is shorter than the wrapped length."
+    thread_safety: thread-safe
+    security:
+      constant_time: false
+      handles_secrets: true
+      fips_approved: false
+
+  - name: "Module::aes_kwp_unwrap_inverse"
+    module: oxicrypt
+    description: "AES-KWP unwrap with the forward cipher, the inverse of Module::aes_kwp_wrap_inverse; calls oxi_aes_kwp_unwrap_inverse."
+    signature: "pub fn Module::aes_kwp_unwrap_inverse(self, key: &AesKwKey, ciphertext: &[u8], out: &mut [u8]) -> Result<usize, Error>"
+    returns:
+      type: "Result<usize, Error>"
+      description: "The unwrapped length."
+      error_variants:
+        - name: TagMismatch
+          condition: "The integrity check value or padding did not verify."
+    thread_safety: thread-safe
+    security:
+      constant_time: false
+      handles_secrets: true
+      fips_approved: false
+
+  - name: "Module::aes_cmac_key"
+    module: oxicrypt
+    description: "A CMAC key handle with a MAC length fixed for the key; calls oxi_aes_cmac_key_new."
+    signature: "pub fn Module::aes_cmac_key(self, key: &[u8], mac_len: usize) -> Result<AesCmacKey, Error>"
+    returns:
+      type: "Result<AesCmacKey, Error>"
+      description: "The key handle."
+      error_variants:
+        - name: InvalidInput
+          condition: "The key is not 16, 24 or 32 bytes, or mac_len is outside 8 to 16."
+        - name: AlgorithmRestricted
+          condition: "The active profile does not allow the key size."
+    thread_safety: thread-safe
+    security:
+      constant_time: false
+      handles_secrets: true
+      fips_approved: false
+
+  - name: "Module::aes_cmac"
+    module: oxicrypt
+    description: "The CMAC of msg into mac_out of the key's MAC length; calls oxi_aes_cmac, and mac_out is zeroed on every error."
+    signature: "pub fn Module::aes_cmac(self, key: &AesCmacKey, msg: &[u8], mac_out: &mut [u8]) -> Result<(), Error>"
+    returns:
+      type: "Result<(), Error>"
+      description: "Ok when mac_out was written."
+      error_variants:
+        - name: LengthMismatch
+          condition: "mac_out is not the key's MAC length, refused before calling."
+    thread_safety: thread-safe
+    security:
+      constant_time: false
+      handles_secrets: true
+      fips_approved: false
+
+  - name: "Module::aes_cmac_verify"
+    module: oxicrypt
+    description: "Verifies mac as the CMAC of msg; calls oxi_aes_cmac_verify."
+    signature: "pub fn Module::aes_cmac_verify(self, key: &AesCmacKey, msg: &[u8], mac: &[u8]) -> Result<(), Error>"
+    returns:
+      type: "Result<(), Error>"
+      description: "Ok when the MAC verified."
+      error_variants:
+        - name: TagMismatch
+          condition: "The MAC did not verify."
+        - name: InvalidTagLength
+          condition: "mac is not the key's MAC length, refused before calling."
+    thread_safety: thread-safe
+    security:
+      constant_time: false
+      handles_secrets: true
+      fips_approved: false
+
+  - name: "AesCcmKey::tag_len"
+    module: oxicrypt
+    description: "The tag length fixed for the key, in bytes."
+    signature: "pub fn AesCcmKey::tag_len(&self) -> usize"
+    returns:
+      type: "usize"
+      description: "The tag length fixed for the key, in bytes."
+    thread_safety: thread-safe
+    security:
+      constant_time: false
+      handles_secrets: false
+      fips_approved: false
+
+  - name: "AesCmacKey::mac_len"
+    module: oxicrypt
+    description: "The MAC length fixed for the key, in bytes."
+    signature: "pub fn AesCmacKey::mac_len(&self) -> usize"
+    returns:
+      type: "usize"
+      description: "The MAC length fixed for the key, in bytes."
+    thread_safety: thread-safe
+    security:
+      constant_time: false
+      handles_secrets: false
       fips_approved: false
 
   - name: "Module::drbg"
@@ -19683,7 +21886,7 @@ error_types:
           The ciphertext or AAD was tampered with, or the wrong key/IV
           was used. Do NOT use the plaintext output.
       - name: LengthMismatch
-        description: Output buffer wrong size.
+        description: Buffer length not valid for the mode.
         recoverable: true
         user_action: Resize output buffer to match input length.
       - name: Module
@@ -19813,7 +22016,7 @@ error_types:
         user_action: Call the matching instantiate function on this handle and check it returns Ok, then retry.
       - name: ReseedRequired
         value: 9
-        description: The DRBG's reseed counter passed the SP 800-90A Table 3 reseed interval on an instance that does not reseed itself, a state no exported function reaches at ABI 2.
+        description: The DRBG's reseed counter passed the SP 800-90A Table 3 reseed interval on an instance that does not reseed itself, a state no exported function reaches at ABI 3.
         recoverable: true
         user_action: Not returned through the C interface. The oxicrypt_drbg testing interface returns it from generate on an instance instantiated with a caller-supplied entropy input; reseed that instance through the same interface.
       - name: NullPointer
@@ -20754,23 +22957,23 @@ constants:
     value: "12240"
     description: "The longest HKDF-SHA384 output, 255 × 48 bytes."
 
-  - name: AES256_KEY_LEN
-    module: oxicrypt
-    type: usize
-    value: "32"
-    description: "AES-256 key length."
-
-  - name: AES256_GCM_NONCE_LEN
+  - name: AES_GCM_IV_LEN
     module: oxicrypt
     type: usize
     value: "12"
-    description: "AES-256-GCM nonce length."
+    description: "AES-GCM IV length, the 96 bits the module draws for each encryption."
 
-  - name: AES256_GCM_TAG_LEN
+  - name: AES_GCM_TAG_LEN
     module: oxicrypt
     type: usize
     value: "16"
-    description: "AES-256-GCM tag length."
+    description: "AES-GCM tag length."
+
+  - name: CCM_MAX_AAD_LEN
+    module: oxicrypt-aes
+    type: u64
+    value: "u64::MAX - (1 << 16)"
+    description: "Longest CCM associated data in bytes, 2^64 - 2^16 - 1, within the Alen < 2^64 of SP 800-38C Appendix A.1."
 
   - name: HMAC_DRBG_MAX_PROVIDED_LEN
     module: oxicrypt

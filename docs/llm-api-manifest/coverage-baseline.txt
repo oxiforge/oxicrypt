@@ -12,12 +12,8 @@
 # file gains a line relative to its merge base with origin/main.
 oxicrypt-aes const KWP_IV_PREFIX
 oxicrypt-aes const KW_DEFAULT_IV
-oxicrypt-aes fn ccm_decrypt
-oxicrypt-aes fn ccm_encrypt
 oxicrypt-aes fn kw_unwrap
-oxicrypt-aes fn kw_wrap
 oxicrypt-aes fn kwp_unwrap
-oxicrypt-aes fn kwp_wrap
 oxicrypt-cmac const BLOCK_SIZE
 oxicrypt-dh const KEY_BYTES
 oxicrypt-drbg const HASH_DRBG_MAX_DF_INPUT
@@ -215,7 +211,6 @@ oxicrypt-ffi fn oxi_lms_shake_m32_h5_w1_verify
 oxicrypt-ffi fn oxi_lms_shake_m32_h5_w2_verify
 oxicrypt-ffi fn oxi_lms_shake_m32_h5_w4_verify
 oxicrypt-ffi fn oxi_lms_shake_m32_h5_w8_verify
-oxicrypt-ffi struct OxiAes256Key
 oxicrypt-ffi struct OxiHmacDrbgSha256
 oxicrypt-hmac struct Hmac
 oxicrypt-hmac trait BlockHash

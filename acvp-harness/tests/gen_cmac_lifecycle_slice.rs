@@ -52,10 +52,10 @@ fn generate_cmac_lifecycle_slice() {
     )
     .expect("drbg instantiate");
 
-    // AES-256 key.
     let mut key_bytes = [0u8; 32];
     drbg.generate(None, &mut key_bytes).expect("drbg gen key");
     let key_hex = hex_upper(&key_bytes);
+    let cmac_key = oxicrypt_cmac::CmacKey::new(&key_bytes, 16).expect("CMAC key");
 
     let mut gen_tests = Vec::new();
     let mut ver_valid_tests = Vec::new();
@@ -66,7 +66,8 @@ fn generate_cmac_lifecycle_slice() {
         let mut msg = [0u8; 64];
         drbg.generate(None, &mut msg).expect("drbg gen msg");
 
-        let tag = oxicrypt_cmac::cmac_aes256(&key_bytes, &msg).expect("CMAC-AES256 failed");
+        let mut tag = [0u8; 16];
+        oxicrypt_cmac::cmac(&cmac_key, &msg, &mut tag).expect("CMAC-AES256 failed");
         let msg_hex = hex_upper(&msg);
         let mac_hex = hex_upper(&tag);
 

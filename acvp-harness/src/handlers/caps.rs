@@ -12,8 +12,6 @@
 
 use crate::json::JsonValue;
 
-// ── Internal helpers ─────────────────────────────────────────────
-
 fn num(n: i64) -> JsonValue {
     JsonValue::Number(n)
 }
@@ -48,8 +46,6 @@ fn bool_pair() -> JsonValue {
     JsonValue::Array(vec![JsonValue::Bool(true), JsonValue::Bool(false)])
 }
 
-// ── SHA-3 family ──────────────────────────────────────────────────
-
 /// Build an ACVP registration block for a SHA-3 hash algorithm.
 ///
 /// ```json
@@ -66,8 +62,6 @@ pub fn sha3_capability(algorithm: &str, _digest_bits: i64) -> JsonValue {
         ("messageLength", range_domain(0, 65536, 8)),
     ])
 }
-
-// ── SHA-1 / SHA-2 family ──────────────────────────────────────────
 
 /// Build an ACVP registration block for a SHA-1 or SHA-2 hash
 /// algorithm.
@@ -91,8 +85,6 @@ pub fn sha2_capability(algorithm: &str, _digest_bits: i64) -> JsonValue {
     ])
 }
 
-// ── SHAKE family ─────────────────────────────────────────────────
-
 /// Build an ACVP registration block for a SHAKE XOF algorithm.
 ///
 /// Supports AFT, MCT, VOT, and LDT test types.  `outLen` declares
@@ -105,8 +97,6 @@ pub fn shake_capability(algorithm: &str) -> JsonValue {
         ("outputLen", range_domain(16, 65536, 8)),
     ])
 }
-
-// ── HMAC family ───────────────────────────────────────────────────
 
 /// Build an ACVP registration block for an HMAC algorithm.
 ///
@@ -127,9 +117,11 @@ pub fn hmac_capability(algorithm: &str, mac_bits: i64) -> JsonValue {
     ])
 }
 
-// ── CMAC-AES ─────────────────────────────────────────────────────
-
 /// Build an ACVP registration block for CMAC-AES.
+///
+/// `macLen` runs from 64 to 128 bits: `oxicrypt_cmac::CmacKey::new`
+/// accepts a MAC length of 8 to 16 bytes, the 64-bit floor being the
+/// minimum SP 800-38B Appendix A recommends.
 pub fn cmac_aes_capability() -> JsonValue {
     obj(vec![
         ("algorithm", str_val("CMAC-AES")),
@@ -140,13 +132,11 @@ pub fn cmac_aes_capability() -> JsonValue {
                 ("direction", str_array(&["gen", "ver"])),
                 ("keyLen", num_array(&[128, 192, 256])),
                 ("msgLen", range_domain(0, 65536, 8)),
-                ("macLen", range_domain(8, 128, 8)),
+                ("macLen", range_domain(64, 128, 8)),
             ])]),
         ),
     ])
 }
-
-// ── KMAC family ──────────────────────────────────────────────────
 
 /// Build an ACVP registration block for a KMAC algorithm.
 ///
@@ -172,8 +162,6 @@ pub fn kmac_capability(algorithm: &str) -> JsonValue {
     ])
 }
 
-// ── cSHAKE family ────────────────────────────────────────────────
-
 /// Build an ACVP registration block for a cSHAKE algorithm.
 pub fn cshake_capability(algorithm: &str) -> JsonValue {
     obj(vec![
@@ -184,8 +172,6 @@ pub fn cshake_capability(algorithm: &str) -> JsonValue {
         ("hexCustomization", JsonValue::Bool(true)),
     ])
 }
-
-// ── TupleHash family ─────────────────────────────────────────────
 
 /// Build an ACVP registration block for TupleHash.
 ///
@@ -214,8 +200,6 @@ pub fn tuplehash_capability(algorithm: &str) -> JsonValue {
         ("hexCustomization", JsonValue::Bool(true)),
     ])
 }
-
-// ── ParallelHash family ──────────────────────────────────────────
 
 /// Build an ACVP registration block for ParallelHash.
 ///
@@ -251,8 +235,6 @@ pub fn parallelhash_capability(algorithm: &str) -> JsonValue {
         ("hexCustomization", JsonValue::Bool(true)),
     ])
 }
-
-// ── AES family ───────────────────────────────────────────────────
 
 /// Build an ACVP registration block for AES-ECB.
 pub fn aes_ecb_capability() -> JsonValue {
@@ -295,7 +277,8 @@ pub fn aes_gcm_capability() -> JsonValue {
         ("direction", str_array(&["encrypt", "decrypt"])),
         ("keyLen", num_array(&[128, 192, 256])),
         ("ivLen", num_array(&[96])),
-        ("ivGen", str_val("external")),
+        ("ivGen", str_val("internal")),
+        ("ivGenMode", str_val("8.2.2")),
         ("tagLen", num_array(&[128])),
         ("payloadLen", range_domain(0, 65536, 8)),
         ("aadLen", range_domain(0, 65536, 8)),
@@ -311,7 +294,7 @@ pub fn aes_ccm_capability() -> JsonValue {
         ("keyLen", num_array(&[128, 192, 256])),
         ("payloadLen", range_domain(0, 256, 8)),
         ("ivLen", num_array(&[56, 64, 72, 80, 88, 96, 104])),
-        ("tagLen", num_array(&[32, 48, 64, 80, 96, 112, 128])),
+        ("tagLen", num_array(&[64, 80, 96, 112, 128])),
         ("aadLen", range_domain(0, 524_288, 8)),
     ])
 }
@@ -339,8 +322,6 @@ pub fn aes_kwp_capability() -> JsonValue {
         ("payloadLen", range_domain(8, 4096, 8)),
     ])
 }
-
-// ── DRBG family ──────────────────────────────────────────────────
 
 /// Build an ACVP registration block for CTR_DRBG.
 pub fn ctr_drbg_capability() -> JsonValue {
@@ -467,8 +448,6 @@ pub fn hmac_drbg_capability() -> JsonValue {
     ])
 }
 
-// ── KDF family ───────────────────────────────────────────────────
-
 /// Build an ACVP registration block for KDA-HKDF (SP 800-56C Rev 2).
 ///
 /// `macSaltMethods`, `encoding`, and (when `usesHybridSharedSecret:
@@ -517,7 +496,7 @@ pub fn kda_hkdf_capability() -> JsonValue {
 /// counter). `counterLength` is intentionally narrowed to `[32]`
 /// even though the primitives accept SP 800-108r1 §5.1's full
 /// `{8, 16, 24, 32}` set — advertising 8/16/24 prompts the server
-/// to emit groups the handler doesn't currently dispatch, and a
+/// to emit groups the handler doesn't dispatch, and a
 /// capability advertises only what its handler serves.
 pub fn kbkdf_capability() -> JsonValue {
     obj(vec![
@@ -653,8 +632,6 @@ pub fn pbkdf_capability() -> JsonValue {
         ),
     ])
 }
-
-// ── RSA family ───────────────────────────────────────────────────
 
 /// Build an ACVP registration block for RSA / sigVer.
 pub fn rsa_sigver_capability() -> JsonValue {
@@ -845,7 +822,7 @@ pub fn rsa_keygen_capability() -> JsonValue {
 
 /// Build an ACVP registration block for RSA / OAEP / RFC8017.
 ///
-/// **Not currently called by `RsaOaepHandler::acvp_capabilities`** —
+/// **Not called by `RsaOaepHandler::acvp_capabilities`** —
 /// the catalog does not register `RSA / OAEP / RFC8017` as a
 /// standalone service; OAEP testing is filed under
 /// `KTS-IFC / — / Sp800-56Br2` (see `RsaOaepHandler`'s
@@ -911,8 +888,6 @@ pub fn rsa_sigprim_capability() -> JsonValue {
         ("modulo", num_array(&[2048])),
     ])
 }
-
-// ── ECDSA family ─────────────────────────────────────────────────
 
 /// Build an ACVP registration block for ECDSA / sigVer.
 ///
@@ -994,8 +969,6 @@ pub fn ecdsa_keygen_capability() -> JsonValue {
     ])
 }
 
-// ── EdDSA family ─────────────────────────────────────────────────
-
 /// Build an ACVP registration block for EDDSA / sigVer.
 pub fn eddsa_sigver_capability() -> JsonValue {
     obj(vec![
@@ -1040,8 +1013,6 @@ pub fn eddsa_keygen_capability() -> JsonValue {
     ])
 }
 
-// ── KAS-ECC-SSC ──────────────────────────────────────────────────
-
 /// Build an ACVP registration block for KAS-ECC-SSC.
 ///
 /// The ACVTS demo algorithm catalog registers `KAS-ECC-SSC` with
@@ -1070,8 +1041,6 @@ pub fn kas_ecc_ssc_capability() -> JsonValue {
         ),
     ])
 }
-
-// ── KAS-FFC-SSC ──────────────────────────────────────────────────
 
 /// Build an ACVP registration block for KAS-FFC-SSC.
 ///
@@ -1117,8 +1086,6 @@ pub fn kas_ffc_ssc_capability() -> JsonValue {
         ),
     ])
 }
-
-// ── KTS-IFC ──────────────────────────────────────────────────────
 
 /// Build an ACVP registration block for KTS-IFC (RSAES-OAEP key
 /// transport under SP 800-56Br2 §7.2.2.2 / KTS-OAEP-basic scheme).
@@ -1191,8 +1158,6 @@ pub fn kts_ifc_capability() -> JsonValue {
     ])
 }
 
-// ── Post-quantum: ML-KEM ─────────────────────────────────────────
-
 /// Build an ACVP registration block for ML-KEM / keyGen / FIPS203.
 ///
 /// Cap shape mirrors `draft-celi-acvp-ml-kem §7.3.1`. Advertises all
@@ -1234,8 +1199,6 @@ pub fn ml_kem_encapdecap_capability() -> JsonValue {
         ("functions", str_array(&["encapsulation", "decapsulation"])),
     ])
 }
-
-// ── Post-quantum: ML-DSA ─────────────────────────────────────────
 
 /// Build an ACVP registration block for ML-DSA / keyGen / FIPS204.
 ///
@@ -1335,8 +1298,6 @@ pub fn ml_dsa_sigver_capability() -> JsonValue {
         ),
     ])
 }
-
-// ── Post-quantum: SLH-DSA ────────────────────────────────────────
 
 /// FIPS 205 §11 Table 2 — canonical names for the 12 SLH-DSA parameter
 /// sets oxicrypt-slh-dsa builds. SHA-2 family (128/192/256, s/f
@@ -1484,8 +1445,6 @@ pub fn slh_dsa_sigver_capability(paramset_filter: Option<&str>) -> JsonValue {
         ),
     ])
 }
-
-// ── Stateful HBS: LMS ────────────────────────────────────────────
 
 /// Build the `specificCapabilities` array for the (lmsMode, lmOtsMode)
 /// pairs the harness implements — the full advertised grid, not a
@@ -1933,8 +1892,6 @@ pub fn lms_sigver_sp800_208_capability(caps_filter: Option<&str>) -> JsonValue {
     ])
 }
 
-// ── Stateful HBS: XMSS ──────────────────────────────────────────
-
 /// Build an ACVP registration block for XMSS / sigVer.
 pub fn xmss_sigver_capability() -> JsonValue {
     obj(vec![
@@ -1944,8 +1901,6 @@ pub fn xmss_sigver_capability() -> JsonValue {
         ("parameterSets", str_array(&["XMSS-SHA2_10_256"])),
     ])
 }
-
-// ── Tests: SLH-DSA paramset filter ───────────────────────────────
 
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::panic, clippy::uninlined_format_args)]
@@ -2070,8 +2025,6 @@ mod tests {
     fn slh_dsa_keygen_panics_on_unknown_paramset() {
         let _ = slh_dsa_keygen_capability(Some("not-a-real-name"));
     }
-
-    // ── LMS --caps-filter (the runtime tall-tree subset) ────────────
 
     /// The `(lmsMode, lmOtsMode)` pairs of an LMS cap's
     /// `specificCapabilities` array.

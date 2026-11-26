@@ -80,10 +80,16 @@ mod test_api;
 
 include!("abi_version.rs");
 pub use aes::{
-    OxiAes256Key, oxi_aes256_cbc_decrypt, oxi_aes256_cbc_encrypt, oxi_aes256_ccm_decrypt,
-    oxi_aes256_ccm_encrypt, oxi_aes256_cmac, oxi_aes256_ctr, oxi_aes256_free,
-    oxi_aes256_gcm_decrypt, oxi_aes256_gcm_encrypt, oxi_aes256_kw_unwrap, oxi_aes256_kw_wrap,
-    oxi_aes256_kwp_unwrap, oxi_aes256_kwp_wrap, oxi_aes256_new,
+    OxiAesCbcKey, OxiAesCcmKey, OxiAesCmacKey, OxiAesCtrKey, OxiAesGcmKey, OxiAesKwKey,
+    oxi_aes_cbc_decrypt, oxi_aes_cbc_encrypt, oxi_aes_cbc_key_free, oxi_aes_cbc_key_new,
+    oxi_aes_ccm_key_free, oxi_aes_ccm_key_invocations, oxi_aes_ccm_key_new,
+    oxi_aes_ccm_key_new_with_count, oxi_aes_ccm_open, oxi_aes_ccm_seal, oxi_aes_cmac,
+    oxi_aes_cmac_key_free, oxi_aes_cmac_key_new, oxi_aes_cmac_verify, oxi_aes_ctr,
+    oxi_aes_ctr_key_free, oxi_aes_ctr_key_new, oxi_aes_gcm_key_free, oxi_aes_gcm_key_invocations,
+    oxi_aes_gcm_key_new, oxi_aes_gcm_key_new_with_count, oxi_aes_gcm_key_new_with_limit,
+    oxi_aes_gcm_open, oxi_aes_gcm_seal, oxi_aes_kw_key_free, oxi_aes_kw_key_new, oxi_aes_kw_unwrap,
+    oxi_aes_kw_unwrap_inverse, oxi_aes_kw_wrap, oxi_aes_kw_wrap_inverse, oxi_aes_kwp_unwrap,
+    oxi_aes_kwp_unwrap_inverse, oxi_aes_kwp_wrap, oxi_aes_kwp_wrap_inverse,
 };
 pub use drbg::{
     OxiCtrDrbgAes128, OxiCtrDrbgAes192, OxiCtrDrbgAes256, OxiHashDrbgSha256, OxiHashDrbgSha384,
@@ -161,27 +167,6 @@ unsafe fn slice_from_raw<'a>(ptr: *const u8, len: usize) -> Result<&'a [u8], c_i
         return Ok(&[]);
     }
     Ok(unsafe { core::slice::from_raw_parts(ptr, len) })
-}
-
-/// Build a `&mut [u8]` from a raw pointer and length.
-///
-/// Unbounded lifetime per the same convention as [`slice_from_raw`].
-///
-/// # Safety
-///
-/// The caller must ensure the pointer is valid for `len` bytes.
-unsafe fn slice_from_raw_mut<'a>(ptr: *mut u8, len: usize) -> Result<&'a mut [u8], c_int> {
-    if ptr.is_null() && len > 0 {
-        return Err(R::NullPointer as c_int);
-    }
-    if len > isize::MAX.unsigned_abs() {
-        return Err(R::InvalidInput as c_int);
-    }
-    if len == 0 {
-        // Return a valid empty slice even for null ptr with len=0.
-        return Ok(&mut []);
-    }
-    Ok(unsafe { core::slice::from_raw_parts_mut(ptr, len) })
 }
 
 /// One byte over the longest HKDF-Expand output with a 32-byte hash,

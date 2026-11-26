@@ -128,6 +128,7 @@ mod seed;
 mod seed_table;
 #[cfg(any(test, feature = "fault-injection"))]
 pub mod testing;
+mod wipe;
 
 pub use ctr::{
     Aes128Factory, Aes192Factory, Aes256Factory, CipherFactory, CtrDrbg, CtrDrbgAes128,

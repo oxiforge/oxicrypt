@@ -734,7 +734,7 @@ oxicrypt-integrity-sign --keygen <dir>                      # once, outside any 
 OXICRYPT_INTEGRITY_VERIFY_KEY=<dir>/integrity-verify.pub cargo build --release -p oxicrypt-ffi
 
 # Deliver it under its SONAME, liboxicrypt_ffi.so.<ABI>, with the plain name a link to it
-name="$(scripts/library-file-name.sh target/release/liboxicrypt_ffi.so)"   # liboxicrypt_ffi.so.2
+name="$(scripts/library-file-name.sh target/release/liboxicrypt_ffi.so)"   # liboxicrypt_ffi.so.3
 cp target/release/liboxicrypt_ffi.so <lib>/"$name"
 ln -s "$name" <lib>/liboxicrypt_ffi.so
 oxicrypt-integrity-sign --sign --key <dir>/integrity-signing.key <lib>/"$name"

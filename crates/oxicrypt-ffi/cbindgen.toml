@@ -20,6 +20,36 @@ documentation_style = "c"
 style = "type"
 sys_includes = ["stddef.h", "stdint.h"]
 no_includes = true
+after_includes = """
+
+/*
+ * Buffer contract of every oxi_aes_* function.
+ *
+ * In an operational module, every oxi_aes_* function that returns int
+ * refuses its pointer and length arguments as follows, before any work:
+ *
+ * - a NULL key handle, a NULL pointer with a non-zero length, or a NULL
+ *   fixed-size pointer (an IV, counter, tag, MAC, `written`, the DRBG
+ *   handle, or the `out` of a `_key_new` or `_key_invocations`) returns
+ *   OXI_RESULT_NULL_POINTER (10);
+ * - a length above SIZE_MAX / 2, or a range that runs past the top of the
+ *   address space, returns OXI_RESULT_INVALID_INPUT (5);
+ * - an output range that shares a byte with an input, with another output
+ *   or with a handle, and an input that shares a byte with a handle,
+ *   return OXI_RESULT_INVALID_INPUT (5), so in-place operation is refused;
+ * - a key handle of another mode returns OXI_RESULT_INVALID_INPUT (5).
+ *
+ * A module not in the operational state returns OXI_RESULT_NOT_OPERATIONAL
+ * (1) after the NULL key handle and NULL output-pointer checks and before
+ * the other pointer checks.
+ *
+ * On any refusal every output buffer is left unwritten, except that when a
+ * function has several outputs and a later copy is refused, the outputs
+ * already copied are zeroed. On a KW or KWP
+ * unwrap failure, in either cipher direction, `out` and `written` are left
+ * unwritten.
+ */
+"""
 
 [export]
 item_types = ["enums", "structs", "opaque", "typedefs", "functions"]

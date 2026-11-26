@@ -30,6 +30,7 @@
 )]
 
 use acvp_harness::{dispatch, ensure_initialized, json, json::JsonValue};
+use std::collections::HashMap;
 
 /// Load and parse a vendored ACVP slice relative to the harness
 /// crate root.
@@ -120,10 +121,6 @@ fn assert_round_trip(relative: &str, answer_field: &str, label: &str) {
     }
 }
 
-// ----------------------------------------------------------------------
-// SHA-3 family (revision 2.0, answer field `md`)
-// ----------------------------------------------------------------------
-
 #[test]
 fn sha3_224_aft_round_trip() {
     assert_round_trip(
@@ -160,10 +157,6 @@ fn sha3_512_aft_round_trip() {
     );
 }
 
-// ----------------------------------------------------------------------
-// SHAKE XOFs (revision FIPS202, answer field `md`)
-// ----------------------------------------------------------------------
-
 #[test]
 fn shake_128_aft_round_trip() {
     assert_round_trip(
@@ -181,10 +174,6 @@ fn shake_256_aft_round_trip() {
         "SHAKE-256",
     );
 }
-
-// ----------------------------------------------------------------------
-// HMAC family (revision 1.0, answer field `mac`)
-// ----------------------------------------------------------------------
 
 #[test]
 fn hmac_sha1_aft_round_trip() {
@@ -285,10 +274,6 @@ fn hmac_sha3_512_aft_round_trip() {
     );
 }
 
-// ----------------------------------------------------------------------
-// KDA-HKDF (revision Sp800-56Cr2, mode HKDF, answer field `dkm`)
-// ----------------------------------------------------------------------
-
 #[test]
 fn kda_hkdf_aft_round_trip() {
     assert_round_trip(
@@ -298,14 +283,10 @@ fn kda_hkdf_aft_round_trip() {
     );
 }
 
-// ----------------------------------------------------------------------
-// AES block-cipher AFT: ECB / CBC / CTR
-//
-// Each test in an AFT group carries the input for its `direction`
-// (encrypt → `pt`, decrypt → `ct`) and the expected output in the
-// opposite field. The shared `assert_round_trip` helper only tracks
+// Each test in an AES ECB / CBC / CTR AFT group carries the input for its
+// `direction` (encrypt → `pt`, decrypt → `ct`) and the expected output in
+// the opposite field. The shared `assert_round_trip` helper only tracks
 // a single answer field, so AES uses its own direction-aware helper.
-// ----------------------------------------------------------------------
 
 /// Collect `(tcId, answer_field, answer_value)` triples from every
 /// test in every group of the slice. The group's `direction` picks
@@ -445,7 +426,6 @@ fn strip_aes_answers_in_place(v: &mut JsonValue) {
             "decrypt" => "pt",
             _ => continue,
         };
-        // Now find and mutate `tests`.
         let tests = g_kvs.iter_mut().find_map(|(k, val)| {
             if k == "tests" {
                 if let JsonValue::Array(a) = val {
@@ -492,12 +472,10 @@ fn aes_ctr_aft_round_trip() {
     );
 }
 
-// ----------------------------------------------------------------------
-// AES AEAD / key-wrap AFT: GCM / CCM / KW / KWP
+// The AES AEAD and key-wrap modes have richer response shapes than
+// ECB/CBC/CTR:
 //
-// These modes have richer response shapes than ECB/CBC/CTR:
-//
-// - GCM encrypt → {tcId, ct, tag}
+// - GCM encrypt → {tcId, iv, ct, tag}
 // - GCM decrypt → {tcId, testPassed} (+ pt if testPassed)
 // - CCM encrypt → {tcId, ct}  (ct includes appended tag)
 // - CCM/KW/KWP decrypt → {tcId, testPassed} (+ pt if testPassed)
@@ -506,7 +484,6 @@ fn aes_ctr_aft_round_trip() {
 // The test helper collects expected answers from the vendored slice
 // (which includes all fields including testPassed), strips them from
 // the prompt, dispatches, and then compares the response.
-// ----------------------------------------------------------------------
 
 /// An expected answer from a single AEAD/wrap test case.
 #[derive(Debug)]
@@ -634,25 +611,109 @@ fn strip_aead_answers_in_place(v: &mut JsonValue) {
     }
 }
 
-fn assert_aead_round_trip(relative: &str, label: &str) {
-    ensure_initialized().unwrap();
-    let slice = load(relative);
-    let expected = collect_aead_expected(&slice);
-    assert!(
-        !expected.is_empty(),
-        "{label}: slice {relative} produced no expected answers"
+/// How a round trip checks an encrypt response.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum EncryptCheck {
+    /// The response's `ct` (and `tag`) equal the slice's answer.
+    Answer,
+    /// The prompt's encrypt groups are sent as `ivGen: internal` without
+    /// an IV, and each response's `iv`, `ct`
+    /// and `tag` must decrypt to the slice's `pt` under the slice's `key`
+    /// and `aad`. A generated IV cannot reproduce the slice's fixed
+    /// ciphertext.
+    GcmDecryptsToPt,
+}
+
+/// Sets every encrypt group of `v` to `ivGen: internal` and removes each
+/// of its tests' `iv`.
+fn gcm_encrypt_groups_internal(v: &mut JsonValue) {
+    let JsonValue::Object(root_kvs) = v else {
+        return;
+    };
+    let Some((_, JsonValue::Array(groups))) = root_kvs.iter_mut().find(|(k, _)| k == "testGroups")
+    else {
+        return;
+    };
+    for g in groups.iter_mut() {
+        if g.get("direction").and_then(JsonValue::as_str) != Some("encrypt") {
+            continue;
+        }
+        let JsonValue::Object(g_kvs) = g else {
+            continue;
+        };
+        g_kvs.retain(|(k, _)| k != "ivGen");
+        g_kvs.push((
+            "ivGen".to_string(),
+            JsonValue::String("internal".to_string()),
+        ));
+        for (k, val) in g_kvs.iter_mut() {
+            if k != "tests" {
+                continue;
+            }
+            if let JsonValue::Array(tests) = val {
+                for t in tests.iter_mut() {
+                    if let JsonValue::Object(kvs) = t {
+                        kvs.retain(|(k, _)| k != "iv");
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// For each encrypt test of `v`, its `(key, aad, pt)` as bytes.
+fn collect_encrypt_inputs(v: &JsonValue) -> HashMap<i64, [Vec<u8>; 3]> {
+    let mut out = HashMap::new();
+    let Some(groups) = v.get("testGroups").and_then(JsonValue::as_array) else {
+        return out;
+    };
+    for g in groups {
+        if g.get("direction").and_then(JsonValue::as_str) != Some("encrypt") {
+            continue;
+        }
+        for t in g.get("tests").and_then(JsonValue::as_array).unwrap() {
+            let field = |name: &str| {
+                acvp_harness::hex::decode(t.get(name).and_then(JsonValue::as_str).unwrap_or(""))
+                    .unwrap()
+            };
+            let tc_id = t.get("tcId").and_then(JsonValue::as_i64).unwrap();
+            out.insert(tc_id, [field("key"), field("aad"), field("pt")]);
+        }
+    }
+    out
+}
+
+/// Decrypts a GCM encrypt response under the test's `(key, aad, pt)` and
+/// returns its IV after checking it recovers `pt`.
+fn gcm_response_decrypts(label: &str, tc_id: i64, t: &JsonValue, inputs: &[Vec<u8>; 3]) -> Vec<u8> {
+    let field = |name: &str| {
+        let hex = t
+            .get(name)
+            .and_then(JsonValue::as_str)
+            .unwrap_or_else(|| panic!("{label}: missing {name} for tcId {tc_id}"));
+        acvp_harness::hex::decode(hex).unwrap()
+    };
+    let (iv, ct, tag) = (field("iv"), field("ct"), field("tag"));
+    let [key, aad, pt] = inputs;
+    assert_eq!(iv.len(), 12, "{label}: IV length for tcId {tc_id}");
+    let key = oxicrypt_aes::GcmKey::new(key).unwrap();
+    let tag: [u8; 16] = tag.try_into().unwrap();
+    let mut back = vec![0u8; ct.len()];
+    assert_eq!(
+        oxicrypt_aes::gcm_decrypt(&key, &iv, aad, &ct, &tag, &mut back),
+        Ok(()),
+        "{label}: response for tcId {tc_id} does not decrypt"
     );
+    assert_eq!(
+        &back, pt,
+        "{label}: decryption of tcId {tc_id} is not its pt"
+    );
+    iv
+}
 
-    let mut prompt = slice.clone();
-    strip_aead_answers_in_place(&mut prompt);
-
-    let registry = dispatch::with_default_handlers();
-    let response = dispatch::process(&prompt, &registry)
-        .unwrap_or_else(|e| panic!("{label}: dispatch failed: {e}"));
-
-    // Collect response tests keyed by tcId for comparison.
-    let mut resp_tests: std::collections::HashMap<i64, &JsonValue> =
-        std::collections::HashMap::new();
+/// Every test of a response, keyed by `tcId`.
+fn response_tests_by_id(response: &JsonValue) -> HashMap<i64, &JsonValue> {
+    let mut resp_tests = HashMap::new();
     if let Some(groups) = response.get("testGroups").and_then(JsonValue::as_array) {
         for g in groups {
             if let Some(tests) = g.get("tests").and_then(JsonValue::as_array) {
@@ -664,6 +725,34 @@ fn assert_aead_round_trip(relative: &str, label: &str) {
             }
         }
     }
+    resp_tests
+}
+
+fn assert_aead_round_trip(relative: &str, label: &str) {
+    aead_round_trip(relative, label, EncryptCheck::Answer);
+}
+
+fn aead_round_trip(relative: &str, label: &str, encrypt_check: EncryptCheck) {
+    ensure_initialized().unwrap();
+    let slice = load(relative);
+    let expected = collect_aead_expected(&slice);
+    assert!(
+        !expected.is_empty(),
+        "{label}: slice {relative} produced no expected answers"
+    );
+    let encrypt_inputs = collect_encrypt_inputs(&slice);
+    let mut generated_ivs = std::collections::HashSet::new();
+
+    let mut prompt = slice.clone();
+    strip_aead_answers_in_place(&mut prompt);
+    if encrypt_check == EncryptCheck::GcmDecryptsToPt {
+        gcm_encrypt_groups_internal(&mut prompt);
+    }
+
+    let registry = dispatch::with_default_handlers();
+    let response = dispatch::process(&prompt, &registry)
+        .unwrap_or_else(|e| panic!("{label}: dispatch failed: {e}"));
+    let resp_tests = response_tests_by_id(&response);
 
     assert_eq!(
         resp_tests.len(),
@@ -675,6 +764,18 @@ fn assert_aead_round_trip(relative: &str, label: &str) {
 
     for exp in &expected {
         match exp {
+            AeadExpected::Encrypt { tc_id, .. }
+                if encrypt_check == EncryptCheck::GcmDecryptsToPt =>
+            {
+                let t = resp_tests
+                    .get(tc_id)
+                    .unwrap_or_else(|| panic!("{label}: missing tcId {tc_id} in response"));
+                let iv = gcm_response_decrypts(label, *tc_id, t, &encrypt_inputs[tc_id]);
+                assert!(
+                    generated_ivs.insert(iv),
+                    "{label}: tcId {tc_id} repeats an IV"
+                );
+            }
             AeadExpected::Encrypt { tc_id, ct, tag } => {
                 let t = resp_tests
                     .get(tc_id)
@@ -734,10 +835,58 @@ fn assert_aead_round_trip(relative: &str, label: &str) {
 
 #[test]
 fn aes_gcm_aft_round_trip() {
-    assert_aead_round_trip(
+    aead_round_trip(
         "../vendor/nist/acvp-server/gen-val/json-files/ACVP-AES-GCM-1.0/kat-slice.json",
         "ACVP-AES-GCM",
+        EncryptCheck::GcmDecryptsToPt,
     );
+}
+
+#[test]
+fn aes_gcm_internal_iv_distinct_round_trip() {
+    const TESTS_PER_GROUP: usize = 12;
+    ensure_initialized().unwrap();
+    let mut groups = Vec::new();
+    let mut tc_id = 0;
+    for (tg_id, key_bytes) in [(1, 16), (2, 24), (3, 32)] {
+        let key_len = key_bytes * 8;
+        let mut tests = Vec::new();
+        for _ in 0..TESTS_PER_GROUP {
+            tc_id += 1;
+            let key = format!("{tc_id:02X}").repeat(key_bytes);
+            let pt = format!("{:02X}", tc_id + 0x80).repeat(16);
+            tests.push(format!(
+                r#"{{"tcId": {tc_id}, "key": "{key}", "aad": "A0A1A2A3", "pt": "{pt}"}}"#
+            ));
+        }
+        groups.push(format!(
+            r#"{{"tgId": {tg_id}, "testType": "AFT", "direction": "encrypt",
+                "keyLen": {key_len}, "ivLen": 96, "ivGenMode": "8.2.2",
+                "payloadLen": 128, "aadLen": 32, "tagLen": 128,
+                "tests": [{}]}}"#,
+            tests.join(",")
+        ));
+    }
+    let mut prompt = json::parse(&format!(
+        r#"{{"algorithm": "ACVP-AES-GCM", "revision": "1.0", "testGroups": [{}]}}"#,
+        groups.join(",")
+    ))
+    .unwrap();
+    gcm_encrypt_groups_internal(&mut prompt);
+    let inputs = collect_encrypt_inputs(&prompt);
+    assert_eq!(inputs.len(), 3 * TESTS_PER_GROUP);
+
+    let registry = dispatch::with_default_handlers();
+    let response = dispatch::process(&prompt, &registry).unwrap();
+    let resp_tests = response_tests_by_id(&response);
+    assert_eq!(resp_tests.len(), inputs.len());
+
+    let mut ivs = std::collections::HashSet::new();
+    for (id, t) in &resp_tests {
+        let iv = gcm_response_decrypts("internal IV", *id, t, &inputs[id]);
+        assert!(ivs.insert(iv), "tcId {id} repeats an IV");
+    }
+    assert_eq!(ivs.len(), 3 * TESTS_PER_GROUP);
 }
 
 #[test]
@@ -764,14 +913,10 @@ fn aes_kwp_aft_round_trip() {
     );
 }
 
-// ----------------------------------------------------------------------
-// AES lifecycle: encrypt-decrypt path equivalence
-//
-// Each lifecycle-slice.json uses a single DRBG-generated AES-256 key
+// Each AES lifecycle-slice.json uses a single DRBG-generated AES-256 key
 // and proves encrypt→decrypt recovers the original plaintext.  For
 // authenticated/wrap modes, an additional decrypt group with a
 // bit-flipped tag/ciphertext proves testPassed=false detection.
-// ----------------------------------------------------------------------
 
 #[test]
 fn aes_ecb_lifecycle_round_trip() {
@@ -799,9 +944,10 @@ fn aes_ctr_lifecycle_round_trip() {
 
 #[test]
 fn aes_gcm_lifecycle_round_trip() {
-    assert_aead_round_trip(
+    aead_round_trip(
         "../vendor/nist/acvp-server/gen-val/json-files/ACVP-AES-GCM-1.0/lifecycle-slice.json",
         "ACVP-AES-GCM-lifecycle",
+        EncryptCheck::GcmDecryptsToPt,
     );
 }
 
@@ -829,15 +975,11 @@ fn aes_kwp_lifecycle_round_trip() {
     );
 }
 
-// ----------------------------------------------------------------------
-// AES MCT: ECB / CBC Monte Carlo Tests
-//
-// Each MCT group has exactly one test with initial parameters.
+// Each AES ECB / CBC MCT group has exactly one test with initial parameters.
 // The handler runs the 100×1000 iteration loop. The vendored
 // mct-slice.json files contain only the first 5 entries
 // (ra_limit=5), so only those are compared, and the length check
 // below is a lower bound rather than a pin on the entry count.
-// ----------------------------------------------------------------------
 
 /// Collect expected MCT resultsArray entries from a vendored slice.
 /// Returns `(tcId, Vec<(key, value)>)` for each entry, so we can
@@ -889,7 +1031,6 @@ fn assert_mct_round_trip(relative: &str, label: &str) {
         "{label}: slice {relative} produced no expected MCT answers"
     );
 
-    // Strip resultsArray from the prompt.
     let mut prompt = slice.clone();
     strip_field(&mut prompt, "resultsArray");
 
@@ -897,7 +1038,6 @@ fn assert_mct_round_trip(relative: &str, label: &str) {
     let response = dispatch::process(&prompt, &registry)
         .unwrap_or_else(|e| panic!("{label}: dispatch failed: {e}"));
 
-    // Collect response resultsArray entries.
     let got = collect_mct_expected(&response);
 
     assert_eq!(
@@ -958,10 +1098,6 @@ fn aes_cbc_mct_round_trip() {
     );
 }
 
-// ----------------------------------------------------------------------
-// SHA-3 MCT: Monte Carlo Test for all four SHA-3 variants
-// ----------------------------------------------------------------------
-
 #[test]
 fn sha3_224_mct_round_trip() {
     assert_mct_round_trip(
@@ -993,10 +1129,6 @@ fn sha3_512_mct_round_trip() {
         "SHA3-512-MCT",
     );
 }
-
-// ----------------------------------------------------------------------
-// SHA-3 LDT: Large Data Test, repeating-pattern expansion
-// ----------------------------------------------------------------------
 
 #[test]
 fn sha3_224_ldt_round_trip() {
@@ -1034,13 +1166,9 @@ fn sha3_512_ldt_round_trip() {
     );
 }
 
-// ----------------------------------------------------------------------
-// CMAC-AES AFT: gen + ver
-//
-// `gen` groups produce a `mac` answer; `ver` groups produce
+// CMAC-AES `gen` groups produce a `mac` answer; `ver` groups produce
 // `testPassed`. The test helper strips the answer field per-direction,
 // dispatches, and compares.
-// ----------------------------------------------------------------------
 
 /// Expected answer from a CMAC test case.
 #[derive(Debug)]
@@ -1164,7 +1292,6 @@ fn assert_cmac_round_trip(relative: &str, label: &str) {
     let response = dispatch::process(&prompt, &registry)
         .unwrap_or_else(|e| panic!("{label}: dispatch failed: {e}"));
 
-    // Collect response tests keyed by tcId.
     let mut resp_tests: std::collections::HashMap<i64, &JsonValue> =
         std::collections::HashMap::new();
     if let Some(groups) = response.get("testGroups").and_then(JsonValue::as_array) {
@@ -1228,13 +1355,9 @@ fn cmac_aes_aft_round_trip() {
     );
 }
 
-// ----------------------------------------------------------------------
-// CMAC-AES lifecycle: gen→ver path consistency
-//
-// Lifecycle slice uses a single DRBG-generated AES-256 key, proving
-// that gen produces the correct MAC and ver detects both valid and
-// invalid (bit-flipped) MACs.
-// ----------------------------------------------------------------------
+// The CMAC-AES lifecycle slice uses a single DRBG-generated AES-256 key,
+// proving that gen produces the correct MAC and ver detects both valid
+// and invalid (bit-flipped) MACs.
 
 #[test]
 fn cmac_aes_lifecycle_round_trip() {
@@ -1243,13 +1366,6 @@ fn cmac_aes_lifecycle_round_trip() {
         "CMAC-AES-lifecycle",
     );
 }
-
-// ----------------------------------------------------------------------
-// DRBG families (revision 1.0, answer field `returnedBits`)
-// CTR_DRBG (AES-128/192/256, ±df, ±pr),
-//        Hash_DRBG (SHA2-256/384/512, ±pr),
-//        HMAC_DRBG (SHA2-256/384/512, ±pr)
-// ----------------------------------------------------------------------
 
 #[test]
 fn ctr_drbg_aft_round_trip() {
@@ -1278,13 +1394,9 @@ fn hmac_drbg_aft_round_trip() {
     );
 }
 
-// ----------------------------------------------------------------------
-// Verification round-trip helper
-//
 // For ACVP families where the answer is `testPassed` (a boolean),
 // we strip the field, dispatch, and compare the boolean result for
 // every test case.
-// ----------------------------------------------------------------------
 
 /// Collect `(tcId, testPassed)` pairs from every test in every group.
 fn collect_bool_answers(v: &JsonValue) -> Vec<(i64, bool)> {
@@ -1347,10 +1459,6 @@ fn assert_bool_round_trip(relative: &str, label: &str) {
     }
 }
 
-// ----------------------------------------------------------------------
-// ECDSA SigVer + KeyVer (P-256 / SHA2-256, FIPS186-5)
-// ----------------------------------------------------------------------
-
 #[test]
 fn ecdsa_sigver_round_trip() {
     assert_bool_round_trip(
@@ -1366,11 +1474,6 @@ fn ecdsa_keyver_round_trip() {
         "ECDSA-keyVer",
     );
 }
-
-// ----------------------------------------------------------------------
-// ECDSA SigGen (P-256 / SHA2-256, FIPS186-5, deterministic k)
-// Answer fields: `r` and `s` (both hex strings).
-// ----------------------------------------------------------------------
 
 /// Round-trip driver for ECDSA SigGen where answers are two separate
 /// hex string fields (`r` and `s`).
@@ -1423,10 +1526,6 @@ fn ecdsa_siggen_round_trip() {
     );
 }
 
-// ----------------------------------------------------------------------
-// ECDSA KeyGen (P-256, FIPS186-5, deterministic derive_public_key)
-// ----------------------------------------------------------------------
-
 /// ECDSA KeyGen produces two answer fields (qx, qy). Only the `qx`
 /// count is asserted; a response that dropped `qy` entirely would
 /// still pass, because the `qy` comparison zips against an
@@ -1474,10 +1573,6 @@ fn ecdsa_keygen_round_trip() {
         );
     }
 }
-
-// ----------------------------------------------------------------------
-// ECDSA Lifecycle (keyGen + sigGen + sigVer, shared keys)
-// ----------------------------------------------------------------------
 
 #[test]
 fn ecdsa_lifecycle_keygen_round_trip() {
@@ -1534,10 +1629,6 @@ fn ecdsa_lifecycle_sigver_round_trip() {
     );
 }
 
-// ----------------------------------------------------------------------
-// EdDSA SigVer + KeyVer (ED-25519, pure, 1.0)
-// ----------------------------------------------------------------------
-
 #[test]
 fn eddsa_sigver_round_trip() {
     assert_bool_round_trip(
@@ -1554,10 +1645,6 @@ fn eddsa_keyver_round_trip() {
     );
 }
 
-// ----------------------------------------------------------------------
-// EdDSA SigGen (ED-25519, pure, 1.0, deterministic)
-// ----------------------------------------------------------------------
-
 #[test]
 fn eddsa_siggen_round_trip() {
     assert_round_trip(
@@ -1567,10 +1654,6 @@ fn eddsa_siggen_round_trip() {
     );
 }
 
-// ----------------------------------------------------------------------
-// EdDSA KeyGen (ED-25519, 1.0, deterministic keygen_internal)
-// ----------------------------------------------------------------------
-
 #[test]
 fn eddsa_keygen_round_trip() {
     assert_round_trip(
@@ -1579,10 +1662,6 @@ fn eddsa_keygen_round_trip() {
         "EDDSA-keyGen",
     );
 }
-
-// ----------------------------------------------------------------------
-// EdDSA Lifecycle (keyGen + sigGen + sigVer, shared seeds)
-// ----------------------------------------------------------------------
 
 #[test]
 fn eddsa_lifecycle_keygen_round_trip() {
@@ -1610,10 +1689,6 @@ fn eddsa_lifecycle_sigver_round_trip() {
     );
 }
 
-// ----------------------------------------------------------------------
-// RSA SigVer (RSA-2048 / PKCS#1v1.5 / SHA2-256, FIPS186-5)
-// ----------------------------------------------------------------------
-
 #[test]
 fn rsa_sigver_round_trip() {
     assert_bool_round_trip(
@@ -1630,11 +1705,6 @@ fn rsa_pss_sigver_round_trip() {
     );
 }
 
-// ----------------------------------------------------------------------
-// SP 800-108r1 KBKDF (counter / feedback / double pipeline, answer
-// field `keyOut`)
-// ----------------------------------------------------------------------
-
 #[test]
 fn kbkdf_round_trip() {
     assert_round_trip(
@@ -1644,11 +1714,6 @@ fn kbkdf_round_trip() {
     );
 }
 
-// ----------------------------------------------------------------------
-// RSA DecryptionPrimitive (RSADP, SP 800-56Br2, modulo=2048,
-// answer fields `testPassed` + `pt` on pass)
-// ----------------------------------------------------------------------
-
 /// Shared assertion for the DecryptionPrimitive shape: each test case
 /// carries `testPassed` (bool) and `pt` (hex, only when `testPassed`
 /// is `true`).
@@ -1656,7 +1721,6 @@ fn assert_decprim_round_trip(relative: &str, label: &str) {
     ensure_initialized().unwrap();
     let slice = load(relative);
 
-    // Collect expected (tcId → (testPassed, Option<pt>))
     let mut expected: Vec<(i64, bool, Option<String>)> = Vec::new();
     for g in slice.get("testGroups").unwrap().as_array().unwrap() {
         for t in g.get("tests").unwrap().as_array().unwrap() {
@@ -1718,17 +1782,12 @@ fn rsa_decprim_round_trip() {
     );
 }
 
-// ----------------------------------------------------------------------
-// RSA SignaturePrimitive (testPassed + signature)
-// ----------------------------------------------------------------------
-
 /// Like `assert_decprim_round_trip` but checks `signature` instead
 /// of `pt`.
 fn assert_sigprim_round_trip(relative: &str, label: &str) {
     ensure_initialized().unwrap();
     let slice = load(relative);
 
-    // Collect expected (tcId, testPassed, Option<signature>).
     let mut expected: Vec<(i64, bool, Option<String>)> = Vec::new();
     for g in slice.get("testGroups").unwrap().as_array().unwrap() {
         for t in g.get("tests").unwrap().as_array().unwrap() {
@@ -1801,10 +1860,6 @@ fn rsa_sigprim_round_trip() {
     );
 }
 
-// ----------------------------------------------------------------------
-// TLS v1.2 KDF (RFC 7627, answer fields `masterSecret` + `keyBlock`)
-// ----------------------------------------------------------------------
-
 /// TLS v1.2 KDF round-trip: check both `masterSecret` and `keyBlock`
 /// in every test case across all groups.
 fn assert_tls12_kdf_round_trip(relative: &str, label: &str) {
@@ -1864,10 +1919,6 @@ fn tls12_kdf_rfc7627_round_trip() {
     );
 }
 
-// ----------------------------------------------------------------------
-// kdf-components / tls (standard TLS 1.2 KDF, non-EMS)
-// ----------------------------------------------------------------------
-
 #[test]
 fn kdf_comp_tls_round_trip() {
     acvp_harness::ensure_initialized().unwrap();
@@ -1876,10 +1927,6 @@ fn kdf_comp_tls_round_trip() {
         "kdf-components-tls",
     );
 }
-
-// ----------------------------------------------------------------------
-// Envelope preservation
-// ----------------------------------------------------------------------
 
 #[test]
 fn envelope_preserved_in_response() {
@@ -1898,10 +1945,6 @@ fn envelope_preserved_in_response() {
         Some("2.0")
     );
 }
-
-// ----------------------------------------------------------------------
-// RSA SigGen (PKCS#1v1.5 + PSS, FIPS186-5, answer = `signature`)
-// ----------------------------------------------------------------------
 
 /// Round-trip driver for RSA SigGen: the answer field is `signature`.
 fn assert_rsa_siggen_round_trip(relative: &str, label: &str) {
@@ -1953,10 +1996,6 @@ fn rsa_siggen_cross_round_trip() {
         "RSA-sigGen-cross",
     );
 }
-
-// ----------------------------------------------------------------------
-// RSA lifecycle cross-validation (keyGen→sigGen→sigVer)
-// ----------------------------------------------------------------------
 
 #[test]
 fn rsa_lifecycle_keygen_round_trip() {
@@ -2044,10 +2083,6 @@ fn rsa_lifecycle_sigver_round_trip() {
     );
 }
 
-// ----------------------------------------------------------------------
-// KAS-ECC-SSC (P-256 ECDH shared secret, answer field `z`)
-// ----------------------------------------------------------------------
-
 #[test]
 fn kas_ecc_ssc_round_trip() {
     assert_round_trip(
@@ -2066,10 +2101,6 @@ fn kas_ecc_ssc_lifecycle_round_trip() {
     );
 }
 
-// ----------------------------------------------------------------------
-// KAS-FFC-SSC (MODP-3072 DH shared secret, answer field `z`)
-// ----------------------------------------------------------------------
-
 #[test]
 fn kas_ffc_ssc_round_trip() {
     assert_round_trip(
@@ -2078,10 +2109,6 @@ fn kas_ffc_ssc_round_trip() {
         "KAS-FFC-SSC",
     );
 }
-
-// ----------------------------------------------------------------------
-// RSA OAEP encrypt/decrypt (RSA-2048 / SHA2-256, RFC8017)
-// ----------------------------------------------------------------------
 
 /// The OAEP slice contains two groups with different answer fields:
 /// - encrypt (direction=encrypt) → answer field `ct`
@@ -2443,7 +2470,6 @@ fn rsa_keygen_round_trip() {
 
     assert!(!expected_n.is_empty(), "RSA keyGen: no tests with field n");
 
-    // Strip all answer fields to create the prompt.
     let mut prompt = slice.clone();
     for field in &["n", "d", "e", "p", "q", "dmp1", "dmq1", "iqmp"] {
         strip_field(&mut prompt, field);
@@ -2499,10 +2525,6 @@ fn rsa_keygen_round_trip() {
     }
 }
 
-// ----------------------------------------------------------------------
-// SHAKE MCT + VOT
-// ----------------------------------------------------------------------
-
 /// SHAKE MCT resultsArray entry: md (hex) + outLen (number).
 /// The existing `collect_mct_expected` only handles string fields, but
 /// SHAKE MCT also has `outLen` as a JSON number, so we need a custom
@@ -2554,7 +2576,6 @@ fn assert_shake_mct_round_trip(relative: &str, label: &str) {
         "{label}: slice {relative} produced no expected SHAKE MCT answers"
     );
 
-    // Strip resultsArray from the prompt
     let mut prompt = slice.clone();
     strip_field(&mut prompt, "resultsArray");
 
@@ -2651,10 +2672,6 @@ fn shake_256_ldt_round_trip() {
     );
 }
 
-// ----------------------------------------------------------------------
-// RSA primitive lifecycle (sigPrim + decPrim, shared DRBG key)
-// ----------------------------------------------------------------------
-
 #[test]
 fn rsa_sigprim_lifecycle_round_trip() {
     assert_sigprim_round_trip(
@@ -2670,10 +2687,6 @@ fn rsa_decprim_lifecycle_round_trip() {
         "RSA-decPrim-lifecycle",
     );
 }
-
-// ----------------------------------------------------------------------
-// SP 800-185 derived functions (self-generated vectors)
-// ----------------------------------------------------------------------
 
 #[test]
 fn cshake_128_aft_round_trip() {
@@ -2747,10 +2760,6 @@ fn parallelhash_256_aft_round_trip() {
     );
 }
 
-// ----------------------------------------------------------------------
-// PBKDF2 (self-generated, answer field `derivedKey`)
-// ----------------------------------------------------------------------
-
 #[test]
 fn pbkdf2_aft_round_trip() {
     assert_round_trip(
@@ -2759,8 +2768,6 @@ fn pbkdf2_aft_round_trip() {
         "PBKDF2",
     );
 }
-
-// ── SP 800-185 XOF variants ───────────────────────────────────
 
 #[test]
 fn kmacxof_128_aft_round_trip() {
@@ -2816,8 +2823,6 @@ fn parallelhashxof_256_aft_round_trip() {
     );
 }
 
-// ── KMAC / KMACXOF MVT (MAC Verification Test) ───────────────
-
 #[test]
 fn kmac_128_mvt_round_trip() {
     assert_bool_round_trip(
@@ -2849,8 +2854,6 @@ fn kmacxof_256_mvt_round_trip() {
         "KMACXOF-256 MVT",
     );
 }
-
-// ── HMAC MVT (MAC Verification Test) + AES-CTR "CTR" test type ─
 
 #[test]
 fn hmac_sha1_mvt_round_trip() {

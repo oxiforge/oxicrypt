@@ -130,41 +130,45 @@ th.finalize_into(&mut out);
 ### AES-GCM (authenticated encryption)
 
 ```rust
-use oxicrypt_aes::{Aes256Key, gcm_encrypt, gcm_decrypt};
+use oxicrypt_aes::{GcmKey, gcm_encrypt, gcm_decrypt};
+use oxicrypt_drbg::HmacDrbgSha256;
 
-let key = Aes256Key::new(&key_bytes)?;
-let iv = [0u8; 12];  // 96-bit IV (use a unique IV for each message)
+let key = GcmKey::new(&key_bytes)?;  // 16, 24 or 32 bytes
+let mut drbg = HmacDrbgSha256::instantiate_from_module(b"")?;
 let aad = b"additional authenticated data";
 let plaintext = b"secret message";
 
-// Encrypt
+// Encrypt: the module draws the 96-bit IV from `drbg` and returns it
+// with the 128-bit tag.
 let mut ciphertext = vec![0u8; plaintext.len()];
-let mut tag = [0u8; 16];
-gcm_encrypt(&key, &iv, aad, plaintext, &mut ciphertext, &mut tag)?;
+let sealed = gcm_encrypt(&key, &mut drbg, aad, plaintext, &mut ciphertext)?;
 
-// Decrypt
+// Decrypt with the IV and tag the encryption returned.
 let mut recovered = vec![0u8; ciphertext.len()];
-gcm_decrypt(&key, &iv, aad, &ciphertext, &mut recovered, &tag)?;
+gcm_decrypt(&key, &sealed.iv, aad, &ciphertext, &sealed.tag, &mut recovered)?;
 ```
+
+Any of the module's DRBG types can be passed as `drbg`. Plaintext is
+limited to 2^36 − 32 bytes and AAD to 2^61 − 1 bytes.
 
 ### AES-CTR (streaming cipher)
 
 ```rust
-use oxicrypt_aes::{Aes256Key, ctr_xor};
+use oxicrypt_aes::{CtrKey, ctr};
 
-let key = Aes256Key::new(&key_bytes)?;
-let icb = [0u8; 16];  // Initial counter block
+let key = CtrKey::new(&key_bytes)?;
+let counter = [0u8; 16];  // Initial counter block
 let mut output = vec![0u8; plaintext.len()];
-ctr_xor(&key, &icb, &plaintext, &mut output);
+ctr(&key, &counter, &plaintext, &mut output)?;
 // Decrypt is the same operation (XOR is its own inverse)
 ```
 
 ### AES-CBC
 
 ```rust
-use oxicrypt_aes::{Aes256Key, cbc_encrypt, cbc_decrypt};
+use oxicrypt_aes::{CbcKey, cbc_encrypt, cbc_decrypt};
 
-let key = Aes256Key::new(&key_bytes)?;
+let key = CbcKey::new(&key_bytes)?;
 let iv = [0u8; 16];
 let mut ct = vec![0u8; plaintext.len()];  // Must be block-aligned
 cbc_encrypt(&key, &iv, &plaintext, &mut ct)?;
@@ -173,9 +177,9 @@ cbc_encrypt(&key, &iv, &plaintext, &mut ct)?;
 ### Key wrapping (SP 800-38F)
 
 ```rust
-use oxicrypt_aes::{Aes256Key, kw_wrap, kw_unwrap};
+use oxicrypt_aes::{KwKey, kw_wrap, kw_unwrap};
 
-let kek = Aes256Key::new(&kek_bytes)?;
+let kek = KwKey::new(&kek_bytes)?;
 let mut wrapped = vec![0u8; key_to_wrap.len() + 8];  // +8 for integrity check value
 kw_wrap(&kek, &key_to_wrap, &mut wrapped)?;
 ```

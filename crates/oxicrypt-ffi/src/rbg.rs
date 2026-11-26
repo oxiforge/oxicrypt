@@ -254,6 +254,25 @@ fn enter(drbg: &OxiDrbg) -> Result<Held<'_>, R> {
     acquire(drbg)
 }
 
+/// Runs `f` on the DRBG a handle holds, for a service that draws from a
+/// caller's handle, after steps 2 to 5 of the check order as
+/// `oxi_drbg_generate` performs them. The hold is released when `f`
+/// returns.
+///
+/// # Safety
+///
+/// `h` must be a non-NULL live handle from a `_new_rbg` function.
+pub(crate) unsafe fn with_held<T>(
+    h: *mut OxiDrbg,
+    f: impl FnOnce(&mut DrbgKind) -> T,
+) -> Result<T, R> {
+    // SAFETY: `h` is a live handle by contract; only atomics and the
+    // `UnsafeCell` are reached through this shared reference.
+    let drbg = unsafe { &*h };
+    let mut held = enter(drbg)?;
+    Ok(f(held.kind()?))
+}
+
 /// Takes over a handle inherited across fork, after this thread's
 /// compare-and-swap claimed it for this process, either by marking its
 /// recorded id [`RESETTING`] or by replacing a holder of another process
@@ -353,9 +372,9 @@ pub(crate) unsafe fn write_out(dst: *mut u8, src: &[u8]) -> Result<(), R> {
 #[cfg(feature = "fault-injection")]
 static FAIL_NEXT_ALLOC: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
 
-/// Whether the last freed DRBG handle, shared or typed, read as all zero
-/// after its wipe: 1 yes, 0 no, -1 when none has been freed since the last
-/// read.
+/// Whether the last allocation `wipe_and_free` released read as all zero
+/// after its wipe: 1 yes, 0 no, -1 when none has been released since the
+/// last read.
 #[cfg(feature = "fault-injection")]
 static LAST_FREED_ZERO: core::sync::atomic::AtomicI8 = core::sync::atomic::AtomicI8::new(-1);
 
@@ -365,9 +384,10 @@ pub(crate) fn fail_next_alloc() {
     FAIL_NEXT_ALLOC.store(true, Ordering::SeqCst);
 }
 
-/// 1 when the last freed DRBG handle read as all zero after its wipe, 0
-/// when it did not, -1 when no handle has been freed since the last read.
-/// Reading clears the record, so each free is observed on its own.
+/// 1 when the last allocation `wipe_and_free` released read as all zero
+/// after its wipe, 0 when it did not, -1 when none has been released since
+/// the last read. Reading clears the record, so each release is observed on
+/// its own.
 #[cfg(feature = "fault-injection")]
 pub(crate) fn last_freed_bytes_zero() -> c_int {
     c_int::from(LAST_FREED_ZERO.swap(-1, Ordering::SeqCst))
@@ -825,8 +845,9 @@ const FREE_FILL: u8 = 0xA5;
 /// # Safety
 ///
 /// `h` must be non-NULL and point to a live `T` in an allocation the global
-/// allocator made with the layout of `T` (a `Box<T>`, or `construct`), which
-/// no other thread is using and which is released once.
+/// allocator made with the layout of `T` (a `Box<T>`, `construct`, or the
+/// AES `key_new`), which no other thread is using and which is released
+/// once.
 pub(crate) unsafe fn wipe_and_free<T>(h: *mut T) {
     let layout = Layout::new::<T>();
     let bytes = h.cast::<u8>();
@@ -845,6 +866,16 @@ pub(crate) unsafe fn wipe_and_free<T>(h: *mut T) {
     // SAFETY: the allocation was made by the global allocator with this
     // layout, by contract, and is released once.
     unsafe { dealloc(bytes, layout) };
+    #[cfg(test)]
+    WIPED_AND_FREED.set(WIPED_AND_FREED.get().saturating_add(1));
+}
+
+#[cfg(test)]
+thread_local! {
+    /// In a unit test, the allocations [`wipe_and_free`] has wiped and
+    /// released on this thread.
+    pub(crate) static WIPED_AND_FREED: core::cell::Cell<usize> =
+        const { core::cell::Cell::new(0) };
 }
 
 static LABEL_UNDECIDED: &CStr = c"undecided";
@@ -2272,18 +2303,16 @@ fn reads_only(a: *const u8, i: usize, own: u64) -> bool {
         let mut flagged = Vec::new();
         let mut unexempted = 0;
         let mut handed_on = Vec::new();
-        let mut aes_handed_on = 0;
         for path in &files {
             let src = std::fs::read_to_string(path)
                 .unwrap_or_else(|e| panic!("reading {}: {e}", path.display()));
-            // The handed-on rule covers the algorithm symbols in `lib.rs` and
-            // the DRBG symbols in `drbg.rs` and `rbg.rs`. The AES mode
-            // symbols in `aes.rs` hand the caller's slice to the AES block
-            // methods, which make the re-check themselves before writing, so
-            // those sites are owned by the AES block methods and `aes.rs` is
-            // held to the copy rules only.
-            let slices_handed_on =
-                path.ends_with("lib.rs") || path.ends_with("drbg.rs") || path.ends_with("rbg.rs");
+            // The handed-on rule covers the AES mode symbols in `aes.rs`, the
+            // algorithm symbols in `lib.rs` and the DRBG symbols in
+            // `drbg.rs` and `rbg.rs`.
+            let slices_handed_on = path.ends_with("aes.rs")
+                || path.ends_with("lib.rs")
+                || path.ends_with("drbg.rs")
+                || path.ends_with("rbg.rs");
             unexempted += raw_output_copies(&src, &[], false).len();
             let file = path.file_name().unwrap_or_default().to_string_lossy();
             if slices_handed_on {
@@ -2291,9 +2320,6 @@ fn reads_only(a: *const u8, i: usize, own: u64) -> bool {
                     file.to_string(),
                     raw_output_copies(&src, DIRECT_COPY_ALLOWED, true),
                 ));
-            }
-            if path.ends_with("aes.rs") {
-                aes_handed_on = raw_output_copies(&src, DIRECT_COPY_ALLOWED, true).len();
             }
             for line in raw_output_copies(&src, DIRECT_COPY_ALLOWED, slices_handed_on) {
                 flagged.push(format!("src/{file}:{line}"));
@@ -2312,8 +2338,8 @@ fn reads_only(a: *const u8, i: usize, own: u64) -> bool {
         let held: Vec<&str> = handed_on.iter().map(|(f, _)| f.as_str()).collect();
         assert_eq!(
             held,
-            ["drbg.rs", "lib.rs", "rbg.rs"],
-            "the handed-on rule did not reach exactly its three files"
+            ["aes.rs", "drbg.rs", "lib.rs", "rbg.rs"],
+            "the handed-on rule did not reach exactly its four files"
         );
         for (file, lines) in &handed_on {
             assert!(
@@ -2321,11 +2347,6 @@ fn reads_only(a: *const u8, i: usize, own: u64) -> bool {
                 "src/{file} copies into or hands on a caller-derived slice at lines {lines:?}"
             );
         }
-        // The rule sees the AES mode symbols' slices it is not applied to.
-        assert!(
-            aes_handed_on > 0,
-            "the handed-on rule finds nothing in aes.rs"
-        );
         // `write_out` and the two status outputs each copy once, and the
         // status detail writes its terminator at an offset.
         assert_eq!(

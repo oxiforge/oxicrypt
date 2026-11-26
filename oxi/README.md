@@ -74,10 +74,10 @@ entropy source (1)
 sha (11)
   ok    SHA-256 KAT (NIST CAVP SHA256ShortMsg Len=8)
   ...
-aes (23)
+aes (31)
   ok    AES-256-GCM KAT (SP 800-38D / McGrew-Viega Case 15, encrypt+decrypt)
   ...
-90 of 90 self-tests passed
+98 of 98 self-tests passed
 self-test indicator: PASS
 ```
 

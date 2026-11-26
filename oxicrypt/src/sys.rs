@@ -37,7 +37,12 @@ macro_rules! opaque {
 }
 
 opaque!(
-    OxiAes256Key,
+    OxiAesCbcKey,
+    OxiAesCcmKey,
+    OxiAesCmacKey,
+    OxiAesCtrKey,
+    OxiAesGcmKey,
+    OxiAesKwKey,
     OxiCtrDrbgAes128,
     OxiCtrDrbgAes192,
     OxiCtrDrbgAes256,
@@ -1364,101 +1369,196 @@ unsafe extern "C" {
         out_max_len: usize,
         out_actual_len: *mut usize,
     ) -> c_int;
-    pub(crate) fn oxi_aes256_new(out_handle: *mut *mut OxiAes256Key, key: *const u8) -> c_int;
-    pub(crate) fn oxi_aes256_free(handle: *mut OxiAes256Key);
-    pub(crate) fn oxi_aes256_gcm_encrypt(
-        key: *const OxiAes256Key,
-        iv: *const u8,
+    pub(crate) fn oxi_aes_gcm_key_new(
+        key: *const u8,
+        key_len: usize,
+        out: *mut *mut OxiAesGcmKey,
+    ) -> c_int;
+    pub(crate) fn oxi_aes_gcm_key_new_with_count(
+        key: *const u8,
+        key_len: usize,
+        used: u64,
+        out: *mut *mut OxiAesGcmKey,
+    ) -> c_int;
+    pub(crate) fn oxi_aes_gcm_key_new_with_limit(
+        key: *const u8,
+        key_len: usize,
+        limit: u64,
+        out: *mut *mut OxiAesGcmKey,
+    ) -> c_int;
+    pub(crate) fn oxi_aes_gcm_key_invocations(key: *const OxiAesGcmKey, out: *mut u64) -> c_int;
+    pub(crate) fn oxi_aes_gcm_key_free(key: *mut OxiAesGcmKey);
+    pub(crate) fn oxi_aes_gcm_seal(
+        key: *const OxiAesGcmKey,
+        drbg: *mut OxiDrbg,
         aad: *const u8,
         aad_len: usize,
         plaintext: *const u8,
         pt_len: usize,
         ciphertext: *mut u8,
-        tag: *mut u8,
+        iv_out: *mut u8,
+        tag_out: *mut u8,
     ) -> c_int;
-    pub(crate) fn oxi_aes256_gcm_decrypt(
-        key: *const OxiAes256Key,
+    pub(crate) fn oxi_aes_gcm_open(
+        key: *const OxiAesGcmKey,
         iv: *const u8,
         aad: *const u8,
         aad_len: usize,
         ciphertext: *const u8,
         ct_len: usize,
-        plaintext: *mut u8,
         tag: *const u8,
+        plaintext: *mut u8,
     ) -> c_int;
-    pub(crate) fn oxi_aes256_cbc_encrypt(
-        key: *const OxiAes256Key,
+    pub(crate) fn oxi_aes_ccm_key_new(
+        key: *const u8,
+        key_len: usize,
+        tag_len: usize,
+        out: *mut *mut OxiAesCcmKey,
+    ) -> c_int;
+    pub(crate) fn oxi_aes_ccm_key_new_with_count(
+        key: *const u8,
+        key_len: usize,
+        tag_len: usize,
+        used: u64,
+        out: *mut *mut OxiAesCcmKey,
+    ) -> c_int;
+    pub(crate) fn oxi_aes_ccm_key_invocations(key: *const OxiAesCcmKey, out: *mut u64) -> c_int;
+    pub(crate) fn oxi_aes_ccm_key_free(key: *mut OxiAesCcmKey);
+    pub(crate) fn oxi_aes_ccm_seal(
+        key: *const OxiAesCcmKey,
+        nonce: *const u8,
+        nonce_len: usize,
+        aad: *const u8,
+        aad_len: usize,
+        pt: *const u8,
+        pt_len: usize,
+        ct: *mut u8,
+        tag: *mut u8,
+    ) -> c_int;
+    pub(crate) fn oxi_aes_ccm_open(
+        key: *const OxiAesCcmKey,
+        nonce: *const u8,
+        nonce_len: usize,
+        aad: *const u8,
+        aad_len: usize,
+        ct: *const u8,
+        ct_len: usize,
+        tag: *const u8,
+        pt: *mut u8,
+    ) -> c_int;
+    pub(crate) fn oxi_aes_cbc_key_new(
+        key: *const u8,
+        key_len: usize,
+        out: *mut *mut OxiAesCbcKey,
+    ) -> c_int;
+    pub(crate) fn oxi_aes_cbc_key_free(key: *mut OxiAesCbcKey);
+    pub(crate) fn oxi_aes_cbc_encrypt(
+        key: *const OxiAesCbcKey,
         iv: *const u8,
-        input: *const u8,
-        input_len: usize,
-        output: *mut u8,
-    ) -> c_int;
-    pub(crate) fn oxi_aes256_cbc_decrypt(
-        key: *const OxiAes256Key,
-        iv: *const u8,
-        input: *const u8,
-        input_len: usize,
-        output: *mut u8,
-    ) -> c_int;
-    pub(crate) fn oxi_aes256_ctr(
-        key: *const OxiAes256Key,
-        icb: *const u8,
         input: *const u8,
         len: usize,
-        output: *mut u8,
+        out: *mut u8,
     ) -> c_int;
-    pub(crate) fn oxi_aes256_ccm_encrypt(
-        key: *const OxiAes256Key,
-        nonce: *const u8,
-        nonce_len: usize,
-        aad: *const u8,
-        aad_len: usize,
-        plaintext: *const u8,
+    pub(crate) fn oxi_aes_cbc_decrypt(
+        key: *const OxiAesCbcKey,
+        iv: *const u8,
+        input: *const u8,
+        len: usize,
+        out: *mut u8,
+    ) -> c_int;
+    pub(crate) fn oxi_aes_ctr_key_new(
+        key: *const u8,
+        key_len: usize,
+        out: *mut *mut OxiAesCtrKey,
+    ) -> c_int;
+    pub(crate) fn oxi_aes_ctr_key_free(key: *mut OxiAesCtrKey);
+    pub(crate) fn oxi_aes_ctr(
+        key: *const OxiAesCtrKey,
+        counter: *const u8,
+        input: *const u8,
+        len: usize,
+        out: *mut u8,
+    ) -> c_int;
+    pub(crate) fn oxi_aes_kw_key_new(
+        key: *const u8,
+        key_len: usize,
+        out: *mut *mut OxiAesKwKey,
+    ) -> c_int;
+    pub(crate) fn oxi_aes_kw_key_free(key: *mut OxiAesKwKey);
+    pub(crate) fn oxi_aes_kw_wrap(
+        key: *const OxiAesKwKey,
+        pt: *const u8,
         pt_len: usize,
-        tlen: usize,
         out: *mut u8,
     ) -> c_int;
-    pub(crate) fn oxi_aes256_ccm_decrypt(
-        key: *const OxiAes256Key,
-        nonce: *const u8,
-        nonce_len: usize,
-        aad: *const u8,
-        aad_len: usize,
-        ciphertext: *const u8,
+    pub(crate) fn oxi_aes_kw_unwrap(
+        key: *const OxiAesKwKey,
+        ct: *const u8,
         ct_len: usize,
-        tlen: usize,
         out: *mut u8,
     ) -> c_int;
-    pub(crate) fn oxi_aes256_cmac(
-        key: *const OxiAes256Key,
+    pub(crate) fn oxi_aes_kwp_wrap(
+        key: *const OxiAesKwKey,
+        pt: *const u8,
+        pt_len: usize,
+        out: *mut u8,
+        out_cap: usize,
+        written: *mut usize,
+    ) -> c_int;
+    pub(crate) fn oxi_aes_kwp_unwrap(
+        key: *const OxiAesKwKey,
+        ct: *const u8,
+        ct_len: usize,
+        out: *mut u8,
+        out_cap: usize,
+        written: *mut usize,
+    ) -> c_int;
+    pub(crate) fn oxi_aes_kw_wrap_inverse(
+        key: *const OxiAesKwKey,
+        pt: *const u8,
+        pt_len: usize,
+        out: *mut u8,
+    ) -> c_int;
+    pub(crate) fn oxi_aes_kw_unwrap_inverse(
+        key: *const OxiAesKwKey,
+        ct: *const u8,
+        ct_len: usize,
+        out: *mut u8,
+    ) -> c_int;
+    pub(crate) fn oxi_aes_kwp_wrap_inverse(
+        key: *const OxiAesKwKey,
+        pt: *const u8,
+        pt_len: usize,
+        out: *mut u8,
+        out_cap: usize,
+        written: *mut usize,
+    ) -> c_int;
+    pub(crate) fn oxi_aes_kwp_unwrap_inverse(
+        key: *const OxiAesKwKey,
+        ct: *const u8,
+        ct_len: usize,
+        out: *mut u8,
+        out_cap: usize,
+        written: *mut usize,
+    ) -> c_int;
+    pub(crate) fn oxi_aes_cmac_key_new(
+        key: *const u8,
+        key_len: usize,
+        mac_len: usize,
+        out: *mut *mut OxiAesCmacKey,
+    ) -> c_int;
+    pub(crate) fn oxi_aes_cmac_key_free(key: *mut OxiAesCmacKey);
+    pub(crate) fn oxi_aes_cmac(
+        key: *const OxiAesCmacKey,
         msg: *const u8,
         msg_len: usize,
-        tag: *mut u8,
+        mac: *mut u8,
     ) -> c_int;
-    pub(crate) fn oxi_aes256_kw_wrap(
-        key: *const OxiAes256Key,
-        plaintext: *const u8,
-        pt_len: usize,
-        out: *mut u8,
-    ) -> c_int;
-    pub(crate) fn oxi_aes256_kw_unwrap(
-        key: *const OxiAes256Key,
-        ciphertext: *const u8,
-        ct_len: usize,
-        out: *mut u8,
-    ) -> c_int;
-    pub(crate) fn oxi_aes256_kwp_wrap(
-        key: *const OxiAes256Key,
-        plaintext: *const u8,
-        pt_len: usize,
-        out: *mut u8,
-    ) -> c_int;
-    pub(crate) fn oxi_aes256_kwp_unwrap(
-        key: *const OxiAes256Key,
-        ciphertext: *const u8,
-        ct_len: usize,
-        out_scratch: *mut u8,
-        out_len: *mut usize,
+    pub(crate) fn oxi_aes_cmac_verify(
+        key: *const OxiAesCmacKey,
+        msg: *const u8,
+        msg_len: usize,
+        mac: *const u8,
     ) -> c_int;
     pub(crate) fn oxi_hmac_drbg_sha256_new(out_handle: *mut *mut OxiHmacDrbgSha256) -> c_int;
     pub(crate) fn oxi_hmac_drbg_sha256_free(handle: *mut OxiHmacDrbgSha256);

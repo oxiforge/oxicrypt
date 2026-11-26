@@ -1,6 +1,6 @@
 # The module seeds its own DRBGs: the shared RBG interface and the seeding path
 
-Status: draft, awaiting approval. Approval is the merge of this file and its acceptance criteria in `ISA.md` as a pull request carrying no feature code. This document is the specification of the change that both `prd/aes-gcm-iv-and-spec-update.md` and `prd/oxi-pq-and-how-tos.md` build on; it lands as its own code change before either of them. Standards cited are FIPS 140-3 Implementation Guidance (IG) as last updated November 20, 2026, SP 800-90A Rev. 1, SP 800-90B, SP 800-90C and ISO/IEC 19790:2012.
+Status: approved with its acceptance criteria in `ISA.md` by the merge of pull request #309, 2026-11-23. This document is the specification of the change that both `prd/aes-gcm-iv-and-spec-update.md` and `prd/oxi-pq-and-how-tos.md` build on; it lands as its own code change before either of them. Standards cited are FIPS 140-3 Implementation Guidance (IG) as last updated November 20, 2026, SP 800-90A Rev. 1, SP 800-90B, SP 800-90C and ISO/IEC 19790:2012.
 
 ## Problem
 

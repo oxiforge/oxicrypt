@@ -1,5 +1,7 @@
 //! Test seams for the seed path, compiled only with the `fault-injection`
-//! feature or in this crate's own tests.
+//! feature or in this crate's own tests. In this crate's own tests with the
+//! feature, it also counts the generate temporaries of `crate::wipe` per
+//! thread.
 //!
 //! Every seam is process-global. Flags and counters live in atomics; the
 //! installed draw, the forced seed choice and the fixed stream each live
@@ -177,6 +179,60 @@ pub fn unwiped_draw_count() -> u64 {
 pub(crate) fn record_draw_dropped(wiped: bool) {
     let counter = if wiped { &WIPED_DRAWS } else { &UNWIPED_DRAWS };
     counter.fetch_add(1, Ordering::SeqCst);
+}
+
+/// Counter slots for the generate temporaries; a
+/// [`crate::wipe::WipedBuffer`] variant indexes one by its discriminant.
+#[cfg(all(test, feature = "fault-injection"))]
+const TEMPORARY_SLOTS: usize = 8;
+
+#[cfg(all(test, feature = "fault-injection"))]
+const _: () = assert!((crate::wipe::WipedBuffer::CtrGenerateBlock as usize) < TEMPORARY_SLOTS);
+
+// Per thread, so a test reads only the temporaries of its own calls while
+// other tests generate alongside it.
+#[cfg(all(test, feature = "fault-injection"))]
+std::thread_local! {
+    static TEMPORARIES: [core::cell::Cell<u64>; TEMPORARY_SLOTS] =
+        const { [const { core::cell::Cell::new(0) }; TEMPORARY_SLOTS] };
+    static TEMPORARY_WIPES: [core::cell::Cell<u64>; TEMPORARY_SLOTS] =
+        const { [const { core::cell::Cell::new(0) }; TEMPORARY_SLOTS] };
+    static UNWIPED_TEMPORARIES: core::cell::Cell<u64> = const { core::cell::Cell::new(0) };
+}
+
+#[cfg(all(test, feature = "fault-injection"))]
+fn bump(slots: &[core::cell::Cell<u64>; TEMPORARY_SLOTS], buffer: crate::wipe::WipedBuffer) {
+    if let Some(slot) = slots.get(buffer as usize) {
+        slot.set(slot.get().saturating_add(1));
+    }
+}
+
+#[cfg(all(test, feature = "fault-injection"))]
+pub(crate) fn record_temporary(buffer: crate::wipe::WipedBuffer) {
+    TEMPORARIES.with(|slots| bump(slots, buffer));
+}
+
+#[cfg(all(test, feature = "fault-injection"))]
+pub(crate) fn record_wipe(buffer: crate::wipe::WipedBuffer, zero_after: bool) {
+    TEMPORARY_WIPES.with(|slots| bump(slots, buffer));
+    if !zero_after {
+        UNWIPED_TEMPORARIES.with(|c| c.set(c.get().saturating_add(1)));
+    }
+}
+
+#[cfg(all(test, feature = "fault-injection"))]
+pub(crate) fn temporaries(buffer: crate::wipe::WipedBuffer) -> u64 {
+    TEMPORARIES.with(|slots| slots.get(buffer as usize).map_or(0, core::cell::Cell::get))
+}
+
+#[cfg(all(test, feature = "fault-injection"))]
+pub(crate) fn wipes(buffer: crate::wipe::WipedBuffer) -> u64 {
+    TEMPORARY_WIPES.with(|slots| slots.get(buffer as usize).map_or(0, core::cell::Cell::get))
+}
+
+#[cfg(all(test, feature = "fault-injection"))]
+pub(crate) fn unwiped_temporaries() -> u64 {
+    UNWIPED_TEMPORARIES.with(core::cell::Cell::get)
 }
 
 /// The number of seed-path states constructed, whichever path they chose.

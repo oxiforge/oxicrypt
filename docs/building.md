@@ -125,7 +125,7 @@ cargo test -p acvp-harness
 cargo test -p oxicrypt-sha
 ```
 
-The workspace test suite includes 120 ACVP round-trip tests, 7 CAVP SHS
+The workspace test suite includes 121 ACVP round-trip tests, 7 CAVP SHS
 round-trip tests, an ACVP envelope test, and unit tests across all algorithm
 crates.
 
@@ -192,12 +192,19 @@ side-channel posture.
 ## Constant-time validation
 
 ```bash
-# All seven CSP-touching targets (default 300k samples)
+# All fifteen CSP-touching targets (default 100k samples)
 cargo run -p ct-validation --release
 
 # Deep-dive a specific target
 cargo run -p ct-validation --release -- --samples 500000 ecdsa_p256_scalar_invert
+
+# Fail on WARN: a WARN is re-measured once at 500k samples, and a second WARN exits 1
+cargo run -p ct-validation --release -- --strict ghash
 ```
+
+A target times one primitive on two input classes, one fixed input and fresh random inputs, interleaved in one loop, and compares the two timing distributions with Welch's t-test. Exit codes: 0 when every target is CLEAN (or WARN without `--strict`), 1 on a LEAK or a repeated WARN under `--strict`, 2 on a usage error, an unknown target or a module that did not start.
+
+The controls build with the `fixture` feature and run by name: `cargo run -p ct-validation --release --features fixture -- --strict cmac_verify_leaky` must exit 1, and `-- --strict aa`, whose two classes are identical, is the baseline to read a LEAK against.
 
 The Security Policy holds the full methodology and verdict table;
 [`security-policy/README.md`](security-policy/README.md) explains how to

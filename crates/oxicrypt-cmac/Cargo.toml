@@ -18,6 +18,12 @@ workspace = true
 [dependencies]
 oxicrypt-aes = { workspace = true }
 oxicrypt-module = { workspace = true }
+oxicrypt-zeroize = { workspace = true }
+
+[features]
+# Test seams counting each wipe of a named secret intermediate, including
+# the AES schedule's, and failing a key derivation on request, default OFF.
+fault-injection = ["oxicrypt-aes/fault-injection"]
 
 [package.metadata.lama]
 # Registry discovery (LAMA SPEC.md, "Package registry discovery"). Must be a

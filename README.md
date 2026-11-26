@@ -37,10 +37,10 @@ can call a C function. Nothing to compile, nothing to sign.
 
 | Platform | Bundle | Library inside |
 |----------|--------|----------------|
-| Linux x86_64 | `oxicrypt-ffi-<version>-linux-x86_64.tar.gz` | `liboxicrypt_ffi.so.2` |
-| Linux aarch64 | `oxicrypt-ffi-<version>-linux-aarch64.tar.gz` | `liboxicrypt_ffi.so.2` |
-| macOS Apple silicon | `oxicrypt-ffi-<version>-macos-aarch64.tar.gz` | `liboxicrypt_ffi.2.dylib` |
-| macOS Intel | `oxicrypt-ffi-<version>-macos-x86_64.tar.gz` | `liboxicrypt_ffi.2.dylib` |
+| Linux x86_64 | `oxicrypt-ffi-<version>-linux-x86_64.tar.gz` | `liboxicrypt_ffi.so.3` |
+| Linux aarch64 | `oxicrypt-ffi-<version>-linux-aarch64.tar.gz` | `liboxicrypt_ffi.so.3` |
+| macOS Apple silicon | `oxicrypt-ffi-<version>-macos-aarch64.tar.gz` | `liboxicrypt_ffi.3.dylib` |
+| macOS Intel | `oxicrypt-ffi-<version>-macos-x86_64.tar.gz` | `liboxicrypt_ffi.3.dylib` |
 | Windows x86_64 | `oxicrypt-ffi-<version>-windows-x86_64.tar.gz` | `oxicrypt_ffi.dll` (+ `oxicrypt_ffi.dll.lib` import library, `oxicrypt_ffi.lib` static) |
 | Android arm64-v8a | `oxicrypt-ffi-<version>-android-aarch64.tar.gz` | `liboxicrypt_ffi.so` |
 | Android x86_64 | `oxicrypt-ffi-<version>-android-x86_64.tar.gz` | `liboxicrypt_ffi.so` |
@@ -61,7 +61,7 @@ SHA-256 of `"abc"` from Python, with nothing installed but Python:
 
 ```python
 import ctypes
-lib = ctypes.CDLL("./liboxicrypt_ffi.so.2")   # macOS: liboxicrypt_ffi.2.dylib · Windows: oxicrypt_ffi.dll
+lib = ctypes.CDLL("./liboxicrypt_ffi.so.3")   # macOS: liboxicrypt_ffi.3.dylib · Windows: oxicrypt_ffi.dll
 lib.oxi_sha256.argtypes = [ctypes.c_char_p, ctypes.c_size_t, ctypes.POINTER(ctypes.c_uint8)]
 assert lib.oxi_init(0) == 0                   # power-up self-tests and the integrity test run here
 out = (ctypes.c_uint8 * 32)()
@@ -250,7 +250,7 @@ sequencing.
 | Integrity | ML-DSA-87 signature (FIPS 204) over the module's typed extent, every file-backed byte the loader maps, verified with a public key embedded at build time | ISO/IEC 19790:2012 §7.10.2.2 (technique CAST: IG 10.2.A) |
 
 The self-test harness (`acvp-harness`) runs a known-answer test for every
-algorithm at power-up. Its power-up self-tests (currently 164) include CAVP-sourced vectors (with 9 SP 800-90A §9.3
+algorithm at power-up. Its power-up self-tests (currently 172) include CAVP-sourced vectors (with 9 SP 800-90A §9.3
 prediction-resistance DRBG KATs), plus 3 SP 800-90A §11.3 DRBG health
 tests, each traceable to its published source.
 
@@ -343,7 +343,7 @@ stay `no_std` in the default build.
 **Constant-time discipline.** At Level 1, FIPS 140-3 does not require
 side-channel resistance, but oxicrypt discloses its posture and actively
 validates it. A dudect-style timing harness (`tools/ct-validation`) runs
-Welch's t-test across seven CSP-touching primitives. Two real timing leaks
+Welch's t-test across fifteen CSP-touching primitives. Two real timing leaks
 were discovered and fixed by this harness.
 
 ### Performance features
@@ -403,7 +403,7 @@ all test types the demo server is expected to send:
 | LDT | SHA-3 family, SHAKE family |
 | GDT | RSA SigVer, RSA SigGen |
 
-120 ACVP round-trip tests plus 7 CAVP SHS round-trip tests check that the
+121 ACVP round-trip tests plus 7 CAVP SHS round-trip tests check that the
 handlers they cover reproduce the vendored answer fields byte-for-byte, and
 1 further test in `acvp-harness/tests/round_trip.rs` checks that a response
 carries the request's `algorithm` and `revision` fields. The figures are the `#[test]` functions in
@@ -486,16 +486,23 @@ bytes verbatim, polls the verdict, and advances `submit-status.txt`.
 ### Constant-time validation
 
 ```bash
-# Run all seven targets (default 300k samples each)
+# Run all fifteen targets (default 100k samples each)
 cargo run -p ct-validation --release
 
 # Deep-dive a specific target
 cargo run -p ct-validation --release -- --samples 500000 ecdsa_p256_scalar_invert
+
+# Fail on WARN: a WARN is re-measured once at 500k samples, and a second WARN exits 1
+cargo run -p ct-validation --release -- --strict ghash
 ```
 
-Verdicts: `|t| >= 5` is LEAK, `|t| >= 3` is WARN, else CLEAN. All seven
-targets pass at 300k samples. Full methodology and verdict table are in
-§12.1 of the security policy.
+Verdicts: `|t| >= 5` is LEAK, `|t| >= 3` is WARN, else CLEAN. LEAK exits 1;
+WARN exits 0, or 1 when it recurs under `--strict`. Full methodology and
+verdict table are in §12.1 of the security policy.
+
+A target times one primitive on two input classes, one fixed input and fresh random inputs, interleaved in one loop, and compares the two timing distributions with Welch's t-test. Exit codes: 0 when every target is CLEAN (or WARN without `--strict`), 1 on a LEAK or a repeated WARN under `--strict`, 2 on a usage error, an unknown target or a module that did not start.
+
+The controls build with the `fixture` feature and run by name: `cargo run -p ct-validation --release --features fixture -- --strict cmac_verify_leaky` must exit 1, and `-- --strict aa`, whose two classes are identical, is the baseline to read a LEAK against.
 
 ## Documentation
 
@@ -543,7 +550,7 @@ DH-3072 (RFC 3526 Group 15), ML-KEM-512/-768/-1024 (FIPS 203),
 ML-DSA-44/-65/-87 (FIPS 204), SLH-DSA full family — SHA2 + SHAKE — (FIPS 205), LMS — verification across the SP 800-208 §4.1–§4.4 grid (80 pairs) — and XMSS
 (SP 800-208). CNSA 2.0 / CNSA 1.0 / Migration algorithm-profile gating enforced
 across all algorithm crates and the C ABI (`oxicrypt-ffi`). 83 ACVP
-handlers, 164 power-up self-tests and 127 ACVP/CAVP round-trip tests, all
+handlers, 172 power-up self-tests and 128 ACVP/CAVP round-trip tests, all
 green at this release.
 
 **Phase 3 (current)** — ACVP demo-server grading, gap resolution, and
@@ -579,11 +586,13 @@ header lives at
 All exported symbols use the `oxi_` prefix, except `lama_manifest`,
 whose name is fixed by the LAMA specification. Status codes are
 `OxiResult` discriminants (0 = `Ok`; non-zero values are distinct
-failure modes — see `crates/oxicrypt-ffi/src/error.rs`). All AES-256
-modes (GCM, CBC, CTR, CCM, KW, KWP) and CMAC-AES-256 share a single
-opaque `OxiAes256Key` handle allocated via `oxi_aes256_new` and
-released via `oxi_aes256_free` (NULL-safe); a key constructed once
-can be reused across modes.
+failure modes — see `crates/oxicrypt-ffi/src/error.rs`). Each AES
+mode has its own opaque key handle (`OxiAesGcmKey`, `OxiAesCcmKey`,
+`OxiAesCbcKey`, `OxiAesCtrKey`, `OxiAesKwKey` for KW and KWP,
+`OxiAesCmacKey`), built from a 16-, 24- or 32-byte key by its mode's
+`_key_new` and released by its `_key_free` (NULL-safe); a handle passed
+to another mode's function returns `InvalidInput`. `oxi_aes_gcm_seal`
+draws each 96-bit IV from a caller's DRBG handle and returns it.
 
 Build the C library:
 
@@ -596,7 +605,7 @@ cargo build --release -p oxicrypt-ffi
 
 The C interface has an ABI number, `oxi_abi_version()`, which changes only when
 the interface breaks compatibility. The shared library's `SONAME` carries it
-(`liboxicrypt_ffi.so.2` on Linux; on macOS the install name `@rpath/liboxicrypt_ffi.2.dylib`;
+(`liboxicrypt_ffi.so.3` on Linux; on macOS the install name `@rpath/liboxicrypt_ffi.3.dylib`;
 Android keeps the plain `liboxicrypt_ffi.so`, the only form an application packages),
 so a program linked against it asks the loader for that file: deploy the library
 under that name, with `liboxicrypt_ffi.so` as a link to it for the linker, as the
@@ -669,7 +678,7 @@ The `oxicrypt-ffi` crate currently exposes:
 | Module lifecycle | `oxi_init`, `oxi_active_profile`, `oxi_is_operational` | FIPS 140-3 |
 | Hash one-shots | SHA-2 family + SHA-3 family | FIPS 180-4, FIPS 202 |
 | HMAC one-shots | HMAC over 7 SHA-2/SHA-3 hashes | FIPS 198-1 |
-| AES-256 (opaque key handle) | GCM, CBC, CTR, CCM, CMAC, KW, KWP — one `OxiAes256Key` shared across modes | FIPS 197, SP 800-38A/B/C/D/F |
+| AES-128/192/256 (one opaque key handle per mode) | GCM with a module-drawn IV, CCM, CBC, CTR, KW, KWP, CMAC — `oxi_aes_*` | FIPS 197, SP 800-38A/B/C/D/F |
 | KDF | HKDF (extract/expand) + TLS 1.3 HKDF-Expand-Label / Derive-Secret | RFC 5869, RFC 8446 §7.1 |
 | ECDSA | P-256 / P-384 stateless (`derive_public_key`, `sign_with_k`, `verify`) + DRBG-driven handle (`new_generate`, `public_key`, `sign_sha*`, `free`) | FIPS 186-5, IG 10.3.A |
 | EdDSA | Ed25519 deterministic keygen / sign / verify | RFC 8032, FIPS 186-5 §7.8 |

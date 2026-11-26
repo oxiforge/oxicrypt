@@ -15,6 +15,15 @@ oxicrypt-ecdh = { workspace = true }
 oxicrypt-eddsa = { workspace = true }
 oxicrypt-drbg = { workspace = true }
 oxicrypt-module = { workspace = true }
+oxicrypt-aes = { workspace = true }
+oxicrypt-cmac = { workspace = true }
+
+[features]
+# Builds the control targets: `cmac_verify_leaky`, whose comparison stops
+# at the first differing byte, so that the harness can be shown to fail
+# on a data-dependent exit, and `aa`, whose classes are identical, so
+# that a leak the harness or host makes can be told from one in a target.
+fixture = []
 
 [lib]
 name = "ct_validation"

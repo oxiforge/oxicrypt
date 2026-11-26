@@ -84,8 +84,8 @@
 
 use core::marker::PhantomData;
 
+use oxicrypt_aes::EcbKey;
 use oxicrypt_aes::modes::BlockCipher;
-use oxicrypt_aes::{Aes128Key, Aes192Key, Aes256Key};
 use oxicrypt_module::{
     Error, Rbg, RbgError, SelfTestStarted, Service, require_allowed, require_operational,
     require_operational_for_output, require_self_test_started, require_self_test_started_token,
@@ -93,6 +93,7 @@ use oxicrypt_module::{
 use oxicrypt_zeroize::Zeroizing;
 
 use crate::seed::get_entropy;
+use crate::wipe::{Wiped, WipedBuffer};
 
 /// AES block size in bytes (`outlen` in SP 800-90A terminology).
 const OUTLEN: usize = 16;
@@ -322,8 +323,8 @@ pub trait CipherFactory {
     /// Returns [`Error::NotOperational`] unless
     /// [`oxicrypt_module::require_self_test_started`] admits the call (in
     /// `Operational`, or in `SelfTest` on the thread running the power-up
-    /// self-tests); the cipher is built by the AES crate's
-    /// `*_internal` constructor.
+    /// self-tests); the cipher is built by the AES crate's non-service
+    /// constructor, `EcbKey::new`.
     ///
     /// # Panics
     ///
@@ -343,12 +344,12 @@ impl CipherFactory for Aes128Factory {
     const KEY_LEN: usize = 16;
     const SEED_LEN: usize = 32;
     const DRBG_SERVICE: Service = Service::CtrDrbgAes128;
-    type Cipher = Aes128Key;
+    type Cipher = EcbKey;
     fn from_key(key: &[u8]) -> Result<Self::Cipher, Error> {
         debug_assert_eq!(key.len(), Self::KEY_LEN);
         let mut k = Zeroizing::new([0u8; 16]);
         k.copy_from_slice(&key[..16]);
-        Aes128Key::new_internal(&k)
+        EcbKey::new(&k[..])
     }
 }
 
@@ -356,12 +357,12 @@ impl CipherFactory for Aes192Factory {
     const KEY_LEN: usize = 24;
     const SEED_LEN: usize = 40;
     const DRBG_SERVICE: Service = Service::CtrDrbgAes192;
-    type Cipher = Aes192Key;
+    type Cipher = EcbKey;
     fn from_key(key: &[u8]) -> Result<Self::Cipher, Error> {
         debug_assert_eq!(key.len(), Self::KEY_LEN);
         let mut k = Zeroizing::new([0u8; 24]);
         k.copy_from_slice(&key[..24]);
-        Aes192Key::new_internal(&k)
+        EcbKey::new(&k[..])
     }
 }
 
@@ -369,12 +370,12 @@ impl CipherFactory for Aes256Factory {
     const KEY_LEN: usize = 32;
     const SEED_LEN: usize = 48;
     const DRBG_SERVICE: Service = Service::CtrDrbgAes256;
-    type Cipher = Aes256Key;
+    type Cipher = EcbKey;
     fn from_key(key: &[u8]) -> Result<Self::Cipher, Error> {
         debug_assert_eq!(key.len(), Self::KEY_LEN);
         let mut k = Zeroizing::new([0u8; 32]);
         k.copy_from_slice(&key[..32]);
-        Aes256Key::new_internal(&k)
+        EcbKey::new(&k[..])
     }
 }
 
@@ -769,7 +770,7 @@ impl<F: CipherFactory> CtrDrbg<F> {
 
     /// Runs `entry`, then `body` with `output` as its re-check before
     /// writing, and wipes `out` on any error.
-    fn generate_gated(
+    pub(crate) fn generate_gated(
         &mut self,
         entry: Gate,
         output: Gate,
@@ -871,7 +872,7 @@ impl<F: CipherFactory> CtrDrbg<F> {
     }
 
     /// Body of [`Self::generate_df`]; the caller wipes `out` if it fails.
-    fn generate_df_unwiped(
+    pub(crate) fn generate_df_unwiped(
         &mut self,
         output: Gate,
         additional_input: Option<&[u8]>,
@@ -996,10 +997,6 @@ impl<F: CipherFactory> CtrDrbg<F> {
         self.reseed_counter = RESEED_INTERVAL + 1;
     }
 
-    // ------------------------------------------------------------------
-    // Internal helpers
-    // ------------------------------------------------------------------
-
     /// CTR_DRBG_Update — SP 800-90A §10.2.1.2.
     ///
     /// `provided_data` must be exactly `SEED_LEN` bytes long.
@@ -1013,7 +1010,7 @@ impl<F: CipherFactory> CtrDrbg<F> {
             increment_counter(&mut self.v);
             let mut block = Zeroizing::new([0u8; OUTLEN]);
             block.copy_from_slice(&self.v);
-            cipher.encrypt_block_with(&started, &mut block);
+            cipher.encrypt_block_with(&started, &mut block)?;
             let take = core::cmp::min(OUTLEN, F::SEED_LEN - produced);
             temp[produced..produced + take].copy_from_slice(&block[..take]);
             produced += take;
@@ -1037,11 +1034,11 @@ impl<F: CipherFactory> CtrDrbg<F> {
         let mut produced = 0usize;
         while produced < out.len() {
             increment_counter(&mut self.v);
-            let mut block = Zeroizing::new([0u8; OUTLEN]);
-            block.copy_from_slice(&self.v);
-            cipher.encrypt_block_with(&started, &mut block);
+            let mut block = Wiped::<OUTLEN>::new(WipedBuffer::CtrGenerateBlock);
+            block.bytes.copy_from_slice(&self.v);
+            cipher.encrypt_block_with(&started, &mut block.bytes)?;
             let take = core::cmp::min(OUTLEN, out.len() - produced);
-            out[produced..produced + take].copy_from_slice(&block[..take]);
+            out[produced..produced + take].copy_from_slice(&block.bytes[..take]);
             produced += take;
         }
         Ok(())
@@ -1050,7 +1047,7 @@ impl<F: CipherFactory> CtrDrbg<F> {
     /// Block_Cipher_df — SP 800-90A §10.3.2.
     ///
     /// Writes exactly `out.len()` derived bytes. `out.len()` must be
-    /// at most `F::SEED_LEN` in current use (and ≤ `MAX_SEED_LEN`).
+    /// at most `F::SEED_LEN`, which is at most `MAX_SEED_LEN`.
     fn block_cipher_df(&self, input: &[u8], out: &mut [u8]) -> Result<(), DrbgError> {
         if input.len() > MAX_DF_INPUT {
             return Err(DrbgError::InputTooLong);
@@ -1102,7 +1099,7 @@ impl<F: CipherFactory> CtrDrbg<F> {
             for b in &mut s_buf[4..OUTLEN] {
                 *b = 0;
             }
-            bcc(&k_cipher, &started, &s_buf[..total_bcc_in], &mut block);
+            bcc(&k_cipher, &started, &s_buf[..total_bcc_in], &mut block)?;
             let take = core::cmp::min(OUTLEN, target - produced);
             temp[produced..produced + take].copy_from_slice(&block[..take]);
             produced += take;
@@ -1116,7 +1113,7 @@ impl<F: CipherFactory> CtrDrbg<F> {
 
         let mut out_produced = 0usize;
         while out_produced < no_bits_return_bytes {
-            k2_cipher.encrypt_block_with(&started, &mut x);
+            k2_cipher.encrypt_block_with(&started, &mut x)?;
             let take = core::cmp::min(OUTLEN, no_bits_return_bytes - out_produced);
             out[out_produced..out_produced + take].copy_from_slice(&x[..take]);
             out_produced += take;
@@ -1151,7 +1148,12 @@ impl<F: CipherFactory> Drop for CtrDrbg<F> {
 
 /// BCC — SP 800-90A §10.3.3, written into `out`, which holds the chaining
 /// value throughout. `data` length must be a multiple of 16.
-fn bcc<B: BlockCipher>(cipher: &B, started: &SelfTestStarted, data: &[u8], out: &mut [u8; OUTLEN]) {
+fn bcc<B: BlockCipher>(
+    cipher: &B,
+    started: &SelfTestStarted,
+    data: &[u8],
+    out: &mut [u8; OUTLEN],
+) -> Result<(), Error> {
     debug_assert_eq!(data.len() % OUTLEN, 0);
     *out = [0u8; OUTLEN];
     let mut i = 0usize;
@@ -1159,9 +1161,10 @@ fn bcc<B: BlockCipher>(cipher: &B, started: &SelfTestStarted, data: &[u8], out: 
         for j in 0..OUTLEN {
             out[j] ^= data[i + j];
         }
-        cipher.encrypt_block_with(started, out);
+        cipher.encrypt_block_with(started, out)?;
         i += OUTLEN;
     }
+    Ok(())
 }
 
 /// Increment a 16-byte counter as a big-endian 128-bit integer,

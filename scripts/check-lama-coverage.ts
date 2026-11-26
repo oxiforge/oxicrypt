@@ -664,13 +664,26 @@ function manifestNames(text: string): Map<string, Set<string>> {
 // ── guard sweep ──────────────────────────────────────────────────────────
 
 /// Public `*_internal` functions plus the extra guarded functions below.
-const GUARDED_COUNT = 165;
+const GUARDED_COUNT = 162;
 
-/// KDF service entry points. These are approved services, so they open with
-/// the service gate `require_operational()?`. No other function in the sweep
-/// may: an `*_internal` function and an output point a CAST uses must admit
-/// `SelfTest`.
+/// Service entry points of the KDF, AES-mode and CMAC crates. These are
+/// approved services, so they open with the service gate
+/// `require_operational()?`. No other function in the sweep may: an
+/// `*_internal` function, a non-service constructor and an output point a
+/// CAST uses must admit `SelfTest`.
 const SERVICE_GATED: [string, string][] = [
+  ...["ecb_encrypt", "ecb_decrypt", "cbc_encrypt", "cbc_decrypt", "ctr", "gcm_encrypt", "gcm_decrypt"].map(
+    (n): [string, string] => ["oxicrypt-aes/src/modes.rs", n],
+  ),
+  ["oxicrypt-aes/src/ccm.rs", "ccm_encrypt"],
+  ["oxicrypt-aes/src/ccm.rs", "ccm_decrypt"],
+  ...["kw_wrap", "kw_unwrap", "kwp_wrap", "kwp_unwrap"].flatMap((n): [string, string][] => [
+    ["oxicrypt-aes/src/kw.rs", n],
+    ["oxicrypt-aes/src/kw.rs", `${n}_inverse`],
+  ]),
+  ["oxicrypt-cmac/src/cmac.rs", "new"],
+  ["oxicrypt-cmac/src/cmac.rs", "cmac"],
+  ["oxicrypt-cmac/src/cmac.rs", "cmac_verify"],
   ["oxicrypt-kdf/src/lib.rs", "extract"],
   ["oxicrypt-kdf/src/lib.rs", "expand"],
   ["oxicrypt-kdf/src/lib.rs", "derive"],
@@ -709,19 +722,10 @@ const GUARDED_EXTRA: [string, string][] = [
   ["oxicrypt-hmac/src/lib.rs", "finalize"],
   ["oxicrypt-xof/src/lib.rs", "squeeze"],
   ["oxicrypt-xof/src/lib.rs", "finalize_into"],
-  ["oxicrypt-cmac/src/cmac.rs", "cmac_tag"],
-  // AES block and mode output points.
-  ["oxicrypt-aes/src/block.rs", "encrypt_block"],
-  ["oxicrypt-aes/src/block.rs", "decrypt_block"],
-  ...["ecb_encrypt", "ecb_decrypt", "cbc_encrypt", "cbc_decrypt", "ctr_xor", "gcm_encrypt", "gcm_decrypt"].map(
-    (n): [string, string] => ["oxicrypt-aes/src/modes.rs", n],
-  ),
-  ["oxicrypt-aes/src/ccm.rs", "ccm_encrypt"],
-  ["oxicrypt-aes/src/ccm.rs", "ccm_decrypt"],
-  ...["kw_wrap", "kw_unwrap", "kwp_wrap", "kwp_unwrap"].flatMap((n): [string, string][] => [
-    ["oxicrypt-aes/src/kw.rs", n],
-    ["oxicrypt-aes/src/kw.rs", `${n}_inverse_cipher`],
-  ]),
+  // The AES non-service constructor the CASTs, CTR_DRBG and CMAC use, and
+  // the in-place expansion CMAC uses.
+  ["oxicrypt-aes/src/block.rs", "new"],
+  ["oxicrypt-aes/src/block.rs", "expand_in_place"],
   ...SERVICE_GATED,
 ];
 

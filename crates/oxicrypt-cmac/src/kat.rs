@@ -22,13 +22,11 @@
 
 use oxicrypt_module::{KatEntry, SelfTestFailure};
 
-use crate::cmac::{cmac_aes128_internal, cmac_aes192_internal, cmac_aes256_internal};
+use crate::cmac::full_tag;
 
-// ----------------------------------------------------------------------
-// Shared message (the same four 16-byte blocks SP 800-38A uses —
-// first 16 bytes = the Mlen=128 message, first 40 bytes = the
-// Mlen=320 message).
-// ----------------------------------------------------------------------
+// Shared message: the same four 16-byte blocks SP 800-38A uses. The
+// first 16 bytes are the Mlen=128 message, the first 40 bytes the
+// Mlen=320 message.
 
 const D_MSG: [u8; 64] = [
     0x6b, 0xc1, 0xbe, 0xe2, 0x2e, 0x40, 0x9f, 0x96, 0xe9, 0x3d, 0x7e, 0x11, 0x73, 0x93, 0x17, 0x2a,
@@ -37,9 +35,7 @@ const D_MSG: [u8; 64] = [
     0xf6, 0x9f, 0x24, 0x45, 0xdf, 0x4f, 0x9b, 0x17, 0xad, 0x2b, 0x41, 0x7b, 0xe6, 0x6c, 0x37, 0x10,
 ];
 
-// ----------------------------------------------------------------------
-// AES-128 — NIST CMAC examples
-// ----------------------------------------------------------------------
+// AES-128: the NIST CMAC examples.
 
 const D1_KEY: [u8; 16] = [
     0x2b, 0x7e, 0x15, 0x16, 0x28, 0xae, 0xd2, 0xa6, 0xab, 0xf7, 0x15, 0x88, 0x09, 0xcf, 0x4f, 0x3c,
@@ -56,7 +52,7 @@ const D1_EX3_TAG: [u8; 16] = [
 ];
 
 fn kat_aes128_example2() -> Result<(), SelfTestFailure> {
-    let got = cmac_aes128_internal(&D1_KEY, &D_MSG[..16]).map_err(|_| SelfTestFailure)?;
+    let got = full_tag(&D1_KEY, &D_MSG[..16]).map_err(|_| SelfTestFailure)?;
     if got == D1_EX2_TAG {
         Ok(())
     } else {
@@ -65,7 +61,7 @@ fn kat_aes128_example2() -> Result<(), SelfTestFailure> {
 }
 
 fn kat_aes128_example3() -> Result<(), SelfTestFailure> {
-    let got = cmac_aes128_internal(&D1_KEY, &D_MSG[..40]).map_err(|_| SelfTestFailure)?;
+    let got = full_tag(&D1_KEY, &D_MSG[..40]).map_err(|_| SelfTestFailure)?;
     if got == D1_EX3_TAG {
         Ok(())
     } else {
@@ -73,9 +69,7 @@ fn kat_aes128_example3() -> Result<(), SelfTestFailure> {
     }
 }
 
-// ----------------------------------------------------------------------
-// AES-192 — NIST CMAC examples
-// ----------------------------------------------------------------------
+// AES-192: the NIST CMAC examples.
 
 const D2_KEY: [u8; 24] = [
     0x8e, 0x73, 0xb0, 0xf7, 0xda, 0x0e, 0x64, 0x52, 0xc8, 0x10, 0xf3, 0x2b, 0x80, 0x90, 0x79, 0xe5,
@@ -93,7 +87,7 @@ const D2_EX3_TAG: [u8; 16] = [
 ];
 
 fn kat_aes192_example2() -> Result<(), SelfTestFailure> {
-    let got = cmac_aes192_internal(&D2_KEY, &D_MSG[..16]).map_err(|_| SelfTestFailure)?;
+    let got = full_tag(&D2_KEY, &D_MSG[..16]).map_err(|_| SelfTestFailure)?;
     if got == D2_EX2_TAG {
         Ok(())
     } else {
@@ -102,7 +96,7 @@ fn kat_aes192_example2() -> Result<(), SelfTestFailure> {
 }
 
 fn kat_aes192_example3() -> Result<(), SelfTestFailure> {
-    let got = cmac_aes192_internal(&D2_KEY, &D_MSG[..40]).map_err(|_| SelfTestFailure)?;
+    let got = full_tag(&D2_KEY, &D_MSG[..40]).map_err(|_| SelfTestFailure)?;
     if got == D2_EX3_TAG {
         Ok(())
     } else {
@@ -110,9 +104,7 @@ fn kat_aes192_example3() -> Result<(), SelfTestFailure> {
     }
 }
 
-// ----------------------------------------------------------------------
-// AES-256 — NIST CMAC examples
-// ----------------------------------------------------------------------
+// AES-256: the NIST CMAC examples.
 
 const D3_KEY: [u8; 32] = [
     0x60, 0x3d, 0xeb, 0x10, 0x15, 0xca, 0x71, 0xbe, 0x2b, 0x73, 0xae, 0xf0, 0x85, 0x7d, 0x77, 0x81,
@@ -130,7 +122,7 @@ const D3_EX3_TAG: [u8; 16] = [
 ];
 
 fn kat_aes256_example2() -> Result<(), SelfTestFailure> {
-    let got = cmac_aes256_internal(&D3_KEY, &D_MSG[..16]).map_err(|_| SelfTestFailure)?;
+    let got = full_tag(&D3_KEY, &D_MSG[..16]).map_err(|_| SelfTestFailure)?;
     if got == D3_EX2_TAG {
         Ok(())
     } else {
@@ -139,17 +131,13 @@ fn kat_aes256_example2() -> Result<(), SelfTestFailure> {
 }
 
 fn kat_aes256_example3() -> Result<(), SelfTestFailure> {
-    let got = cmac_aes256_internal(&D3_KEY, &D_MSG[..40]).map_err(|_| SelfTestFailure)?;
+    let got = full_tag(&D3_KEY, &D_MSG[..40]).map_err(|_| SelfTestFailure)?;
     if got == D3_EX3_TAG {
         Ok(())
     } else {
         Err(SelfTestFailure)
     }
 }
-
-// ----------------------------------------------------------------------
-// Public KAT slice
-// ----------------------------------------------------------------------
 
 /// Power-up KAT entries for this crate. Consumed by `acvp-harness`.
 pub const KATS: &[KatEntry] = &[
@@ -184,14 +172,17 @@ pub const KATS: &[KatEntry] = &[
 mod tests {
     use super::KATS;
 
-    use crate::test_support::UNSIGNED_TEST_BINARY;
+    use crate::test_support::{UNSIGNED_TEST_BINARY, isolated};
     use oxicrypt_module::{State, initialize_with_tests, state};
 
     /// The KATs run as the power-up self-tests do: in `SelfTest`, where the
-    /// `*_internal` functions they use admit the call.
+    /// ungated constructor and core they use admit the call. Initialisation
+    /// happens once per process, so the test runs in a process of its own.
     #[test]
     fn all_kats_pass() {
-        initialize_with_tests(UNSIGNED_TEST_BINARY, KATS).unwrap();
-        assert_eq!(state(), State::Operational);
+        isolated("kat::tests::all_kats_pass", &["self-test"], |_| {
+            initialize_with_tests(UNSIGNED_TEST_BINARY, KATS).unwrap();
+            assert_eq!(state(), State::Operational);
+        });
     }
 }
