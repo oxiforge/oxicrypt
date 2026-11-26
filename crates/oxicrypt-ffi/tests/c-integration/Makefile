@@ -52,8 +52,13 @@ VERIFY_KEY ?= $(dir $(SIGNING_KEY))integrity-verify.pub
 FINGERPRINT = $(shell sha256sum $(VERIFY_KEY) | cut -d' ' -f1)
 SIGN_CMD = $(if $(SIGNING_KEY),$(SIGN) --sign --key $(SIGNING_KEY),$(error SIGNING_KEY is not set; see the prerequisites at the top of this Makefile))
 
+# test_pq_input_checks reads the ML-KEM key-generation vectors from here at
+# run time. The path is compiled in as a quoted C string, so a checkout path
+# containing a quote character breaks the build.
+ML_KEM_DATA_DIR := $(abspath ../../../oxicrypt-ml-kem/tests/data)
+
 CC := cc
-CFLAGS := -I$(INCLUDE_DIR) -Wall -Wextra -O2
+CFLAGS := -I$(INCLUDE_DIR) -Wall -Wextra -O2 -DML_KEM_DATA_DIR='"$(ML_KEM_DATA_DIR)"'
 LDLIBS := -lpthread -ldl -lm
 
 TESTS := test_init test_aes_gcm test_aes_modes test_handles \
@@ -63,7 +68,8 @@ TESTS := test_init test_aes_gcm test_aes_modes test_handles \
          test_lms_sha256_m32_h5_w4_smoke test_lms_shake_m32_h10_w4_smoke \
          test_lms_verify test_drbg_smoke \
          test_kw_fail_writes_nothing test_ccm_decrypt_code_is_22 test_buffer_contract \
-         test_gcm_key_count_ops test_key_handle_kind_checked
+         test_gcm_key_count_ops test_key_handle_kind_checked \
+         test_pq_rbg_entry_points test_pq_input_checks test_concurrent_services
 
 # Prints one row=<name> line per oxi_aes_* function it drives and
 # enumerated=<n>; the sorted row names are compared, as a list, with the
@@ -118,11 +124,43 @@ AES_KIND_CHECK = if [ $$t = $(AES_KIND_TEST) ]; then \
 	    rmdir "$$cmp_dir"; \
 	  fi
 
+# Prints one row=<name> line per ML-DSA and ML-KEM function it drives; the
+# sorted row names are compared, as a list, with the keygen_rbg, expand_key
+# and encapsulate_rbg functions oxicrypt.h declares, in test-cdylib and
+# test-staticlib. A missing, extra or duplicated row, or a header with no
+# such function, fails the run and prints the difference.
+PQ_CONTRACT_TEST := test_pq_rbg_entry_points
+PQ_SYMBOL_NAME_PATTERN := '^int oxi_ml_(dsa|kem)_[0-9]+_(keygen_rbg|expand_key|encapsulate_rbg)\('
+# Run inside a test loop after $$t passed, with its output in $$out.
+PQ_CONTRACT_CHECK = if [ $$t = $(PQ_CONTRACT_TEST) ]; then \
+	    cmp_dir=$$(mktemp -d); \
+	    echo "$$out" | sed -n 's/^row=\(oxi_ml_[a-z0-9_]*\)$$/\1/p' | sort > "$$cmp_dir/got"; \
+	    grep -oE $(PQ_SYMBOL_NAME_PATTERN) $(INCLUDE_DIR)/oxicrypt.h | sed 's/^int //; s/($$//' | sort > "$$cmp_dir/want"; \
+	    if [ ! -s "$$cmp_dir/want" ]; then \
+	      echo "FAILED: $$t: oxicrypt.h declares no ML-DSA or ML-KEM keygen_rbg, expand_key or encapsulate_rbg"; \
+	      failed=$$((failed + 1)); \
+	    elif ! cmp -s "$$cmp_dir/got" "$$cmp_dir/want"; then \
+	      echo "FAILED: $$t: its rows differ from the ML-DSA and ML-KEM functions in oxicrypt.h (< rows, > header):"; \
+	      diff "$$cmp_dir/got" "$$cmp_dir/want" | grep '^[<>]'; \
+	      failed=$$((failed + 1)); \
+	    else \
+	      echo "$$t: $$(wc -l < "$$cmp_dir/want") rows match the ML-DSA and ML-KEM functions oxicrypt.h declares"; \
+	    fi; \
+	    rm -f "$$cmp_dir/got" "$$cmp_dir/want"; \
+	    rmdir "$$cmp_dir"; \
+	  fi
+
 # Passes only against an artifact that was NOT signed.
 REFUSAL_TEST := test_integrity_unsigned
 
-# Run against the fault-injection library only.
-FAULT_TESTS := test_oxi_drbg_handle test_drbg_buffer_contract \
+# Run against the fault-injection library, compiled with
+# OXICRYPT_FAULT_INJECTION defined. Of the three tests also in TESTS,
+# test_pq_rbg_entry_points and test_concurrent_services add fault-only
+# cases under that macro and test_pq_input_checks runs unchanged; the rest
+# run against this library only.
+FAULT_TESTS := test_pq_rbg_entry_points test_pq_input_checks test_concurrent_services \
+               test_pct_failure_code_ecdsa test_pct_failure_code_ecdh test_pct_failure_code_rsa \
+               test_oxi_drbg_handle test_drbg_buffer_contract \
                test_typed_handle_fork_refusal_ecdsa test_typed_handle_fork_refusal_ecdh \
                test_typed_handle_fork_refusal_rsa test_typed_handle_fork_refusal_dh \
                test_drbg_free_zeroizes test_new_rbg_alloc_failure \
@@ -170,8 +208,9 @@ help:
 all: test-cdylib test-staticlib test-unsigned test-fault
 
 # Runs every test even after a failure, so one run reports all of them.
-# Both link modes also fail when the AES contract test's row names differ
-# from the int-returning oxi_aes_* functions oxicrypt.h declares.
+# Both link modes also fail when the row names of AES_CONTRACT_TEST,
+# AES_KIND_TEST or PQ_CONTRACT_TEST differ from the oxicrypt.h functions
+# each covers.
 test-cdylib: $(addprefix $(OUT_DIR)/cdylib/,$(TESTS)) $(SIGNED_SO)
 	@failed=0; \
 	for t in $(TESTS); do \
@@ -181,6 +220,7 @@ test-cdylib: $(addprefix $(OUT_DIR)/cdylib/,$(TESTS)) $(SIGNED_SO)
 	  if [ $$rc -ne 0 ]; then echo "FAILED: $$t (exit $$rc)"; failed=$$((failed + 1)); continue; fi; \
 	  $(AES_CONTRACT_CHECK); \
 	  $(AES_KIND_CHECK); \
+	  $(PQ_CONTRACT_CHECK); \
 	done; \
 	echo "cdylib: $$(( $(words $(TESTS)) - failed )) passed, $$failed failed"; \
 	[ $$failed -eq 0 ]
@@ -194,6 +234,7 @@ test-staticlib: $(STATICLIB_BINS)
 	  if [ $$rc -ne 0 ]; then echo "FAILED: $$t (exit $$rc)"; failed=$$((failed + 1)); continue; fi; \
 	  $(AES_CONTRACT_CHECK); \
 	  $(AES_KIND_CHECK); \
+	  $(PQ_CONTRACT_CHECK); \
 	done; \
 	echo "staticlib: $$(( $(words $(TESTS)) - failed )) passed, $$failed failed"; \
 	[ $$failed -eq 0 ]
@@ -262,7 +303,7 @@ $(FAULT_SO): fault-lib $(SIGN)
 
 $(OUT_DIR)/fault/bin/%: %.c fault-lib
 	@mkdir -p $(dir $@)
-	$(CC) $(CFLAGS) -o $@ $< -L$(FAULT_LIB_DIR) -loxicrypt_ffi $(LDLIBS)
+	$(CC) $(CFLAGS) -DOXICRYPT_FAULT_INJECTION -o $@ $< -L$(FAULT_LIB_DIR) -loxicrypt_ffi $(LDLIBS)
 
 $(SIGNED_SO): $(LIB_DIR)/liboxicrypt_ffi.so $(SIGN)
 	@mkdir -p $(dir $@)

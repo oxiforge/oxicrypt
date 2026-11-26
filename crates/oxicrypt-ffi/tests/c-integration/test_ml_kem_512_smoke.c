@@ -1,7 +1,7 @@
 /* ML-KEM-512 C ABI smoke test: key generation from a DRBG handle with the
  * seed returned, key expansion of that seed, encapsulation with m drawn
  * from the handle, and decapsulation, including implicit rejection of a
- * tampered ciphertext (FIPS 203 Algorithm 21).
+ * tampered ciphertext (FIPS 203 Algorithms 18 and 21).
  *
  * Sizes (FIPS 203 Table 3): seed d || z 64 bytes, ek 800, dk 1632,
  * ct 768, shared secret 32. ML-KEM-512 is admitted under the unrestricted
