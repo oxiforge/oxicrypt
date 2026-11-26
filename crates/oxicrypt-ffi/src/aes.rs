@@ -441,7 +441,7 @@ mod handle {
 
 /// One caller range, after step 4 of the check order.
 #[derive(Clone, Copy)]
-struct Span {
+pub(crate) struct Span {
     start: usize,
     len: usize,
     writable: bool,
@@ -449,7 +449,7 @@ struct Span {
 
 /// Step 4 for one pointer and length pair. A fixed-size pointer is passed
 /// with its size, so a NULL one is refused as a NULL with a length.
-fn span<T>(ptr: *const T, len: usize, writable: bool) -> Result<Span, R> {
+pub(crate) fn span<T>(ptr: *const T, len: usize, writable: bool) -> Result<Span, R> {
     if ptr.is_null() && len > 0 {
         return Err(R::NullPointer);
     }
@@ -464,7 +464,7 @@ fn span<T>(ptr: *const T, len: usize, writable: bool) -> Result<Span, R> {
 }
 
 /// Step 5: no writable range shares a byte with any other range.
-fn disjoint(spans: &[Span]) -> Result<(), R> {
+pub(crate) fn disjoint(spans: &[Span]) -> Result<(), R> {
     for (i, a) in spans.iter().enumerate() {
         for b in spans.iter().skip(i.saturating_add(1)) {
             let shared = a.len > 0
@@ -485,7 +485,7 @@ fn disjoint(spans: &[Span]) -> Result<(), R> {
 ///
 /// A non-NULL `ptr` must be valid for reads of `len` bytes for `'a`, and no
 /// writable range of the call may overlap it.
-unsafe fn input<'a>(ptr: *const u8, len: usize) -> &'a [u8] {
+pub(crate) unsafe fn input<'a>(ptr: *const u8, len: usize) -> &'a [u8] {
     if len == 0 {
         return &[];
     }
@@ -515,7 +515,7 @@ fn staged(len: usize) -> Result<Zeroizing<Vec<u8>>, R> {
 }
 
 /// The C status of a shim result.
-fn code(r: Result<(), R>) -> c_int {
+pub(crate) fn code(r: Result<(), R>) -> c_int {
     match r {
         Ok(()) => R::Ok as c_int,
         Err(e) => e as c_int,
@@ -531,7 +531,7 @@ fn code(r: Result<(), R>) -> c_int {
 ///
 /// Each destination must be valid for writes of its source's length and
 /// must overlap no source and no other destination.
-unsafe fn write_all(outputs: &[(*mut u8, &[u8])]) -> Result<(), R> {
+pub(crate) unsafe fn write_all(outputs: &[(*mut u8, &[u8])]) -> Result<(), R> {
     for (copied, &(dst, src)) in outputs.iter().enumerate() {
         // SAFETY: `dst` is valid for `src.len()` bytes and overlaps no
         // source, by contract.

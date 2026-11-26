@@ -8,8 +8,8 @@
 //! generation in the process whichever set it is. With the flag clear, key
 //! generation takes its production path unchanged.
 //!
-//! The module also holds the ACVP key-generation vectors for ML-DSA-44 and
-//! ML-DSA-65 that the crate's unit tests and its fault tests check
+//! The module also holds an ACVP key-generation vector for each parameter
+//! set, which the crate's tests and the C interface's tests check
 //! `expand_key` against.
 
 #[cfg(all(test, feature = "fault-injection"))]
@@ -25,6 +25,11 @@ static CORRUPT_NEXT_PK: AtomicBool = AtomicBool::new(false);
 /// The test then fails, and the module enters its error state.
 pub fn corrupt_next_pk() {
     CORRUPT_NEXT_PK.store(true, Ordering::SeqCst);
+}
+
+/// Disarms [`corrupt_next_pk`].
+pub fn disarm() {
+    CORRUPT_NEXT_PK.store(false, Ordering::SeqCst);
 }
 
 /// Whether [`corrupt_next_pk`] armed this call; clears the flag.
@@ -54,6 +59,14 @@ pub const ML_DSA_65_ACVP_KEY_HASH: [u8; 32] = [
     0xae, 0x95, 0xea, 0x0d, 0xaa, 0x80, 0x19, 0x9e, 0x7b, 0x4a, 0x74, 0xeb, 0x5a, 0x1b, 0x1d, 0xc6,
     0xc3, 0x80, 0x5b, 0xd0, 0x1d, 0x2f, 0xa7, 0x8d, 0x7c, 0x4f, 0xba, 0x8c, 0x25, 0x5a, 0xa1, 0x3d,
 ];
+
+/// ML-DSA-87 key-generation seed ξ, ACVP ML-DSA specification
+/// (draft-celi-acvp-ml-dsa-01) §6.1.2 Table 1, row 13.
+pub const ML_DSA_87_ACVP_SEED: [u8; 32] = crate::cast_vectors::ml_dsa_87::REJ_SEED;
+
+/// SHA2-256(pk ‖ sk) of the key pair [`ML_DSA_87_ACVP_SEED`] expands to,
+/// from the same row.
+pub const ML_DSA_87_ACVP_KEY_HASH: [u8; 32] = crate::cast_vectors::ml_dsa_87::REJ_KEY_HASH;
 
 #[cfg(all(test, feature = "fault-injection"))]
 const SLOTS: usize = crate::wipe::ALL.len();

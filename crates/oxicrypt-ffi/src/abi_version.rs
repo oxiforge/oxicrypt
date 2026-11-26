@@ -6,4 +6,4 @@
 /// interface breaks compatibility: a function removed, a parameter or return
 /// type changed, or an output size changed. Adding a function does not change
 /// it. Included as source by `build.rs` and `lib.rs`, so both read one value.
-const OXI_ABI_VERSION: i32 = 3;
+const OXI_ABI_VERSION: i32 = 4;

@@ -20,8 +20,23 @@ void oxi_test_set_seed_stream(const uint8_t *seed, uintptr_t len);
 /* Simulates another thread using the handle: on non-zero takes the hold for this process, 0 releases it. Requires the fault-injection feature. */
 void oxi_test_hold_busy(OxiDrbg *h, int on);
 
-/* Simulates a pairwise consistency test failure in the next key generation (on non-zero arms, 0 disarms). Requires the fault-injection feature. */
+/* Simulates a pairwise consistency test failure in the next key generation of each of ML-DSA, ML-KEM, ECDSA, ECDH and RSA (on non-zero arms all five, 0 disarms them): each returns 3 and the module enters its error state. Ed25519 is not armed: no C function runs the Ed25519 pairwise consistency test. Requires the fault-injection feature. */
 void oxi_test_corrupt_next_key(int on);
+
+/* Simulates a pairwise consistency test failure in the next ML-DSA key generation or key expansion of any parameter set: it returns 3 and the module enters its error state. Requires the fault-injection feature. */
+void oxi_test_corrupt_next_pk_ml_dsa(void);
+
+/* Simulates a pairwise consistency test failure in the next ML-KEM key generation or key expansion of any parameter set: it returns 3 and the module enters its error state. Requires the fault-injection feature. */
+void oxi_test_corrupt_next_dk_ml_kem(void);
+
+/* Simulates a pairwise consistency test failure in the next ECDSA key generation of either curve: it returns 3 and the module enters its error state. Requires the fault-injection feature. */
+void oxi_test_corrupt_next_pk_ecdsa(void);
+
+/* Simulates a pairwise consistency test failure in the next ECDH key generation of either curve: it returns 3 and the module enters its error state. Requires the fault-injection feature. */
+void oxi_test_corrupt_next_pk_ecdh(void);
+
+/* Simulates a pairwise consistency test failure in the next RSA key generation of any modulus size: it returns 3 and the module enters its error state. Requires the fault-injection feature. */
+void oxi_test_corrupt_next_pk_rsa(void);
 
 /* Simulates an entropy source failure: the module enters its error state. Requires the fault-injection feature. */
 void oxi_test_poison_entropy(void);

@@ -74,6 +74,9 @@ mod drbg;
 mod error;
 mod handle;
 mod power_up;
+mod pq;
+#[cfg(test)]
+mod pq_tests;
 mod rbg;
 #[cfg(feature = "fault-injection")]
 mod test_api;
@@ -124,15 +127,16 @@ pub use rbg::{
 };
 #[cfg(feature = "fault-injection")]
 pub use test_api::{
-    oxi_test_corrupt_next_key, oxi_test_fail_next_alloc, oxi_test_fail_next_on_demand,
-    oxi_test_hold_busy, oxi_test_is_parked, oxi_test_last_freed_bytes_zero,
-    oxi_test_park_before_output, oxi_test_poison_entropy, oxi_test_release_parked,
-    oxi_test_set_seed_stream,
+    oxi_test_corrupt_next_dk_ml_kem, oxi_test_corrupt_next_key, oxi_test_corrupt_next_pk_ecdh,
+    oxi_test_corrupt_next_pk_ecdsa, oxi_test_corrupt_next_pk_ml_dsa, oxi_test_corrupt_next_pk_rsa,
+    oxi_test_fail_next_alloc, oxi_test_fail_next_on_demand, oxi_test_hold_busy, oxi_test_is_parked,
+    oxi_test_last_freed_bytes_zero, oxi_test_park_before_output, oxi_test_poison_entropy,
+    oxi_test_release_parked, oxi_test_set_seed_stream,
 };
 
 use crate::error::{OxiResult as R, status_kdf, status_module};
 use crate::handle::OxiHandle;
-use crate::rbg::write_out;
+use crate::rbg::{DrbgKind, write_out};
 use core::ffi::c_int;
 #[cfg(test)]
 use kat_tests::initialize_with_profile;
@@ -377,11 +381,9 @@ pub extern "C" fn oxi_init(profile: c_int) -> c_int {
         3 => oxicrypt_module::AlgorithmProfile::Migration,
         _ => return R::InvalidInput as c_int,
     };
-    // Idempotent fast-path: skip KAT collection on already-operational
-    // re-init. `power_up_set` aggregates the crate KAT slices into a fresh
-    // `Vec` and `initialize_with_profile` would discard them via
-    // `AlreadyInitialized` regardless. One atomic load saves the
-    // allocation on every subsequent call.
+    // A second call on an operational module returns before
+    // `power_up_set` allocates a list `initialize_with_profile` would
+    // discard.
     if oxicrypt_module::is_operational() {
         return R::Ok as c_int;
     }
@@ -704,12 +706,7 @@ pub unsafe extern "C" fn oxi_sha384(data_ptr: *const u8, data_len: usize, out: *
     }
 }
 
-// ── SHA-512/224 ──────────────────────────────────────────────────
-//
-// SHA-512/224 (FIPS 180-4 §6.6) is the truncated SHA-512 variant
-// using its own distinct IV per FIPS 180-4 §5.3.6.1; it is NOT a
-// post-hoc truncation of SHA-512 output. The Rust API
-// `oxicrypt_sha::sha512_224` enforces this distinction internally.
+// ── SHA-512/224 (FIPS 180-4 §6.6, IV §5.3.6.1) ───────────────────
 
 /// Compute SHA-512/224 over `data_len` bytes at `data_ptr`.
 ///
@@ -745,10 +742,7 @@ pub unsafe extern "C" fn oxi_sha512_224(
     }
 }
 
-// ── SHA-512/256 ──────────────────────────────────────────────────
-//
-// SHA-512/256 (FIPS 180-4 §6.7) likewise uses its own distinct IV
-// per FIPS 180-4 §5.3.6.2 — not a post-hoc truncation of SHA-512.
+// ── SHA-512/256 (FIPS 180-4 §6.7, IV §5.3.6.2) ───────────────────
 
 /// Compute SHA-512/256 over `data_len` bytes at `data_ptr`.
 ///
@@ -784,10 +778,7 @@ pub unsafe extern "C" fn oxi_sha512_256(
     }
 }
 
-// ── SHA-3 family ─────────────────────────────────────────────────
-//
-// SHA-3 (FIPS 202) is a sponge construction, a separate family from
-// SHA-2. The C interface exposes it as one-shot entry points only.
+// ── SHA-3 (FIPS 202) ─────────────────────────────────────────────
 
 /// Compute SHA3-224 over `data_len` bytes at `data_ptr`.
 ///
@@ -1224,21 +1215,10 @@ pub unsafe extern "C" fn oxi_hmac_sha3_512(
     R::Ok as c_int
 }
 
-// ── ECDSA (FIPS 186-5) — stateless surface ───────────────────────
+// ── ECDSA (FIPS 186-5) ───────────────────────────────────────────
 //
-// Three pure-functional entry points per curve: derive_public_key,
-// sign_with_k (caller supplies per-message secret `k`), verify. The
-// stateful surface — DRBG-sampled keygen and DRBG-sampled signing —
-// is the private-key handle surface further down this file.
-//
-// Byte layouts (per curve):
-//   P-256: d=32, public_key=65 (SEC1 §2.3.3 uncompressed: 0x04||X||Y),
-//          k=32, signature=64 (r||s).
-//   P-384: d=48, public_key=97, k=48, signature=96.
-//
-// Verify returns OxiResult::TagMismatch = 22 for well-formed-but-
-// invalid signatures (Ok(false) upstream), generalizing the AEAD
-// tag-mismatch semantic to the signature-verification family.
+// Sizes: P-256 d 32 bytes, public key 65 (SEC1 §2.3.3 uncompressed),
+// signature 64 (r ‖ s); P-384 48, 97 and 96.
 
 // ── ECDSA P-256 ──────────────────────────────────────────────────
 
@@ -1340,8 +1320,8 @@ pub unsafe extern "C" fn oxi_ecdsa_p256_sign_with_k(
 /// and `sig_ptr` to exactly 64 bytes (`r || s`).
 ///
 /// Returns `OxiResult::Ok = 0` for valid, `OxiResult::TagMismatch = 22`
-/// for well-formed-but-invalid (the upstream `Ok(false)`), or a module
-/// error variant on `Err`.
+/// for a well-formed signature that does not verify, or a module error
+/// variant.
 ///
 /// # Safety
 ///
@@ -1515,13 +1495,8 @@ pub unsafe extern "C" fn oxi_ecdsa_p384_verify(
 
 // ── HKDF (RFC 5869, SP 800-56C Rev. 2 §4.1) ──────────────────────
 //
-// Two-step extract/expand surface — RFC 5869 §2's pure-function
-// abstract. The PRK is `L` bytes (32/48/64 for SHA-256/384/512) and
-// is the entire HKDF state, so it is exposed as raw bytes between
-// `extract` and `expand` rather than wrapping it in an opaque
-// handle. Caller decides PRK storage (RAM, KMS, file). Profile
-// gating routes through `P::KDF_SERVICE`, because each PRF choice is
-// its own approved service in this module.
+// The PRK is the whole HKDF state between extract and expand
+// (RFC 5869 §2), so it crosses the interface as bytes, not a handle.
 
 // ── HKDF-SHA-256 ─────────────────────────────────────────────────
 
@@ -1807,13 +1782,8 @@ pub unsafe extern "C" fn oxi_hkdf_sha512_expand(
 
 // ── TLS 1.3 KDF (RFC 8446 §7.1) ──────────────────────────────────
 //
-// HKDF-Expand-Label and Derive-Secret over the TLS 1.3 ciphersuite
-// hashes. RFC 8446 §B.4 pins TLS 1.3 to SHA-256
-// (TLS_AES_128_GCM_SHA256 / TLS_CHACHA20_POLY1305_SHA256) or
-// SHA-384 (TLS_AES_256_GCM_SHA384) — SHA-512 is not in the IANA
-// TLS 1.3 ciphersuite registry, so it is intentionally not exposed.
-// Profile gating: `Service::Tls13Kdf` (one service for both hash
-// instantiations, matching the upstream TLS-KDF crate's gating).
+// SHA-256 and SHA-384 only: no TLS 1.3 cipher suite of RFC 8446 §B.4
+// uses SHA-512.
 
 // ── TLS 1.3 HKDF-Expand-Label ────────────────────────────────────
 
@@ -2043,35 +2013,16 @@ pub unsafe extern "C" fn oxi_tls13_derive_secret_sha384(
 
 // ── EdDSA Ed25519 (RFC 8032, FIPS 186-5 §7.8) ────────────────────
 //
-// Three pure-deterministic entry points: keygen, sign, verify.
-// Unlike ECDSA, EVERY operation is deterministic by construction:
-//   - keygen(seed) → public_key  per RFC 8032 §5.1.5 — given the
-//     same seed, the same public key. NO DRBG involved (the
-//     `Service::Ed25519Keygen` gate is "is the curve allowed?",
-//     NOT "do we have entropy?").
-//   - sign(seed, msg) → signature  per RFC 8032 §5.1.6 — the
-//     per-message nonce is derived via HMAC-SHA512 over a prefix
-//     of the secret and the message. Bit-identical signatures for
-//     the same `(seed, msg)` pair. NO `sign_with_k` variant
-//     because there is no `k` to supply.
-//   - verify(pk, msg, sig) → bool  per RFC 8032 §5.1.7 — returns
-//     `Ok(false)` for well-formed-but-invalid, which maps to
-//     `OxiResult::TagMismatch = 22`, as every verify family in
-//     this file does.
-//
-// Byte layout: seed = 32 bytes; public_key = 32 bytes (compressed
-// twisted Edwards point per RFC 8032 §5.1.2 — Y-coord plus 1 sign
-// bit packed into the high bit of the last byte; NOT SEC1
-// uncompressed); signature = 64 bytes (R(32) || S(32)).
+// Sizes: seed 32 bytes, public key 32 (RFC 8032 §5.1.2 encoding),
+// signature 64 (R ‖ S).
 
 /// Derive the Ed25519 public key from a 32-byte seed (RFC 8032 §5.1.5).
 ///
 /// Reads exactly 32 bytes from `seed_ptr`. Writes the 32-byte
-/// compressed-Edwards-point public key into `public_key_out`. This
-/// operation is **deterministic**: given the same seed, the same
-/// public key. Distinct from ECDSA's DRBG-sampled key generation —
-/// the `Service::Ed25519Keygen` gate fires for profile-restriction
-/// purposes, NOT because randomness is consumed.
+/// compressed-Edwards-point public key into `public_key_out`. The same
+/// seed gives the same public key; nothing is drawn. Returns
+/// `AlgorithmRestricted = 6` when the active profile does not admit
+/// Ed25519 key generation.
 ///
 /// # Safety
 ///
@@ -2104,11 +2055,9 @@ pub unsafe extern "C" fn oxi_ed25519_keygen(seed_ptr: *const u8, public_key_out:
 /// Sign `msg` with Ed25519 using the 32-byte seed (RFC 8032 §5.1.6).
 ///
 /// Reads exactly 32 bytes from `seed_ptr`. Writes 64 bytes
-/// (`R(32) || S(32)`) into `sig_out`. Signing is **deterministic** —
-/// the per-message nonce is derived via HMAC-SHA512 over a prefix of
-/// the secret and the message, so signatures are bit-identical for
-/// the same `(seed, msg)` pair. There is NO `sign_with_k` variant
-/// because RFC 8032 supplies the `k` internally.
+/// (`R(32) || S(32)`) into `sig_out`. Signing is deterministic: the
+/// nonce is derived from the secret and the message (RFC 8032 §5.1.6), so
+/// the same `(seed, msg)` gives the same signature.
 ///
 /// # Safety
 ///
@@ -2151,10 +2100,8 @@ pub unsafe extern "C" fn oxi_ed25519_sign(
 ///
 /// Reads exactly 32 bytes from `public_key_ptr` and exactly 64 bytes
 /// from `sig_ptr`. Returns `OxiResult::Ok = 0` for valid,
-/// `OxiResult::TagMismatch = 22` for well-formed-but-invalid (the
-/// upstream `Ok(false)` — same cross-family verify-mismatch code as
-/// AEAD AES-GCM/CCM/KW/KWP and ECDSA verify), or a module error
-/// variant on `Err`.
+/// `OxiResult::TagMismatch = 22` for a well-formed signature that does
+/// not verify, or a module error variant.
 ///
 /// # Safety
 ///
@@ -2193,34 +2140,9 @@ pub unsafe extern "C" fn oxi_ed25519_verify(
 
 // ── ECDH (SP 800-56Ar3 §5.7.1.2) ─────────────────────────────────
 //
-// Four entry points, two per curve. Per curve: one stateless
-// `compute_shared_secret` computing the SP 800-56Ar3 §5.7.1.2 ECC
-// CDH primitive `Z = x(d * Q)`, and one DRBG-driven
-// `generate_keypair` that samples a fresh `(d, Q)` pair via the
-// FIPS 186-5 §A.2.2 rejection sampler and runs the IG 10.3.A
-// pairwise consistency test before returning. No
-// `derive_public_key` entry point — ECDH and ECDSA share the same
-// scalar-multiplication primitive on each curve, so callers
-// needing the public key from a stored private scalar should
-// reuse `oxi_ecdsa_p{256,384}_derive_public_key` from the ECDSA
-// family.
-//
-// Byte layout: private scalar `d` = 32 bytes (P-256) or 48 bytes
-// (P-384); peer public key = 65 bytes (P-256) or 97 bytes (P-384),
-// SEC1 uncompressed encoding `0x04 || X || Y` (same shape as ECDSA);
-// shared secret `Z` = 32 bytes (P-256) or 48 bytes (P-384), the raw
-// big-endian x-coordinate of `d * Q`. `Z` is the **raw** ECDH output
-// per SP 800-56Ar3 — callers MUST run an SP 800-56C Rev. 2 extractor
-// (HKDF, KBKDF) over `Z` before using it as keying material; the FFI
-// intentionally does not bundle a KDF.
-//
-// Errors: `InvalidInput = 5` covers BOTH a non-canonical private
-// scalar `d` AND a peer public key that fails SP 800-56Ar3 §5.6.2.3.3
-// public-key validation (canonical SEC1, coordinate canonicality,
-// non-identity, on-curve `y² ≡ x³ − 3x + b (mod p)`). There is NO
-// `TagMismatch = 22` mapping here — ECDH compute is `Result<bytes,
-// Error>`, never `Ok(false)`, so the cross-family verify-mismatch
-// code does not apply.
+// Sizes: P-256 d 32 bytes, public key 65 (SEC1 uncompressed), Z 32;
+// P-384 48, 97 and 48. The public key of a stored scalar comes from
+// `oxi_ecdsa_p{256,384}_derive_public_key`, the same computation.
 
 // ── ECDH P-256 ───────────────────────────────────────────────────
 
@@ -2345,30 +2267,21 @@ pub unsafe extern "C" fn oxi_ecdh_p384_compute_shared_secret(
 /// On success, writes 32 bytes (the private scalar `d` in canonical
 /// big-endian encoding, in `[1, n − 1]`) into `private_out` and
 /// 65 bytes (the SEC1 uncompressed public key `0x04 || X(32) || Y(32)`
-/// of `Q = d · G`) into `public_out`. The IG 10.3.A PCT runs as an
-/// ECDH roundtrip against the RFC 5903 §8.1 responder keypair: a
-/// faulted scalar-mul during keygen produces a `Q` that fails the
-/// roundtrip equality and the call returns
-/// `OxiResult::InvalidInput = 5` without writing the buffers.
+/// of `Q = d · G`) into `public_out`. Callers must serialise concurrent
+/// calls on the same `drbg`.
 ///
-/// Applies the per-call-mutating-handle thread-safety contract:
-/// callers MUST serialise concurrent calls on the same `drbg`
-/// pointer (the FFI projects `*mut OxiHmacDrbgSha256` to
-/// `&mut HmacDrbgSha256` for the duration of this call, which
-/// Rust's exclusivity rule enforces internally but cannot enforce
-/// across the C boundary).
-///
-/// Returns `OxiResult::Ok = 0` on success;
-/// `OxiResult::NullPointer = 10` if any pointer is NULL;
-/// `OxiResult::NotOperational = 1` if the FIPS module is not in
-/// the `Operational` state;
-/// `OxiResult::AlgorithmRestricted = 6` if the active profile does
-/// not allow ECDH-P-256;
-/// `OxiResult::Uninstantiated = 8` if the DRBG handle was never
-/// instantiated, and `OxiResult::InvalidInput = 5` if it was
-/// instantiated by another process, if the DRBG faults during
-/// sampling, if rejection sampling exhausts without an in-range scalar
-/// (in practice only a broken DRBG), or if the IG 10.3.A PCT mismatches.
+/// Returns `Ok = 0` on success, otherwise, in this order:
+/// `NullPointer = 10` if any pointer is NULL; `InvalidInput = 5` for a
+/// DRBG handle instantiated by another process and `Uninstantiated = 8`
+/// for one never instantiated, both checked before the module state;
+/// `NotOperational = 1` if the module is not operational;
+/// `AlgorithmRestricted = 6` if the active profile does not admit ECDH
+/// P-256 key generation; the DRBG's codes when it produces no output;
+/// `InvalidInput = 5` when scalar sampling exhausts its retries; and
+/// `ConditionalTestFailed = 3` when the pairwise consistency test fails,
+/// after which the module is in its error state and every later call
+/// returns `NotOperational = 1`. On a failure nothing is written, except
+/// that a refused second copy zeroes the private key already copied.
 ///
 /// # Safety
 ///
@@ -2420,14 +2333,11 @@ pub unsafe extern "C" fn oxi_ecdh_p256_generate_keypair(
 /// consistency test, and write the private/public key bytes to the
 /// caller-provided buffers.
 ///
-/// Mirrors [`oxi_ecdh_p256_generate_keypair`] for the P-384 curve:
-/// 48-byte private scalar, 97-byte SEC1 uncompressed public key,
-/// RFC 5903 §8.2 responder keypair drives the IG 10.3.A PCT.
-/// Same error mapping and thread-safety contract.
-///
-/// Returns `OxiResult::Uninstantiated = 8` if the DRBG handle was never
-/// instantiated, and `OxiResult::InvalidInput = 5` if it was instantiated
-/// by another process; both are checked before the module state.
+/// As [`oxi_ecdh_p256_generate_keypair`] for P-384: a 48-byte private
+/// scalar and a 97-byte SEC1 uncompressed public key, with the same codes
+/// in the same order, `ConditionalTestFailed = 3` and then
+/// `NotOperational = 1` on every later call included, and the same
+/// serialisation requirement.
 ///
 /// # Safety
 ///
@@ -2472,31 +2382,9 @@ pub unsafe extern "C" fn oxi_ecdh_p384_generate_keypair(
 
 // ── DH-3072 (RFC 3526 Group 15, SP 800-56Ar3 §5.7.1.1) ───────────
 //
-// One stateless entry point computing the SP 800-56Ar3 §5.7.1.1
-// finite-field DH (FFC) primitive `Z = y^x mod p` over the RFC 3526
-// Group 15 safe prime (3072-bit `p`, generator `g = 2`). All three
-// values — private key `x`, peer public key `y`, and shared secret
-// `Z` — are exactly 384 bytes (the byte-length of `p`), big-endian.
-//
-// Peer public-key validation follows SP 800-56Ar3 §5.6.2.3.1 (FFC
-// **partial** validation: `2 ≤ y ≤ p − 2`), distinct from ECDH's
-// §5.6.2.3.3 (ECC **full** validation). This is upstream-mandated:
-// safe-prime FFC groups have cofactor `h = 2`, so `[2, p − 2]`
-// excludes the only small-subgroup element `p − 1` of order 2.
-//
-// `Z` is the **raw** FFC-DH output per SP 800-56Ar3 — callers MUST
-// run an SP 800-56C Rev. 2 extractor (HKDF, KBKDF) over `Z` before
-// using it as keying material; same composition discipline as ECDH.
-//
-// Errors: `InvalidInput = 5` covers a non-canonical private key
-// `x` (outside `[1, q − 1]`), peer-key validation failure, OR the
-// degenerate result `Z == 1` (the §5.7.1.1 "shall fail" condition).
-// With `x` in `[1, q − 1]` and `y` in `[2, p − 2]` every `y` has order
-// `q` or `2q`, neither divides `x`, so `Z == 1` cannot arise from
-// validated inputs; the upstream check is defence-in-depth.
-//
-// DRBG-driven keygen (`oxicrypt_dh::generate_keypair_3072`) is
-// `oxi_dh3072_generate_keypair` below.
+// Sizes: x, y and Z are 384 bytes big-endian. Peer keys get the
+// partial validation of SP 800-56Ar3 §5.6.2.3.1 (2 ≤ y ≤ p − 2), which
+// suffices for a safe-prime group.
 
 /// Compute the SP 800-56Ar3 §5.7.1.1 finite-field DH shared secret
 /// over RFC 3526 Group 15 (3072-bit safe prime): `Z = y^x mod p`.
@@ -2581,8 +2469,7 @@ pub unsafe extern "C" fn oxi_dh3072_compute_shared_secret(
 /// instantiated with `_instantiate_from_module`;
 /// `OxiResult::InvalidInput = 5` if the handle was instantiated by
 /// another process, or the DRBG exhausts its rejection-sampling
-/// attempts or fails to produce output (the upstream `Option` is
-/// collapsed to `Err(InvalidInput)` by the gated public API);
+/// attempts or fails to produce output;
 /// `OxiResult::NotOperational = 1` if the FIPS module is not
 /// operational; or `OxiResult::AlgorithmRestricted = 6` if the
 /// active profile blocks DH-3072.
@@ -2628,32 +2515,7 @@ pub unsafe extern "C" fn oxi_dh3072_generate_keypair(
     R::Ok as c_int
 }
 
-// ── RSA verify (FIPS 186-5 §5.4, RFC 8017 §8) — stateless surface ─
-//
-// Six stateless entry points for RSA signature verification, mirroring
-// the upstream `oxicrypt-rsa` Rust public API:
-//
-//   {2048, 3072, 4096} × {PKCS#1-v1.5, PSS}
-//
-// Hash variant is fixed at SHA-256 for all six — the only hash
-// `oxicrypt-rsa` exposes for verification at the 3072 and 4096 sizes.
-// All six fns take the public modulus `n` as a raw byte array
-// (256 / 384 / 512 bytes big-endian), the public exponent `e` as a
-// u64 (covers RFC-mandated common values 3, 17, 65537 = F4 with
-// 32-bit headroom), the message bytes, and the signature as a raw
-// byte array (same length as the modulus).
-//
-// **TagMismatch=22 mapping**: the upstream RSA verify fns return
-// `Result<(), Error>` rather than `Result<bool, Error>` — they collapse
-// signature-invalid AND input-decode-fail into a single
-// `Err(Error::InvalidInput)`. The FFI maps `Err(InvalidInput)` to
-// `OxiResult::TagMismatch = 22`, the code every verify family returns
-// for a signature that does not verify, and every other error through
-// `OxiResult::from`. A caller therefore cannot tell a malformed modulus
-// from a signature that does not verify.
-//
-// DRBG-driven keygen, sign and OAEP surfaces are the RSA private-key
-// handle surface further down this file.
+// ── RSA verify (FIPS 186-5 §5.4, RFC 8017 §8) ────────────────────
 
 // ── RSA-2048 PKCS#1 v1.5 verify ──────────────────────────────────
 
@@ -2666,9 +2528,8 @@ pub unsafe extern "C" fn oxi_dh3072_generate_keypair(
 ///
 /// Returns `OxiResult::Ok = 0` on a valid signature,
 /// `OxiResult::TagMismatch = 22` for any verification failure
-/// (invalid modulus, malformed signature, digest mismatch — upstream
-/// collapses these into a single Err), or a module error variant on
-/// `NotOperational` / `AlgorithmRestricted`.
+/// (an invalid modulus or a malformed signature included), or a
+/// module error variant on `NotOperational` / `AlgorithmRestricted`.
 ///
 /// # Safety
 ///
@@ -2715,9 +2576,8 @@ pub unsafe extern "C" fn oxi_rsa_pkcs1_v15_verify_2048_sha256(
 /// Reads exactly 256 bytes from `n_ptr`, takes `e` as `uint64_t`,
 /// reads `msg_len` bytes from `msg_ptr`, and reads exactly 256 bytes
 /// from `sig_ptr`. Returns `Ok = 0` on a valid signature,
-/// `TagMismatch = 22` on any verification failure (the upstream
-/// verifier reports a malformed input and a bad signature as the same
-/// error), or a module error variant.
+/// `TagMismatch = 22` on any verification failure (a malformed input
+/// included), or a module error variant.
 ///
 /// # Safety
 ///
@@ -2933,92 +2793,121 @@ pub unsafe extern "C" fn oxi_rsa_pss_verify_4096_sha256(
     }
 }
 
-// ── ML-DSA-87 (FIPS 204) — stateless surface ─────────────────────
+// ── ML-DSA-87 (FIPS 204) ─────────────────────────────────────────
 //
-// Three pure entry points: keygen, sign, verify. ML-DSA-87 is the
-// CNSA 2.0 digital-signature algorithm (lattice-based, post-quantum).
-// All three operations are deterministic on the byte-array surface:
-//
-//   - keygen(xi) → (pk, sk)  per FIPS 204 §6.1 — `xi` is a 32-byte
-//     caller-supplied seed. NO DRBG is consumed inside the FFI; the
-//     caller is responsible for sourcing `xi` from an SP 800-90A
-//     DRBG (or any approved entropy source). Mirrors the EdDSA
-//     pattern: the `Service::MlDsa87Keygen` gate is "is the algorithm
-//     allowed?", NOT "do we have entropy?".
-//   - sign(sk, msg, ctx) → sig  per FIPS 204 §5.2 Algorithm 2 — the
-//     external pure-ML-DSA Sign API. Signing is **deterministic**:
-//     the rejection-sampling iteration count varies with the secret
-//     key, but for any given `(sk, msg, ctx)` the signature is
-//     bit-identical across calls. NO randomized variant is exposed
-//     (FIPS 204 §5.2.1 randomized mode is intentionally omitted).
-//   - verify(pk, msg, ctx, sig) → bool  per FIPS 204 §5.2 Algorithm 3.
-//     Upstream returns `Result<(), Error>` collapsing decode-fail and
-//     verify-fail into `Err(Error::InvalidInput)`; the FFI maps that
-//     to `OxiResult::TagMismatch = 22`, the mapping every verify
-//     family in this file uses. Same shape as RSA verify.
-//
-// Byte layout: xi = 32 bytes; pk = 2592 bytes; sk = 4896 bytes;
-// sig = 4627 bytes; ctx = 0..=255 bytes (FIPS 204 §5.2 limit,
-// enforced upstream as `Error::InvalidInput`). Pass `ctx_len = 0`
-// for the empty context used by X.509, CMS, and other LAMPS-
-// conformant callers.
-//
-// Per-variant naming: this is `ml_dsa_87` (not `ml_dsa(param: int)`).
-// ML-DSA-44 and ML-DSA-65 are separate fns (`oxi_ml_dsa_44_*`,
-// `oxi_ml_dsa_65_*`) rather than enum-dispatched parameters on these,
-// so adding a variant never changes an existing signature.
+// Sizes (FIPS 204 Table 2): seed ξ 32 bytes, pk 2592, sk 4896,
+// sig 4627; context 0 to 255 bytes (FIPS 204 §5.2). Admitted under the
+// unrestricted, CNSA 2.0 and migration profiles.
 
-/// Generate an ML-DSA-87 key pair from a 32-byte seed (FIPS 204 §6.1).
+/// ML-DSA-87 key generation (FIPS 204 Algorithm 1): draws the seed ξ from
+/// the caller's DRBG handle, expands the key pair and runs the pairwise
+/// consistency test on it (FIPS 140-3 IG 10.3.A) before anything is
+/// written.
 ///
-/// Reads exactly 32 bytes from `seed_ptr` (the keygen randomness
-/// `xi`). Writes the 2592-byte public key into `pk_out` and the
-/// 4896-byte secret key into `sk_out`. The caller is responsible for
-/// sourcing `seed_ptr` from an approved DRBG (SP 800-90A); the FFI
-/// performs no entropy generation.
+/// Buffers: `pk_out`, 2592 writable bytes; `sk_out`, 4896 writable bytes;
+/// `seed_out`, 32 writable bytes or NULL. With `seed_out` NULL the module
+/// wipes ξ and returns only the pair. Otherwise ξ is written to
+/// `seed_out`, and [`oxi_ml_dsa_87_expand_key`] reproduces the pair from
+/// it; ξ computes the secret key and needs the same protection (FIPS 204
+/// §3.6.3).
 ///
-/// Returns `OxiResult::Ok = 0` on success, or a module error variant
-/// (`NotOperational`, `AlgorithmRestricted`).
+/// Returns `Ok = 0` on success, otherwise the first of, in this order:
+/// - Each pointer, in parameter order: `NullPointer = 10` when `rbg`,
+///   `pk_out` or `sk_out` is NULL, `InvalidInput = 5` when a range runs
+///   past the top of the address space.
+/// - `InvalidInput = 5`: an output shares a byte with another output or
+///   with the handle.
+/// - `NotOperational = 1`: the module is not operational.
+/// - `AlgorithmRestricted = 6`: the active profile does not admit ML-DSA-87
+///   key generation, or the handle's DRBG.
+/// - `InvalidInput = 5`: the handle was instantiated by another process.
+/// - `Busy = 32`: the handle is in use by another call.
+/// - `RbgTooWeak = 31`: the DRBG's security strength is below 256 bits;
+///   nothing is drawn.
+/// - The DRBG's codes: `Uninstantiated = 8` for a handle never
+///   instantiated; `Busy = 32` when its reseed waits too long on a seed
+///   path another thread holds; `EntropyUnavailable = 33` when the entropy
+///   source fails during that reseed.
+/// - `ConditionalTestFailed = 3`: the pairwise consistency test failed.
+///   The module has entered its error state, and every later call returns
+///   `NotOperational = 1`.
+///
+/// Outputs are written only on success. A module that enters its error
+/// state between the copies zeroes the outputs already copied and returns
+/// `NotOperational = 1`.
 ///
 /// # Safety
 ///
-/// All pointer/length pairs must be valid. `pk_out` and `sk_out` must
-/// each be non-NULL writable pointers to ≥2592 and ≥4896 bytes
-/// respectively.
+/// `rbg` must be NULL or a live handle from a `_new_rbg` function, and
+/// every non-NULL buffer valid for writes of its stated length.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn oxi_ml_dsa_87_keygen(
+pub unsafe extern "C" fn oxi_ml_dsa_87_keygen_rbg(
+    rbg: *mut OxiDrbg,
+    pk_out: *mut u8,
+    sk_out: *mut u8,
+    seed_out: *mut u8,
+) -> c_int {
+    use oxicrypt_ml_dsa::ml_dsa_87 as set;
+    // SAFETY: every pointer meets `keygen_rbg`'s contract, which is this
+    // function's.
+    aes::code(unsafe {
+        pq::keygen_rbg(
+            rbg,
+            pk_out,
+            sk_out,
+            seed_out,
+            oxicrypt_module::Service::MlDsa87Keygen,
+            set::keygen::<DrbgKind>,
+            set::keygen_with_seed::<DrbgKind>,
+        )
+    })
+}
+
+/// ML-DSA-87 key expansion from a stored seed ξ (FIPS 204 Algorithm 6),
+/// with the pairwise consistency test run on the pair before anything is
+/// written (FIPS 140-3 IG 10.3.A). A seed that did not come from
+/// [`oxi_ml_dsa_87_keygen_rbg`] is a private key imported into the module.
+///
+/// Buffers: `seed_ptr`, 32 bytes; `pk_out`, 2592 writable bytes; `sk_out`,
+/// 4896 writable bytes.
+///
+/// Returns `Ok = 0` on success, otherwise the first of, in this order:
+/// - Each pointer, in parameter order: `NullPointer = 10` when it is NULL,
+///   `InvalidInput = 5` when its range runs past the top of the address
+///   space.
+/// - `InvalidInput = 5`: an output shares a byte with the seed or with the
+///   other output.
+/// - `NotOperational = 1`: the module is not operational.
+/// - `AlgorithmRestricted = 6`: the active profile does not admit ML-DSA-87
+///   key expansion.
+/// - `ConditionalTestFailed = 3`: the pairwise consistency test failed.
+///   The module has entered its error state, and every later call returns
+///   `NotOperational = 1`.
+///
+/// Outputs are written only on success, as for
+/// [`oxi_ml_dsa_87_keygen_rbg`].
+///
+/// # Safety
+///
+/// Every non-NULL buffer must be valid for its stated length.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn oxi_ml_dsa_87_expand_key(
     seed_ptr: *const u8,
     pk_out: *mut u8,
     sk_out: *mut u8,
 ) -> c_int {
-    let seed = match unsafe { slice_from_raw(seed_ptr, 32) } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    if pk_out.is_null() || sk_out.is_null() {
-        return R::NullPointer as c_int;
-    }
-    let Ok(seed_arr) = <&[u8; 32]>::try_from(seed) else {
-        return R::Internal as c_int;
-    };
-    let (pk, sk) = match oxicrypt_ml_dsa::ml_dsa_87::expand_key(seed_arr) {
-        Ok(pair) => pair,
-        Err(e) => return R::from(e) as c_int,
-    };
-    let sk = oxicrypt_zeroize::Zeroizing::new(sk);
-    // SAFETY: `pk_out` is valid for writes of 2592 bytes by contract,
-    // and the local `pk` does not overlap it.
-    if let Err(e) = unsafe { write_out(pk_out, &pk[..2592]) } {
-        return e as c_int;
-    }
-    // SAFETY: `sk_out` is valid for writes of 4896 bytes by contract,
-    // and the local `sk` does not overlap it.
-    if let Err(e) = unsafe { write_out(sk_out, sk.as_slice()) } {
-        // SAFETY: `pk_out` is valid for writes of 2592 bytes by contract;
-        // the output already written there does not survive the failure.
-        unsafe { zero_out(pk_out, 2592) };
-        return e as c_int;
-    }
-    R::Ok as c_int
+    // SAFETY: every pointer meets `expand_key`'s contract, which is this
+    // function's.
+    aes::code(unsafe {
+        pq::expand_key::<32, 0, _, _>(
+            seed_ptr,
+            core::ptr::null(),
+            pk_out,
+            sk_out,
+            oxicrypt_module::Service::MlDsa87ExpandKey,
+            |xi, _| oxicrypt_ml_dsa::ml_dsa_87::expand_key(xi),
+        )
+    })
 }
 
 /// Sign a message with ML-DSA-87 (FIPS 204 §5.2 Algorithm 2).
@@ -3028,14 +2917,16 @@ pub unsafe extern "C" fn oxi_ml_dsa_87_keygen(
 /// 4627-byte signature into `sig_out`. Pass `ctx_len = 0` (with any
 /// `ctx_ptr`) for the empty context used by X.509 / CMS / LAMPS.
 ///
-/// Signing is deterministic: bit-identical signature across calls
-/// for the same `(sk, msg, ctx)` triple. NO randomized-mode variant
-/// is exposed.
+/// Signing is the deterministic variant (FIPS 204 §3.4): the same
+/// `(sk, msg, ctx)` gives the same signature on every call. The hedged
+/// variant is a planned addition.
 ///
-/// Returns `OxiResult::Ok = 0` on success, `InvalidInput = 5` if
-/// `ctx_len > 255` (FIPS 204 §5.2 limit) or rejection sampling fails
-/// after the upstream bound, or a module error variant
-/// (`NotOperational`, `AlgorithmRestricted`).
+/// Returns `Ok = 0` on success, `NullPointer = 10` for a NULL `sk_ptr` or
+/// `sig_out` or a NULL pointer with a non-zero length, `NotOperational = 1`
+/// when the module is not operational, `AlgorithmRestricted = 6` when the
+/// active profile does not admit the parameter set's signing, and
+/// `InvalidInput = 5` when `ctx_len` exceeds 255 (FIPS 204 §5.2) or the
+/// signing loop reaches its iteration bound.
 ///
 /// # Safety
 ///
@@ -3089,9 +2980,10 @@ pub unsafe extern "C" fn oxi_ml_dsa_87_sign(
 ///
 /// Returns `OxiResult::Ok = 0` for a valid signature,
 /// `OxiResult::TagMismatch = 22` for any verification failure
-/// (decode-fail OR signature-invalid — upstream collapses these into
-/// a single `Err(InvalidInput)`; same shape as RSA verify), or a
-/// module error variant (`NotOperational`, `AlgorithmRestricted`).
+/// (a malformed signature included), `NullPointer = 10` for a NULL
+/// pointer, `NotOperational = 1` when the module is not operational, or
+/// `AlgorithmRestricted = 6` when the active profile does not admit the
+/// parameter set's verification.
 ///
 /// # Safety
 ///
@@ -3134,76 +3026,121 @@ pub unsafe extern "C" fn oxi_ml_dsa_87_verify(
     }
 }
 
-// ── ML-DSA-44 (FIPS 204) — stateless surface ─────────────────────
+// ── ML-DSA-44 (FIPS 204) ─────────────────────────────────────────
 //
-// The ML-DSA-87 surface above at another parameter set.
-// Same three-entry-point shape (keygen, sign, verify), same
-// deterministic-signing semantics, same `Err(InvalidInput)` →
-// `TagMismatch = 22` collapse on verify — only the byte counts
-// differ per FIPS 204 §4 Table 1 (k=4, ℓ=4 parameter set): pk = 1312
-// bytes, sk = 2560 bytes, sig = 2420 bytes. The 32-byte seed `xi`
-// and the 0..=255-byte ctx are parameter-set-invariant per
-// FIPS 204 §5.2 / §6.1.
-//
-// CNSA gating: ML-DSA-44 is **not** part of CNSA 2.0 (which
-// mandates ML-DSA-87) and is **not** in the CNSA 1.0 transition
-// allow-list either. The underlying `Service::MlDsa44Keygen /
-// Sign / Verify` variants are permitted only under
-// `AlgorithmProfile::Unrestricted`; calls under either CNSA profile
-// return `OxiResult::AlgorithmRestricted = 6` via the
-// `require_allowed` gate in `oxicrypt_module`.
+// Sizes (FIPS 204 Table 2): seed ξ 32 bytes, pk 1312, sk 2560,
+// sig 2420; context 0 to 255 bytes (FIPS 204 §5.2). Admitted under the
+// unrestricted profile only.
 
-/// Generate an ML-DSA-44 key pair from a 32-byte seed (FIPS 204 §6.1).
+/// ML-DSA-44 key generation (FIPS 204 Algorithm 1): draws the seed ξ from
+/// the caller's DRBG handle, expands the key pair and runs the pairwise
+/// consistency test on it (FIPS 140-3 IG 10.3.A) before anything is
+/// written.
 ///
-/// Reads exactly 32 bytes from `seed_ptr` (the keygen randomness
-/// `xi`). Writes the 1312-byte public key into `pk_out` and the
-/// 2560-byte secret key into `sk_out`. The caller is responsible for
-/// sourcing `seed_ptr` from an approved DRBG (SP 800-90A); the FFI
-/// performs no entropy generation.
+/// Buffers: `pk_out`, 1312 writable bytes; `sk_out`, 2560 writable bytes;
+/// `seed_out`, 32 writable bytes or NULL. With `seed_out` NULL the module
+/// wipes ξ and returns only the pair. Otherwise ξ is written to
+/// `seed_out`, and [`oxi_ml_dsa_44_expand_key`] reproduces the pair from
+/// it; ξ computes the secret key and needs the same protection (FIPS 204
+/// §3.6.3).
 ///
-/// Returns `OxiResult::Ok = 0` on success, or a module error variant
-/// (`NotOperational`, `AlgorithmRestricted`).
+/// Returns `Ok = 0` on success, otherwise the first of, in this order:
+/// - Each pointer, in parameter order: `NullPointer = 10` when `rbg`,
+///   `pk_out` or `sk_out` is NULL, `InvalidInput = 5` when a range runs
+///   past the top of the address space.
+/// - `InvalidInput = 5`: an output shares a byte with another output or
+///   with the handle.
+/// - `NotOperational = 1`: the module is not operational.
+/// - `AlgorithmRestricted = 6`: the active profile does not admit ML-DSA-44
+///   key generation, or the handle's DRBG.
+/// - `InvalidInput = 5`: the handle was instantiated by another process.
+/// - `Busy = 32`: the handle is in use by another call.
+/// - `RbgTooWeak = 31`: the DRBG's security strength is below 192 bits;
+///   nothing is drawn.
+/// - The DRBG's codes: `Uninstantiated = 8` for a handle never
+///   instantiated; `Busy = 32` when its reseed waits too long on a seed
+///   path another thread holds; `EntropyUnavailable = 33` when the entropy
+///   source fails during that reseed.
+/// - `ConditionalTestFailed = 3`: the pairwise consistency test failed.
+///   The module has entered its error state, and every later call returns
+///   `NotOperational = 1`.
+///
+/// Outputs are written only on success. A module that enters its error
+/// state between the copies zeroes the outputs already copied and returns
+/// `NotOperational = 1`.
 ///
 /// # Safety
 ///
-/// All pointer/length pairs must be valid. `pk_out` and `sk_out` must
-/// each be non-NULL writable pointers to ≥1312 and ≥2560 bytes
-/// respectively.
+/// `rbg` must be NULL or a live handle from a `_new_rbg` function, and
+/// every non-NULL buffer valid for writes of its stated length.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn oxi_ml_dsa_44_keygen(
+pub unsafe extern "C" fn oxi_ml_dsa_44_keygen_rbg(
+    rbg: *mut OxiDrbg,
+    pk_out: *mut u8,
+    sk_out: *mut u8,
+    seed_out: *mut u8,
+) -> c_int {
+    use oxicrypt_ml_dsa::ml_dsa_44 as set;
+    // SAFETY: every pointer meets `keygen_rbg`'s contract, which is this
+    // function's.
+    aes::code(unsafe {
+        pq::keygen_rbg(
+            rbg,
+            pk_out,
+            sk_out,
+            seed_out,
+            oxicrypt_module::Service::MlDsa44Keygen,
+            set::keygen::<DrbgKind>,
+            set::keygen_with_seed::<DrbgKind>,
+        )
+    })
+}
+
+/// ML-DSA-44 key expansion from a stored seed ξ (FIPS 204 Algorithm 6),
+/// with the pairwise consistency test run on the pair before anything is
+/// written (FIPS 140-3 IG 10.3.A). A seed that did not come from
+/// [`oxi_ml_dsa_44_keygen_rbg`] is a private key imported into the module.
+///
+/// Buffers: `seed_ptr`, 32 bytes; `pk_out`, 1312 writable bytes; `sk_out`,
+/// 2560 writable bytes.
+///
+/// Returns `Ok = 0` on success, otherwise the first of, in this order:
+/// - Each pointer, in parameter order: `NullPointer = 10` when it is NULL,
+///   `InvalidInput = 5` when its range runs past the top of the address
+///   space.
+/// - `InvalidInput = 5`: an output shares a byte with the seed or with the
+///   other output.
+/// - `NotOperational = 1`: the module is not operational.
+/// - `AlgorithmRestricted = 6`: the active profile does not admit ML-DSA-44
+///   key expansion.
+/// - `ConditionalTestFailed = 3`: the pairwise consistency test failed.
+///   The module has entered its error state, and every later call returns
+///   `NotOperational = 1`.
+///
+/// Outputs are written only on success, as for
+/// [`oxi_ml_dsa_44_keygen_rbg`].
+///
+/// # Safety
+///
+/// Every non-NULL buffer must be valid for its stated length.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn oxi_ml_dsa_44_expand_key(
     seed_ptr: *const u8,
     pk_out: *mut u8,
     sk_out: *mut u8,
 ) -> c_int {
-    let seed = match unsafe { slice_from_raw(seed_ptr, 32) } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    if pk_out.is_null() || sk_out.is_null() {
-        return R::NullPointer as c_int;
-    }
-    let Ok(seed_arr) = <&[u8; 32]>::try_from(seed) else {
-        return R::Internal as c_int;
-    };
-    let (pk, sk) = match oxicrypt_ml_dsa::ml_dsa_44::expand_key(seed_arr) {
-        Ok(pair) => pair,
-        Err(e) => return R::from(e) as c_int,
-    };
-    let sk = oxicrypt_zeroize::Zeroizing::new(sk);
-    // SAFETY: `pk_out` is valid for writes of 1312 bytes by contract,
-    // and the local `pk` does not overlap it.
-    if let Err(e) = unsafe { write_out(pk_out, &pk[..1312]) } {
-        return e as c_int;
-    }
-    // SAFETY: `sk_out` is valid for writes of 2560 bytes by contract,
-    // and the local `sk` does not overlap it.
-    if let Err(e) = unsafe { write_out(sk_out, sk.as_slice()) } {
-        // SAFETY: `pk_out` is valid for writes of 1312 bytes by contract;
-        // the output already written there does not survive the failure.
-        unsafe { zero_out(pk_out, 1312) };
-        return e as c_int;
-    }
-    R::Ok as c_int
+    // SAFETY: every pointer meets `expand_key`'s contract, which is this
+    // function's.
+    aes::code(unsafe {
+        pq::expand_key::<32, 0, _, _>(
+            seed_ptr,
+            core::ptr::null(),
+            pk_out,
+            sk_out,
+            oxicrypt_module::Service::MlDsa44ExpandKey,
+            |xi, _| oxicrypt_ml_dsa::ml_dsa_44::expand_key(xi),
+        )
+    })
 }
 
 /// Sign a message with ML-DSA-44 (FIPS 204 §5.2 Algorithm 2).
@@ -3213,14 +3150,16 @@ pub unsafe extern "C" fn oxi_ml_dsa_44_keygen(
 /// 2420-byte signature into `sig_out`. Pass `ctx_len = 0` (with any
 /// `ctx_ptr`) for the empty context used by X.509 / CMS / LAMPS.
 ///
-/// Signing is deterministic: bit-identical signature across calls
-/// for the same `(sk, msg, ctx)` triple. NO randomized-mode variant
-/// is exposed.
+/// Signing is the deterministic variant (FIPS 204 §3.4): the same
+/// `(sk, msg, ctx)` gives the same signature on every call. The hedged
+/// variant is a planned addition.
 ///
-/// Returns `OxiResult::Ok = 0` on success, `InvalidInput = 5` if
-/// `ctx_len > 255` (FIPS 204 §5.2 limit) or rejection sampling fails
-/// after the upstream bound, or a module error variant
-/// (`NotOperational`, `AlgorithmRestricted`).
+/// Returns `Ok = 0` on success, `NullPointer = 10` for a NULL `sk_ptr` or
+/// `sig_out` or a NULL pointer with a non-zero length, `NotOperational = 1`
+/// when the module is not operational, `AlgorithmRestricted = 6` when the
+/// active profile does not admit the parameter set's signing, and
+/// `InvalidInput = 5` when `ctx_len` exceeds 255 (FIPS 204 §5.2) or the
+/// signing loop reaches its iteration bound.
 ///
 /// # Safety
 ///
@@ -3274,9 +3213,10 @@ pub unsafe extern "C" fn oxi_ml_dsa_44_sign(
 ///
 /// Returns `OxiResult::Ok = 0` for a valid signature,
 /// `OxiResult::TagMismatch = 22` for any verification failure
-/// (decode-fail OR signature-invalid — upstream collapses these into
-/// a single `Err(InvalidInput)`; same shape as RSA verify), or a
-/// module error variant (`NotOperational`, `AlgorithmRestricted`).
+/// (a malformed signature included), `NullPointer = 10` for a NULL
+/// pointer, `NotOperational = 1` when the module is not operational, or
+/// `AlgorithmRestricted = 6` when the active profile does not admit the
+/// parameter set's verification.
 ///
 /// # Safety
 ///
@@ -3319,76 +3259,121 @@ pub unsafe extern "C" fn oxi_ml_dsa_44_verify(
     }
 }
 
-// ── ML-DSA-65 (FIPS 204) — stateless surface ─────────────────────
+// ── ML-DSA-65 (FIPS 204) ─────────────────────────────────────────
 //
-// The ML-DSA-87 surface above at another parameter set.
-// Same three-entry-point shape (keygen, sign, verify), same
-// deterministic-signing semantics, same `Err(InvalidInput)` →
-// `TagMismatch = 22` collapse on verify — only the byte counts
-// differ per FIPS 204 §4 Table 1 (k=6, ℓ=5 parameter set): pk = 1952
-// bytes, sk = 4032 bytes, sig = 3309 bytes. The 32-byte seed `xi`
-// and the 0..=255-byte ctx are parameter-set-invariant per
-// FIPS 204 §5.2 / §6.1.
-//
-// CNSA gating: ML-DSA-65 is **not** part of CNSA 2.0 (which
-// mandates ML-DSA-87) and is **not** in the CNSA 1.0 transition
-// allow-list either. The underlying `Service::MlDsa65Keygen /
-// Sign / Verify` variants are permitted only under
-// `AlgorithmProfile::Unrestricted`; calls under either CNSA profile
-// return `OxiResult::AlgorithmRestricted = 6` via the
-// `require_allowed` gate in `oxicrypt_module`.
+// Sizes (FIPS 204 Table 2): seed ξ 32 bytes, pk 1952, sk 4032,
+// sig 3309; context 0 to 255 bytes (FIPS 204 §5.2). Admitted under the
+// unrestricted profile only.
 
-/// Generate an ML-DSA-65 key pair from a 32-byte seed (FIPS 204 §6.1).
+/// ML-DSA-65 key generation (FIPS 204 Algorithm 1): draws the seed ξ from
+/// the caller's DRBG handle, expands the key pair and runs the pairwise
+/// consistency test on it (FIPS 140-3 IG 10.3.A) before anything is
+/// written.
 ///
-/// Reads exactly 32 bytes from `seed_ptr` (the keygen randomness
-/// `xi`). Writes the 1952-byte public key into `pk_out` and the
-/// 4032-byte secret key into `sk_out`. The caller is responsible for
-/// sourcing `seed_ptr` from an approved DRBG (SP 800-90A); the FFI
-/// performs no entropy generation.
+/// Buffers: `pk_out`, 1952 writable bytes; `sk_out`, 4032 writable bytes;
+/// `seed_out`, 32 writable bytes or NULL. With `seed_out` NULL the module
+/// wipes ξ and returns only the pair. Otherwise ξ is written to
+/// `seed_out`, and [`oxi_ml_dsa_65_expand_key`] reproduces the pair from
+/// it; ξ computes the secret key and needs the same protection (FIPS 204
+/// §3.6.3).
 ///
-/// Returns `OxiResult::Ok = 0` on success, or a module error variant
-/// (`NotOperational`, `AlgorithmRestricted`).
+/// Returns `Ok = 0` on success, otherwise the first of, in this order:
+/// - Each pointer, in parameter order: `NullPointer = 10` when `rbg`,
+///   `pk_out` or `sk_out` is NULL, `InvalidInput = 5` when a range runs
+///   past the top of the address space.
+/// - `InvalidInput = 5`: an output shares a byte with another output or
+///   with the handle.
+/// - `NotOperational = 1`: the module is not operational.
+/// - `AlgorithmRestricted = 6`: the active profile does not admit ML-DSA-65
+///   key generation, or the handle's DRBG.
+/// - `InvalidInput = 5`: the handle was instantiated by another process.
+/// - `Busy = 32`: the handle is in use by another call.
+/// - `RbgTooWeak = 31`: the DRBG's security strength is below 192 bits;
+///   nothing is drawn.
+/// - The DRBG's codes: `Uninstantiated = 8` for a handle never
+///   instantiated; `Busy = 32` when its reseed waits too long on a seed
+///   path another thread holds; `EntropyUnavailable = 33` when the entropy
+///   source fails during that reseed.
+/// - `ConditionalTestFailed = 3`: the pairwise consistency test failed.
+///   The module has entered its error state, and every later call returns
+///   `NotOperational = 1`.
+///
+/// Outputs are written only on success. A module that enters its error
+/// state between the copies zeroes the outputs already copied and returns
+/// `NotOperational = 1`.
 ///
 /// # Safety
 ///
-/// All pointer/length pairs must be valid. `pk_out` and `sk_out` must
-/// each be non-NULL writable pointers to ≥1952 and ≥4032 bytes
-/// respectively.
+/// `rbg` must be NULL or a live handle from a `_new_rbg` function, and
+/// every non-NULL buffer valid for writes of its stated length.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn oxi_ml_dsa_65_keygen(
+pub unsafe extern "C" fn oxi_ml_dsa_65_keygen_rbg(
+    rbg: *mut OxiDrbg,
+    pk_out: *mut u8,
+    sk_out: *mut u8,
+    seed_out: *mut u8,
+) -> c_int {
+    use oxicrypt_ml_dsa::ml_dsa_65 as set;
+    // SAFETY: every pointer meets `keygen_rbg`'s contract, which is this
+    // function's.
+    aes::code(unsafe {
+        pq::keygen_rbg(
+            rbg,
+            pk_out,
+            sk_out,
+            seed_out,
+            oxicrypt_module::Service::MlDsa65Keygen,
+            set::keygen::<DrbgKind>,
+            set::keygen_with_seed::<DrbgKind>,
+        )
+    })
+}
+
+/// ML-DSA-65 key expansion from a stored seed ξ (FIPS 204 Algorithm 6),
+/// with the pairwise consistency test run on the pair before anything is
+/// written (FIPS 140-3 IG 10.3.A). A seed that did not come from
+/// [`oxi_ml_dsa_65_keygen_rbg`] is a private key imported into the module.
+///
+/// Buffers: `seed_ptr`, 32 bytes; `pk_out`, 1952 writable bytes; `sk_out`,
+/// 4032 writable bytes.
+///
+/// Returns `Ok = 0` on success, otherwise the first of, in this order:
+/// - Each pointer, in parameter order: `NullPointer = 10` when it is NULL,
+///   `InvalidInput = 5` when its range runs past the top of the address
+///   space.
+/// - `InvalidInput = 5`: an output shares a byte with the seed or with the
+///   other output.
+/// - `NotOperational = 1`: the module is not operational.
+/// - `AlgorithmRestricted = 6`: the active profile does not admit ML-DSA-65
+///   key expansion.
+/// - `ConditionalTestFailed = 3`: the pairwise consistency test failed.
+///   The module has entered its error state, and every later call returns
+///   `NotOperational = 1`.
+///
+/// Outputs are written only on success, as for
+/// [`oxi_ml_dsa_65_keygen_rbg`].
+///
+/// # Safety
+///
+/// Every non-NULL buffer must be valid for its stated length.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn oxi_ml_dsa_65_expand_key(
     seed_ptr: *const u8,
     pk_out: *mut u8,
     sk_out: *mut u8,
 ) -> c_int {
-    let seed = match unsafe { slice_from_raw(seed_ptr, 32) } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    if pk_out.is_null() || sk_out.is_null() {
-        return R::NullPointer as c_int;
-    }
-    let Ok(seed_arr) = <&[u8; 32]>::try_from(seed) else {
-        return R::Internal as c_int;
-    };
-    let (pk, sk) = match oxicrypt_ml_dsa::ml_dsa_65::expand_key(seed_arr) {
-        Ok(pair) => pair,
-        Err(e) => return R::from(e) as c_int,
-    };
-    let sk = oxicrypt_zeroize::Zeroizing::new(sk);
-    // SAFETY: `pk_out` is valid for writes of 1952 bytes by contract,
-    // and the local `pk` does not overlap it.
-    if let Err(e) = unsafe { write_out(pk_out, &pk[..1952]) } {
-        return e as c_int;
-    }
-    // SAFETY: `sk_out` is valid for writes of 4032 bytes by contract,
-    // and the local `sk` does not overlap it.
-    if let Err(e) = unsafe { write_out(sk_out, sk.as_slice()) } {
-        // SAFETY: `pk_out` is valid for writes of 1952 bytes by contract;
-        // the output already written there does not survive the failure.
-        unsafe { zero_out(pk_out, 1952) };
-        return e as c_int;
-    }
-    R::Ok as c_int
+    // SAFETY: every pointer meets `expand_key`'s contract, which is this
+    // function's.
+    aes::code(unsafe {
+        pq::expand_key::<32, 0, _, _>(
+            seed_ptr,
+            core::ptr::null(),
+            pk_out,
+            sk_out,
+            oxicrypt_module::Service::MlDsa65ExpandKey,
+            |xi, _| oxicrypt_ml_dsa::ml_dsa_65::expand_key(xi),
+        )
+    })
 }
 
 /// Sign a message with ML-DSA-65 (FIPS 204 §5.2 Algorithm 2).
@@ -3398,14 +3383,16 @@ pub unsafe extern "C" fn oxi_ml_dsa_65_keygen(
 /// 3309-byte signature into `sig_out`. Pass `ctx_len = 0` (with any
 /// `ctx_ptr`) for the empty context used by X.509 / CMS / LAMPS.
 ///
-/// Signing is deterministic: bit-identical signature across calls
-/// for the same `(sk, msg, ctx)` triple. NO randomized-mode variant
-/// is exposed.
+/// Signing is the deterministic variant (FIPS 204 §3.4): the same
+/// `(sk, msg, ctx)` gives the same signature on every call. The hedged
+/// variant is a planned addition.
 ///
-/// Returns `OxiResult::Ok = 0` on success, `InvalidInput = 5` if
-/// `ctx_len > 255` (FIPS 204 §5.2 limit) or rejection sampling fails
-/// after the upstream bound, or a module error variant
-/// (`NotOperational`, `AlgorithmRestricted`).
+/// Returns `Ok = 0` on success, `NullPointer = 10` for a NULL `sk_ptr` or
+/// `sig_out` or a NULL pointer with a non-zero length, `NotOperational = 1`
+/// when the module is not operational, `AlgorithmRestricted = 6` when the
+/// active profile does not admit the parameter set's signing, and
+/// `InvalidInput = 5` when `ctx_len` exceeds 255 (FIPS 204 §5.2) or the
+/// signing loop reaches its iteration bound.
 ///
 /// # Safety
 ///
@@ -3459,9 +3446,10 @@ pub unsafe extern "C" fn oxi_ml_dsa_65_sign(
 ///
 /// Returns `OxiResult::Ok = 0` for a valid signature,
 /// `OxiResult::TagMismatch = 22` for any verification failure
-/// (decode-fail OR signature-invalid — upstream collapses these into
-/// a single `Err(InvalidInput)`; same shape as RSA verify), or a
-/// module error variant (`NotOperational`, `AlgorithmRestricted`).
+/// (a malformed signature included), `NullPointer = 10` for a NULL
+/// pointer, `NotOperational = 1` when the module is not operational, or
+/// `AlgorithmRestricted = 6` when the active profile does not admit the
+/// parameter set's verification.
 ///
 /// # Safety
 ///
@@ -3504,582 +3492,656 @@ pub unsafe extern "C" fn oxi_ml_dsa_65_verify(
     }
 }
 
-// ── ML-KEM-1024 (FIPS 203) — stateless surface ───────────────────
+// ── ML-KEM-1024 (FIPS 203) ───────────────────────────────────────
 //
-// Three entry points: keygen, encapsulate, decapsulate. ML-KEM-1024 is
-// the CNSA 2.0 post-quantum KEM (key encapsulation mechanism).
-//
-//   - keygen(d, z) → (ek, dk) expands a stored seed (FIPS 203
-//     Algorithm 16) under the `ExpandKey` service and runs the pairwise
-//     consistency test. `d` is the K-PKE seed; `z` is the
-//     implicit-rejection seed embedded in `dk`. They are not
-//     interchangeable.
-//   - encapsulate(ek, m) refuses: encapsulation with a caller-supplied
-//     `m` is not a module service (FIPS 203 §3.3).
-//   - decapsulate(dk, ct) → ss  per FIPS 203 Algorithm 18. **Fully
-//     deterministic**: no caller-supplied randomness. The FO
-//     transform's implicit-rejection branch absorbs tampered
-//     ciphertext into a deterministic-but-pseudorandom shared secret
-//     (that this branch runs in constant time is unproven: no timing
-//     probe covers it). Tampered ct does NOT surface as a discrete
-//     error code — it produces a useless-but-uniform shared secret.
-//     This is the deliberate FIPS 203 §6.3 design. Distinct from
-//     RSA verify / ML-DSA verify / EdDSA verify
-//     — there is NO `OxiResult::TagMismatch = 22` mapping for
-//     ML-KEM decapsulate.
-//
-// Byte layout: d = z = m = 32 bytes; ek = 1568 bytes; dk = 3168
-// bytes; ct = 1568 bytes; ss = 32 bytes (FIPS 203 Table 2,
-// ML-KEM-1024 parameter set k=4).
-//
-// Per-variant naming: this is `ml_kem_1024` (not
-// `ml_kem(param: int)`). ML-KEM-512 and ML-KEM-768 are separate fns
-// (`oxi_ml_kem_512_*`, `oxi_ml_kem_768_*`) rather than
-// enum-dispatched parameters on these, so adding a variant never
-// changes an existing signature.
+// Sizes (FIPS 203 Table 3): seed d ‖ z 64 bytes, ek 1568, dk 3168,
+// ct 1568, shared secret 32. The module draws m for every encapsulation
+// from the caller's DRBG handle (FIPS 203 §3.3). Admitted under the
+// unrestricted, CNSA 2.0 and migration profiles.
 
-/// Expand an ML-KEM-1024 key pair from a stored seed `(d, z)` (FIPS 203
-/// Algorithm 16) under the `MlKem1024ExpandKey` service, and run the
+/// ML-KEM-1024 key generation (FIPS 203 Algorithm 19): draws the seeds d
+/// and z from the caller's DRBG handle, expands the key pair and runs the
 /// pairwise consistency test on it (FIPS 140-3 IG 10.3.A) before anything
-/// is written. A seed that did not come from this module is a private key
-/// imported from outside the boundary.
+/// is written.
 ///
-/// Reads exactly 32 bytes from `d_ptr` (the K-PKE seed) and exactly 32
-/// bytes from `z_ptr` (the implicit-rejection seed); the two are not
-/// interchangeable. Writes the 1568-byte encapsulation key into `ek_out`
-/// and the 3168-byte decapsulation key into `dk_out`.
+/// Buffers: `ek_out`, 1568 writable bytes; `dk_out`, 3168 writable bytes;
+/// `seed_out`, 64 writable bytes or NULL. With `seed_out` NULL the module
+/// wipes d and z and returns only the pair. Otherwise `d ‖ z` is written
+/// to `seed_out`, d first, and [`oxi_ml_kem_1024_expand_key`] reproduces
+/// the pair from it; the seed computes the decapsulation key and needs the
+/// same protection.
 ///
-/// Returns `OxiResult::Ok = 0` on success, `ConditionalTestFailed = 3`
-/// when the pairwise consistency test fails (the module has entered its
-/// error state and nothing is written), or a module error variant
-/// (`NotOperational`, `AlgorithmRestricted`).
+/// Returns `Ok = 0` on success, otherwise the first of, in this order:
+/// - Each pointer, in parameter order: `NullPointer = 10` when `rbg`,
+///   `ek_out` or `dk_out` is NULL, `InvalidInput = 5` when a range runs
+///   past the top of the address space.
+/// - `InvalidInput = 5`: an output shares a byte with another output or
+///   with the handle.
+/// - `NotOperational = 1`: the module is not operational.
+/// - `AlgorithmRestricted = 6`: the active profile does not admit
+///   ML-KEM-1024 key generation, or the handle's DRBG.
+/// - `InvalidInput = 5`: the handle was instantiated by another process.
+/// - `Busy = 32`: the handle is in use by another call.
+/// - `RbgTooWeak = 31`: the DRBG's security strength is below 256 bits;
+///   nothing is drawn.
+/// - The DRBG's codes: `Uninstantiated = 8` for a handle never
+///   instantiated; `Busy = 32` when its reseed waits too long on a seed
+///   path another thread holds; `EntropyUnavailable = 33` when the entropy
+///   source fails during that reseed.
+/// - `ConditionalTestFailed = 3`: the pairwise consistency test failed.
+///   The module has entered its error state, and every later call returns
+///   `NotOperational = 1`.
+///
+/// Outputs are written only on success. A module that enters its error
+/// state between the copies zeroes the outputs already copied and returns
+/// `NotOperational = 1`.
 ///
 /// # Safety
 ///
-/// All pointer/length pairs must be valid. `ek_out` and `dk_out`
-/// must each be non-NULL writable pointers to ≥1568 and ≥3168 bytes
-/// respectively.
+/// `rbg` must be NULL or a live handle from a `_new_rbg` function, and
+/// every non-NULL buffer valid for writes of its stated length.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn oxi_ml_kem_1024_keygen(
+pub unsafe extern "C" fn oxi_ml_kem_1024_keygen_rbg(
+    rbg: *mut OxiDrbg,
+    ek_out: *mut u8,
+    dk_out: *mut u8,
+    seed_out: *mut u8,
+) -> c_int {
+    use oxicrypt_ml_kem::ml_kem_1024 as set;
+    // SAFETY: every pointer meets `keygen_rbg`'s contract, which is this
+    // function's.
+    aes::code(unsafe {
+        pq::keygen_rbg(
+            rbg,
+            ek_out,
+            dk_out,
+            seed_out,
+            oxicrypt_module::Service::MlKem1024Keygen,
+            set::keygen::<DrbgKind>,
+            set::keygen_with_seed::<DrbgKind>,
+        )
+    })
+}
+
+/// ML-KEM-1024 key expansion from a stored seed (FIPS 203 Algorithm 16),
+/// with the pairwise consistency test run on the pair before anything is
+/// written (FIPS 140-3 IG 10.3.A). `d` is the K-PKE seed and `z` the
+/// implicit-rejection seed; the two are not interchangeable. A seed that
+/// did not come from [`oxi_ml_kem_1024_keygen_rbg`] is a private key
+/// imported into the module.
+///
+/// Buffers: `d_ptr` and `z_ptr`, 32 bytes each; `ek_out`, 1568 writable
+/// bytes; `dk_out`, 3168 writable bytes.
+///
+/// Returns `Ok = 0` on success, otherwise the first of, in this order:
+/// - Each pointer, in parameter order: `NullPointer = 10` when it is NULL,
+///   `InvalidInput = 5` when its range runs past the top of the address
+///   space.
+/// - `InvalidInput = 5`: an output shares a byte with a seed or with the
+///   other output.
+/// - `NotOperational = 1`: the module is not operational.
+/// - `AlgorithmRestricted = 6`: the active profile does not admit
+///   ML-KEM-1024 key expansion.
+/// - `ConditionalTestFailed = 3`: the pairwise consistency test failed.
+///   The module has entered its error state, and every later call returns
+///   `NotOperational = 1`.
+///
+/// Outputs are written only on success, as for
+/// [`oxi_ml_kem_1024_keygen_rbg`].
+///
+/// # Safety
+///
+/// Every non-NULL buffer must be valid for its stated length.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn oxi_ml_kem_1024_expand_key(
     d_ptr: *const u8,
     z_ptr: *const u8,
     ek_out: *mut u8,
     dk_out: *mut u8,
 ) -> c_int {
-    let d = match unsafe { slice_from_raw(d_ptr, 32) } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    let z = match unsafe { slice_from_raw(z_ptr, 32) } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    if ek_out.is_null() || dk_out.is_null() {
-        return R::NullPointer as c_int;
-    }
-    let Ok(d_arr) = <&[u8; 32]>::try_from(d) else {
-        return R::Internal as c_int;
-    };
-    let Ok(z_arr) = <&[u8; 32]>::try_from(z) else {
-        return R::Internal as c_int;
-    };
-    let (ek, dk) = match oxicrypt_ml_kem::ml_kem_1024::expand_key(d_arr, z_arr) {
-        Ok(pair) => pair,
-        Err(e) => return R::from(e) as c_int,
-    };
-    let dk = oxicrypt_zeroize::Zeroizing::new(dk);
-    // SAFETY: `ek_out` is valid for writes of 1568 bytes by contract,
-    // and the local `ek` does not overlap it.
-    if let Err(e) = unsafe { write_out(ek_out, &ek[..1568]) } {
-        return e as c_int;
-    }
-    // SAFETY: `dk_out` is valid for writes of 3168 bytes by contract,
-    // and the local `dk` does not overlap it.
-    if let Err(e) = unsafe { write_out(dk_out, dk.as_slice()) } {
-        // SAFETY: `ek_out` is valid for writes of 1568 bytes by contract;
-        // the output already written there does not survive the failure.
-        unsafe { zero_out(ek_out, 1568) };
-        return e as c_int;
-    }
-    R::Ok as c_int
+    // SAFETY: every pointer meets `expand_key`'s contract, which is this
+    // function's.
+    aes::code(unsafe {
+        pq::expand_key(
+            d_ptr,
+            z_ptr,
+            ek_out,
+            dk_out,
+            oxicrypt_module::Service::MlKem1024ExpandKey,
+            oxicrypt_ml_kem::ml_kem_1024::expand_key,
+        )
+    })
 }
 
-/// Encapsulation against an ML-KEM-1024 encapsulation key with a
-/// caller-supplied `m`, which is not a module service: FIPS 203 §3.3
-/// requires the module to perform the sampling of `m`, which it does in its
-/// own encapsulation service.
+/// ML-KEM-1024 encapsulation (FIPS 203 Algorithm 20): checks `ek` (FIPS 203
+/// §7.2), draws m from the caller's DRBG handle and encapsulates against
+/// `ek`.
 ///
-/// Checks that `ek_ptr`, `m_ptr`, `ss_out` and `ct_out` are non-NULL, then
-/// returns `OxiResult::NotImplemented = 7` and writes nothing.
+/// Buffers: `ek_ptr`, 1568 bytes; `ss_out`, 32 writable bytes; `ct_out`,
+/// 1568 writable bytes.
+///
+/// Returns `Ok = 0` on success, otherwise the first of, in this order:
+/// - Each pointer, in parameter order: `NullPointer = 10` when it is NULL,
+///   `InvalidInput = 5` when its range runs past the top of the address
+///   space.
+/// - `InvalidInput = 5`: an output shares a byte with `ek`, with the other
+///   output or with the handle, or `ek` shares a byte with the handle.
+/// - `NotOperational = 1`: the module is not operational.
+/// - `AlgorithmRestricted = 6`: the active profile does not admit
+///   ML-KEM-1024 encapsulation, or the handle's DRBG.
+/// - `InvalidInput = 5`: the handle was instantiated by another process.
+/// - `Busy = 32`: the handle is in use by another call.
+/// - `InvalidInput = 5`: `ek` fails the §7.2 modulus check; nothing is
+///   drawn.
+/// - `RbgTooWeak = 31`: the DRBG's security strength is below 256 bits;
+///   nothing is drawn.
+/// - The DRBG's codes: `Uninstantiated = 8` for a handle never
+///   instantiated; `Busy = 32` when its reseed waits too long on a seed
+///   path another thread holds; `EntropyUnavailable = 33` when the entropy
+///   source fails during that reseed.
+///
+/// Outputs are written only on success. A module that enters its error
+/// state between the copies zeroes the outputs already copied and returns
+/// `NotOperational = 1`.
 ///
 /// # Safety
 ///
-/// All pointer/length pairs must be valid.
+/// `rbg` must be NULL or a live handle from a `_new_rbg` function, and
+/// every non-NULL buffer valid for its stated length.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn oxi_ml_kem_1024_encapsulate(
+pub unsafe extern "C" fn oxi_ml_kem_1024_encapsulate_rbg(
     ek_ptr: *const u8,
-    m_ptr: *const u8,
+    rbg: *mut OxiDrbg,
     ss_out: *mut u8,
     ct_out: *mut u8,
 ) -> c_int {
-    if let Err(e) = unsafe { slice_from_raw(ek_ptr, 1568) } {
-        return e;
-    }
-    if let Err(e) = unsafe { slice_from_raw(m_ptr, 32) } {
-        return e;
-    }
-    if ss_out.is_null() || ct_out.is_null() {
-        return R::NullPointer as c_int;
-    }
-    R::NotImplemented as c_int
+    // SAFETY: every pointer meets `encapsulate_rbg`'s contract, which is
+    // this function's.
+    aes::code(unsafe {
+        pq::encapsulate_rbg(
+            ek_ptr,
+            rbg,
+            ss_out,
+            ct_out,
+            oxicrypt_module::Service::MlKem1024Encaps,
+            oxicrypt_ml_kem::ml_kem_1024::encapsulate::<DrbgKind>,
+        )
+    })
 }
 
-/// Decapsulate a shared secret from an ML-KEM-1024 ciphertext
-/// (FIPS 203 §6.3 ML-KEM.Decaps).
+/// ML-KEM-1024 decapsulation (FIPS 203 Algorithm 21): checks `dk` (FIPS 203
+/// §7.3) and decapsulates `ct` under it.
 ///
-/// Reads exactly 3168 bytes from `dk_ptr` and exactly 1568 bytes
-/// from `ct_ptr`. Writes the 32-byte shared secret into `ss_out`.
-/// **Fully deterministic** — no caller randomness, no `Ok(false)`
-/// shape, no `TagMismatch = 22` mapping. The FO transform's
-/// implicit-rejection branch absorbs tampered ciphertext into a
-/// deterministic-but-pseudorandom shared secret; tamper does NOT
-/// surface as a discriminant. That this branch runs in constant time
-/// is unproven: no timing probe covers it.
+/// Buffers: `dk_ptr`, 3168 bytes; `ct_ptr`, 1568 bytes; `ss_out`, 32
+/// writable bytes. A ciphertext that does not match `dk` is not an error:
+/// implicit rejection (FIPS 203 §6.3) returns `Ok = 0` with a pseudorandom
+/// shared secret derived from `z` and `ct`.
 ///
-/// Returns `OxiResult::Ok = 0` on success, or a module error
-/// variant (`NotOperational`, `AlgorithmRestricted`).
+/// Returns `Ok = 0` on success, `NullPointer = 10` for a NULL pointer,
+/// `InvalidInput = 5` when `ss_out` shares a byte with `dk` or `ct` or a
+/// range runs past the top of the address space,
+/// `NotOperational = 1` when the module is not operational,
+/// `AlgorithmRestricted = 6` when the active profile does not admit
+/// ML-KEM-1024 decapsulation, and `InvalidInput = 5` when `dk` fails the
+/// §7.3 hash check. The shared secret is written only on success.
 ///
 /// # Safety
 ///
-/// All pointer/length pairs must be valid. `ss_out` must be a
-/// non-NULL writable pointer to ≥32 bytes.
+/// Every non-NULL buffer must be valid for its stated length.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn oxi_ml_kem_1024_decapsulate(
     dk_ptr: *const u8,
     ct_ptr: *const u8,
     ss_out: *mut u8,
 ) -> c_int {
-    let dk = match unsafe { slice_from_raw(dk_ptr, 3168) } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    let ct = match unsafe { slice_from_raw(ct_ptr, 1568) } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    if ss_out.is_null() {
-        return R::NullPointer as c_int;
-    }
-    let Ok(dk_arr) = <&[u8; 3168]>::try_from(dk) else {
-        return R::Internal as c_int;
-    };
-    let Ok(ct_arr) = <&[u8; 1568]>::try_from(ct) else {
-        return R::Internal as c_int;
-    };
-    let ss = match oxicrypt_ml_kem::decapsulate(dk_arr, ct_arr) {
-        Ok(s) => s,
-        Err(e) => return R::from(e) as c_int,
-    };
-    // SAFETY: `ss_out` is valid for writes of 32 bytes by contract,
-    // and the local `ss` does not overlap it.
-    if let Err(e) = unsafe { write_out(ss_out, &ss[..32]) } {
-        return e as c_int;
-    }
-    R::Ok as c_int
+    // SAFETY: every pointer meets `decapsulate`'s contract, which is this
+    // function's.
+    aes::code(unsafe {
+        pq::decapsulate(
+            dk_ptr,
+            ct_ptr,
+            ss_out,
+            oxicrypt_module::Service::MlKem1024Decaps,
+            oxicrypt_ml_kem::ml_kem_1024::decapsulate,
+        )
+    })
 }
 
-// ── ML-KEM-512 (FIPS 203) — stateless surface ────────────────────
+// ── ML-KEM-512 (FIPS 203) ────────────────────────────────────────
 //
-// The ML-KEM-1024 surface above at another parameter set.
-// Same three-entry-point shape (keygen, encapsulate, decapsulate),
-// same caller-seeded `(d, z)` + `m` randomness contracts, same
-// implicit-rejection semantics on decapsulate — only the byte
-// counts differ per FIPS 203 Table 2 (k=2 parameter set): ek = 800
-// bytes, dk = 1632 bytes, ct = 768 bytes. The 32-byte seeds and
-// the 32-byte shared secret are parameter-set-invariant per
-// FIPS 203 §6.1–§6.3.
-//
-// CNSA gating: ML-KEM-512 is **not** part of CNSA 2.0 (which
-// mandates ML-KEM-1024) and is **not** in the CNSA 1.0 transition
-// allow-list either. The underlying `Service::MlKem512Keygen /
-// Encaps / Decaps` variants are permitted only under
-// `AlgorithmProfile::Unrestricted`; calls under either CNSA profile
-// return `OxiResult::AlgorithmRestricted = 6` via the
-// `require_allowed` gate in `oxicrypt_module`.
+// Sizes (FIPS 203 Table 3): seed d ‖ z 64 bytes, ek 800, dk 1632,
+// ct 768, shared secret 32. The module draws m for every encapsulation
+// from the caller's DRBG handle (FIPS 203 §3.3). Admitted under the
+// unrestricted profile only.
 
-/// Expand an ML-KEM-512 key pair from a stored seed `(d, z)` (FIPS 203
-/// Algorithm 16, k=2) under the `MlKem512ExpandKey` service, and run the
+/// ML-KEM-512 key generation (FIPS 203 Algorithm 19): draws the seeds d
+/// and z from the caller's DRBG handle, expands the key pair and runs the
 /// pairwise consistency test on it (FIPS 140-3 IG 10.3.A) before anything
-/// is written. A seed that did not come from this module is a private key
-/// imported from outside the boundary.
+/// is written.
 ///
-/// Reads exactly 32 bytes from `d_ptr` (the K-PKE seed) and exactly 32
-/// bytes from `z_ptr` (the implicit-rejection seed); the two are not
-/// interchangeable. Writes the 800-byte encapsulation key into `ek_out`
-/// and the 1632-byte decapsulation key into `dk_out`.
+/// Buffers: `ek_out`, 800 writable bytes; `dk_out`, 1632 writable bytes;
+/// `seed_out`, 64 writable bytes or NULL. With `seed_out` NULL the module
+/// wipes d and z and returns only the pair. Otherwise `d ‖ z` is written
+/// to `seed_out`, d first, and [`oxi_ml_kem_512_expand_key`] reproduces
+/// the pair from it; the seed computes the decapsulation key and needs the
+/// same protection.
 ///
-/// Returns `OxiResult::Ok = 0` on success, `ConditionalTestFailed = 3`
-/// when the pairwise consistency test fails (the module has entered its
-/// error state and nothing is written), or a module error variant
-/// (`NotOperational`, `AlgorithmRestricted`).
+/// Returns `Ok = 0` on success, otherwise the first of, in this order:
+/// - Each pointer, in parameter order: `NullPointer = 10` when `rbg`,
+///   `ek_out` or `dk_out` is NULL, `InvalidInput = 5` when a range runs
+///   past the top of the address space.
+/// - `InvalidInput = 5`: an output shares a byte with another output or
+///   with the handle.
+/// - `NotOperational = 1`: the module is not operational.
+/// - `AlgorithmRestricted = 6`: the active profile does not admit
+///   ML-KEM-512 key generation, or the handle's DRBG.
+/// - `InvalidInput = 5`: the handle was instantiated by another process.
+/// - `Busy = 32`: the handle is in use by another call.
+/// - `RbgTooWeak = 31` is not returned: it would need a DRBG below 128
+///   bits of security strength, and no `OxiDrbg` is.
+/// - The DRBG's codes: `Uninstantiated = 8` for a handle never
+///   instantiated; `Busy = 32` when its reseed waits too long on a seed
+///   path another thread holds; `EntropyUnavailable = 33` when the entropy
+///   source fails during that reseed.
+/// - `ConditionalTestFailed = 3`: the pairwise consistency test failed.
+///   The module has entered its error state, and every later call returns
+///   `NotOperational = 1`.
+///
+/// Outputs are written only on success. A module that enters its error
+/// state between the copies zeroes the outputs already copied and returns
+/// `NotOperational = 1`.
 ///
 /// # Safety
 ///
-/// All pointer/length pairs must be valid. `ek_out` and `dk_out`
-/// must each be non-NULL writable pointers to ≥800 and ≥1632 bytes
-/// respectively.
+/// `rbg` must be NULL or a live handle from a `_new_rbg` function, and
+/// every non-NULL buffer valid for writes of its stated length.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn oxi_ml_kem_512_keygen(
+pub unsafe extern "C" fn oxi_ml_kem_512_keygen_rbg(
+    rbg: *mut OxiDrbg,
+    ek_out: *mut u8,
+    dk_out: *mut u8,
+    seed_out: *mut u8,
+) -> c_int {
+    use oxicrypt_ml_kem::ml_kem_512 as set;
+    // SAFETY: every pointer meets `keygen_rbg`'s contract, which is this
+    // function's.
+    aes::code(unsafe {
+        pq::keygen_rbg(
+            rbg,
+            ek_out,
+            dk_out,
+            seed_out,
+            oxicrypt_module::Service::MlKem512Keygen,
+            set::keygen::<DrbgKind>,
+            set::keygen_with_seed::<DrbgKind>,
+        )
+    })
+}
+
+/// ML-KEM-512 key expansion from a stored seed (FIPS 203 Algorithm 16),
+/// with the pairwise consistency test run on the pair before anything is
+/// written (FIPS 140-3 IG 10.3.A). `d` is the K-PKE seed and `z` the
+/// implicit-rejection seed; the two are not interchangeable. A seed that
+/// did not come from [`oxi_ml_kem_512_keygen_rbg`] is a private key
+/// imported into the module.
+///
+/// Buffers: `d_ptr` and `z_ptr`, 32 bytes each; `ek_out`, 800 writable
+/// bytes; `dk_out`, 1632 writable bytes.
+///
+/// Returns `Ok = 0` on success, otherwise the first of, in this order:
+/// - Each pointer, in parameter order: `NullPointer = 10` when it is NULL,
+///   `InvalidInput = 5` when its range runs past the top of the address
+///   space.
+/// - `InvalidInput = 5`: an output shares a byte with a seed or with the
+///   other output.
+/// - `NotOperational = 1`: the module is not operational.
+/// - `AlgorithmRestricted = 6`: the active profile does not admit
+///   ML-KEM-512 key expansion.
+/// - `ConditionalTestFailed = 3`: the pairwise consistency test failed.
+///   The module has entered its error state, and every later call returns
+///   `NotOperational = 1`.
+///
+/// Outputs are written only on success, as for
+/// [`oxi_ml_kem_512_keygen_rbg`].
+///
+/// # Safety
+///
+/// Every non-NULL buffer must be valid for its stated length.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn oxi_ml_kem_512_expand_key(
     d_ptr: *const u8,
     z_ptr: *const u8,
     ek_out: *mut u8,
     dk_out: *mut u8,
 ) -> c_int {
-    let d = match unsafe { slice_from_raw(d_ptr, 32) } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    let z = match unsafe { slice_from_raw(z_ptr, 32) } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    if ek_out.is_null() || dk_out.is_null() {
-        return R::NullPointer as c_int;
-    }
-    let Ok(d_arr) = <&[u8; 32]>::try_from(d) else {
-        return R::Internal as c_int;
-    };
-    let Ok(z_arr) = <&[u8; 32]>::try_from(z) else {
-        return R::Internal as c_int;
-    };
-    let (ek, dk) = match oxicrypt_ml_kem::ml_kem_512::expand_key(d_arr, z_arr) {
-        Ok(pair) => pair,
-        Err(e) => return R::from(e) as c_int,
-    };
-    let dk = oxicrypt_zeroize::Zeroizing::new(dk);
-    // SAFETY: `ek_out` is valid for writes of 800 bytes by contract,
-    // and the local `ek` does not overlap it.
-    if let Err(e) = unsafe { write_out(ek_out, &ek[..800]) } {
-        return e as c_int;
-    }
-    // SAFETY: `dk_out` is valid for writes of 1632 bytes by contract,
-    // and the local `dk` does not overlap it.
-    if let Err(e) = unsafe { write_out(dk_out, dk.as_slice()) } {
-        // SAFETY: `ek_out` is valid for writes of 800 bytes by contract;
-        // the output already written there does not survive the failure.
-        unsafe { zero_out(ek_out, 800) };
-        return e as c_int;
-    }
-    R::Ok as c_int
+    // SAFETY: every pointer meets `expand_key`'s contract, which is this
+    // function's.
+    aes::code(unsafe {
+        pq::expand_key(
+            d_ptr,
+            z_ptr,
+            ek_out,
+            dk_out,
+            oxicrypt_module::Service::MlKem512ExpandKey,
+            oxicrypt_ml_kem::ml_kem_512::expand_key,
+        )
+    })
 }
 
-/// Encapsulation against an ML-KEM-512 encapsulation key with a
-/// caller-supplied `m`, which is not a module service: FIPS 203 §3.3
-/// requires the module to perform the sampling of `m`, which it does in its
-/// own encapsulation service.
+/// ML-KEM-512 encapsulation (FIPS 203 Algorithm 20): checks `ek` (FIPS 203
+/// §7.2), draws m from the caller's DRBG handle and encapsulates against
+/// `ek`.
 ///
-/// Checks that `ek_ptr`, `m_ptr`, `ss_out` and `ct_out` are non-NULL, then
-/// returns `OxiResult::NotImplemented = 7` and writes nothing.
+/// Buffers: `ek_ptr`, 800 bytes; `ss_out`, 32 writable bytes; `ct_out`,
+/// 768 writable bytes.
+///
+/// Returns `Ok = 0` on success, otherwise the first of, in this order:
+/// - Each pointer, in parameter order: `NullPointer = 10` when it is NULL,
+///   `InvalidInput = 5` when its range runs past the top of the address
+///   space.
+/// - `InvalidInput = 5`: an output shares a byte with `ek`, with the other
+///   output or with the handle, or `ek` shares a byte with the handle.
+/// - `NotOperational = 1`: the module is not operational.
+/// - `AlgorithmRestricted = 6`: the active profile does not admit
+///   ML-KEM-512 encapsulation, or the handle's DRBG.
+/// - `InvalidInput = 5`: the handle was instantiated by another process.
+/// - `Busy = 32`: the handle is in use by another call.
+/// - `InvalidInput = 5`: `ek` fails the §7.2 modulus check; nothing is
+///   drawn.
+/// - `RbgTooWeak = 31` is not returned: it would need a DRBG below 128
+///   bits of security strength, and no `OxiDrbg` is.
+/// - The DRBG's codes: `Uninstantiated = 8` for a handle never
+///   instantiated; `Busy = 32` when its reseed waits too long on a seed
+///   path another thread holds; `EntropyUnavailable = 33` when the entropy
+///   source fails during that reseed.
+///
+/// Outputs are written only on success. A module that enters its error
+/// state between the copies zeroes the outputs already copied and returns
+/// `NotOperational = 1`.
 ///
 /// # Safety
 ///
-/// All pointer/length pairs must be valid.
+/// `rbg` must be NULL or a live handle from a `_new_rbg` function, and
+/// every non-NULL buffer valid for its stated length.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn oxi_ml_kem_512_encapsulate(
+pub unsafe extern "C" fn oxi_ml_kem_512_encapsulate_rbg(
     ek_ptr: *const u8,
-    m_ptr: *const u8,
+    rbg: *mut OxiDrbg,
     ss_out: *mut u8,
     ct_out: *mut u8,
 ) -> c_int {
-    if let Err(e) = unsafe { slice_from_raw(ek_ptr, 800) } {
-        return e;
-    }
-    if let Err(e) = unsafe { slice_from_raw(m_ptr, 32) } {
-        return e;
-    }
-    if ss_out.is_null() || ct_out.is_null() {
-        return R::NullPointer as c_int;
-    }
-    R::NotImplemented as c_int
+    // SAFETY: every pointer meets `encapsulate_rbg`'s contract, which is
+    // this function's.
+    aes::code(unsafe {
+        pq::encapsulate_rbg(
+            ek_ptr,
+            rbg,
+            ss_out,
+            ct_out,
+            oxicrypt_module::Service::MlKem512Encaps,
+            oxicrypt_ml_kem::ml_kem_512::encapsulate::<DrbgKind>,
+        )
+    })
 }
 
-/// Decapsulate a shared secret from an ML-KEM-512 ciphertext
-/// (FIPS 203 §6.3 ML-KEM.Decaps, k=2 parameter set).
+/// ML-KEM-512 decapsulation (FIPS 203 Algorithm 21): checks `dk` (FIPS 203
+/// §7.3) and decapsulates `ct` under it.
 ///
-/// Reads exactly 1632 bytes from `dk_ptr` and exactly 768 bytes
-/// from `ct_ptr`. Writes the 32-byte shared secret into `ss_out`.
-/// **Fully deterministic** — no caller randomness, no `Ok(false)`
-/// shape, no `TagMismatch = 22` mapping. The FO transform's
-/// implicit-rejection branch absorbs tampered ciphertext into a
-/// deterministic-but-pseudorandom shared secret; tamper does NOT
-/// surface as a discriminant. That this branch runs in constant time
-/// is unproven: no timing probe covers it.
+/// Buffers: `dk_ptr`, 1632 bytes; `ct_ptr`, 768 bytes; `ss_out`, 32
+/// writable bytes. A ciphertext that does not match `dk` is not an error:
+/// implicit rejection (FIPS 203 §6.3) returns `Ok = 0` with a pseudorandom
+/// shared secret derived from `z` and `ct`.
 ///
-/// Returns `OxiResult::Ok = 0` on success, or a module error
-/// variant (`NotOperational`, `AlgorithmRestricted`).
+/// Returns `Ok = 0` on success, `NullPointer = 10` for a NULL pointer,
+/// `InvalidInput = 5` when `ss_out` shares a byte with `dk` or `ct` or a
+/// range runs past the top of the address space,
+/// `NotOperational = 1` when the module is not operational,
+/// `AlgorithmRestricted = 6` when the active profile does not admit
+/// ML-KEM-512 decapsulation, and `InvalidInput = 5` when `dk` fails the
+/// §7.3 hash check. The shared secret is written only on success.
 ///
 /// # Safety
 ///
-/// All pointer/length pairs must be valid. `ss_out` must be a
-/// non-NULL writable pointer to ≥32 bytes.
+/// Every non-NULL buffer must be valid for its stated length.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn oxi_ml_kem_512_decapsulate(
     dk_ptr: *const u8,
     ct_ptr: *const u8,
     ss_out: *mut u8,
 ) -> c_int {
-    let dk = match unsafe { slice_from_raw(dk_ptr, 1632) } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    let ct = match unsafe { slice_from_raw(ct_ptr, 768) } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    if ss_out.is_null() {
-        return R::NullPointer as c_int;
-    }
-    let Ok(dk_arr) = <&[u8; 1632]>::try_from(dk) else {
-        return R::Internal as c_int;
-    };
-    let Ok(ct_arr) = <&[u8; 768]>::try_from(ct) else {
-        return R::Internal as c_int;
-    };
-    let ss = match oxicrypt_ml_kem::ml_kem_512::decapsulate(dk_arr, ct_arr) {
-        Ok(s) => s,
-        Err(e) => return R::from(e) as c_int,
-    };
-    // SAFETY: `ss_out` is valid for writes of 32 bytes by contract,
-    // and the local `ss` does not overlap it.
-    if let Err(e) = unsafe { write_out(ss_out, &ss[..32]) } {
-        return e as c_int;
-    }
-    R::Ok as c_int
+    // SAFETY: every pointer meets `decapsulate`'s contract, which is this
+    // function's.
+    aes::code(unsafe {
+        pq::decapsulate(
+            dk_ptr,
+            ct_ptr,
+            ss_out,
+            oxicrypt_module::Service::MlKem512Decaps,
+            oxicrypt_ml_kem::ml_kem_512::decapsulate,
+        )
+    })
 }
 
-// ── ML-KEM-768 (FIPS 203) — stateless surface ────────────────────
+// ── ML-KEM-768 (FIPS 203) ────────────────────────────────────────
 //
-// The ML-KEM-1024 surface above at another parameter set.
-// Same three-entry-point shape (keygen, encapsulate, decapsulate),
-// same caller-seeded `(d, z)` + `m` randomness contracts, same
-// implicit-rejection semantics on decapsulate — only the byte
-// counts differ per FIPS 203 Table 2 (k=3 parameter set): ek = 1184
-// bytes, dk = 2400 bytes, ct = 1088 bytes. The 32-byte seeds and
-// the 32-byte shared secret are parameter-set-invariant per
-// FIPS 203 §6.1–§6.3.
-//
-// CNSA gating: ML-KEM-768 is **not** part of CNSA 2.0 (which
-// mandates ML-KEM-1024) and is **not** in the CNSA 1.0 transition
-// allow-list either. The underlying `Service::MlKem768Keygen /
-// Encaps / Decaps` variants are permitted only under
-// `AlgorithmProfile::Unrestricted`; calls under either CNSA profile
-// return `OxiResult::AlgorithmRestricted = 6` via the
-// `require_allowed` gate in `oxicrypt_module`.
+// Sizes (FIPS 203 Table 3): seed d ‖ z 64 bytes, ek 1184, dk 2400,
+// ct 1088, shared secret 32. The module draws m for every encapsulation
+// from the caller's DRBG handle (FIPS 203 §3.3). Admitted under the
+// unrestricted profile only.
 
-/// Expand an ML-KEM-768 key pair from a stored seed `(d, z)` (FIPS 203
-/// Algorithm 16, k=3) under the `MlKem768ExpandKey` service, and run the
+/// ML-KEM-768 key generation (FIPS 203 Algorithm 19): draws the seeds d
+/// and z from the caller's DRBG handle, expands the key pair and runs the
 /// pairwise consistency test on it (FIPS 140-3 IG 10.3.A) before anything
-/// is written. A seed that did not come from this module is a private key
-/// imported from outside the boundary.
+/// is written.
 ///
-/// Reads exactly 32 bytes from `d_ptr` (the K-PKE seed) and exactly 32
-/// bytes from `z_ptr` (the implicit-rejection seed); the two are not
-/// interchangeable. Writes the 1184-byte encapsulation key into `ek_out`
-/// and the 2400-byte decapsulation key into `dk_out`.
+/// Buffers: `ek_out`, 1184 writable bytes; `dk_out`, 2400 writable bytes;
+/// `seed_out`, 64 writable bytes or NULL. With `seed_out` NULL the module
+/// wipes d and z and returns only the pair. Otherwise `d ‖ z` is written
+/// to `seed_out`, d first, and [`oxi_ml_kem_768_expand_key`] reproduces
+/// the pair from it; the seed computes the decapsulation key and needs the
+/// same protection.
 ///
-/// Returns `OxiResult::Ok = 0` on success, `ConditionalTestFailed = 3`
-/// when the pairwise consistency test fails (the module has entered its
-/// error state and nothing is written), or a module error variant
-/// (`NotOperational`, `AlgorithmRestricted`).
+/// Returns `Ok = 0` on success, otherwise the first of, in this order:
+/// - Each pointer, in parameter order: `NullPointer = 10` when `rbg`,
+///   `ek_out` or `dk_out` is NULL, `InvalidInput = 5` when a range runs
+///   past the top of the address space.
+/// - `InvalidInput = 5`: an output shares a byte with another output or
+///   with the handle.
+/// - `NotOperational = 1`: the module is not operational.
+/// - `AlgorithmRestricted = 6`: the active profile does not admit
+///   ML-KEM-768 key generation, or the handle's DRBG.
+/// - `InvalidInput = 5`: the handle was instantiated by another process.
+/// - `Busy = 32`: the handle is in use by another call.
+/// - `RbgTooWeak = 31`: the DRBG's security strength is below 192 bits;
+///   nothing is drawn.
+/// - The DRBG's codes: `Uninstantiated = 8` for a handle never
+///   instantiated; `Busy = 32` when its reseed waits too long on a seed
+///   path another thread holds; `EntropyUnavailable = 33` when the entropy
+///   source fails during that reseed.
+/// - `ConditionalTestFailed = 3`: the pairwise consistency test failed.
+///   The module has entered its error state, and every later call returns
+///   `NotOperational = 1`.
+///
+/// Outputs are written only on success. A module that enters its error
+/// state between the copies zeroes the outputs already copied and returns
+/// `NotOperational = 1`.
 ///
 /// # Safety
 ///
-/// All pointer/length pairs must be valid. `ek_out` and `dk_out`
-/// must each be non-NULL writable pointers to ≥1184 and ≥2400 bytes
-/// respectively.
+/// `rbg` must be NULL or a live handle from a `_new_rbg` function, and
+/// every non-NULL buffer valid for writes of its stated length.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn oxi_ml_kem_768_keygen(
+pub unsafe extern "C" fn oxi_ml_kem_768_keygen_rbg(
+    rbg: *mut OxiDrbg,
+    ek_out: *mut u8,
+    dk_out: *mut u8,
+    seed_out: *mut u8,
+) -> c_int {
+    use oxicrypt_ml_kem::ml_kem_768 as set;
+    // SAFETY: every pointer meets `keygen_rbg`'s contract, which is this
+    // function's.
+    aes::code(unsafe {
+        pq::keygen_rbg(
+            rbg,
+            ek_out,
+            dk_out,
+            seed_out,
+            oxicrypt_module::Service::MlKem768Keygen,
+            set::keygen::<DrbgKind>,
+            set::keygen_with_seed::<DrbgKind>,
+        )
+    })
+}
+
+/// ML-KEM-768 key expansion from a stored seed (FIPS 203 Algorithm 16),
+/// with the pairwise consistency test run on the pair before anything is
+/// written (FIPS 140-3 IG 10.3.A). `d` is the K-PKE seed and `z` the
+/// implicit-rejection seed; the two are not interchangeable. A seed that
+/// did not come from [`oxi_ml_kem_768_keygen_rbg`] is a private key
+/// imported into the module.
+///
+/// Buffers: `d_ptr` and `z_ptr`, 32 bytes each; `ek_out`, 1184 writable
+/// bytes; `dk_out`, 2400 writable bytes.
+///
+/// Returns `Ok = 0` on success, otherwise the first of, in this order:
+/// - Each pointer, in parameter order: `NullPointer = 10` when it is NULL,
+///   `InvalidInput = 5` when its range runs past the top of the address
+///   space.
+/// - `InvalidInput = 5`: an output shares a byte with a seed or with the
+///   other output.
+/// - `NotOperational = 1`: the module is not operational.
+/// - `AlgorithmRestricted = 6`: the active profile does not admit
+///   ML-KEM-768 key expansion.
+/// - `ConditionalTestFailed = 3`: the pairwise consistency test failed.
+///   The module has entered its error state, and every later call returns
+///   `NotOperational = 1`.
+///
+/// Outputs are written only on success, as for
+/// [`oxi_ml_kem_768_keygen_rbg`].
+///
+/// # Safety
+///
+/// Every non-NULL buffer must be valid for its stated length.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn oxi_ml_kem_768_expand_key(
     d_ptr: *const u8,
     z_ptr: *const u8,
     ek_out: *mut u8,
     dk_out: *mut u8,
 ) -> c_int {
-    let d = match unsafe { slice_from_raw(d_ptr, 32) } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    let z = match unsafe { slice_from_raw(z_ptr, 32) } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    if ek_out.is_null() || dk_out.is_null() {
-        return R::NullPointer as c_int;
-    }
-    let Ok(d_arr) = <&[u8; 32]>::try_from(d) else {
-        return R::Internal as c_int;
-    };
-    let Ok(z_arr) = <&[u8; 32]>::try_from(z) else {
-        return R::Internal as c_int;
-    };
-    let (ek, dk) = match oxicrypt_ml_kem::ml_kem_768::expand_key(d_arr, z_arr) {
-        Ok(pair) => pair,
-        Err(e) => return R::from(e) as c_int,
-    };
-    let dk = oxicrypt_zeroize::Zeroizing::new(dk);
-    // SAFETY: `ek_out` is valid for writes of 1184 bytes by contract,
-    // and the local `ek` does not overlap it.
-    if let Err(e) = unsafe { write_out(ek_out, &ek[..1184]) } {
-        return e as c_int;
-    }
-    // SAFETY: `dk_out` is valid for writes of 2400 bytes by contract,
-    // and the local `dk` does not overlap it.
-    if let Err(e) = unsafe { write_out(dk_out, dk.as_slice()) } {
-        // SAFETY: `ek_out` is valid for writes of 1184 bytes by contract;
-        // the output already written there does not survive the failure.
-        unsafe { zero_out(ek_out, 1184) };
-        return e as c_int;
-    }
-    R::Ok as c_int
+    // SAFETY: every pointer meets `expand_key`'s contract, which is this
+    // function's.
+    aes::code(unsafe {
+        pq::expand_key(
+            d_ptr,
+            z_ptr,
+            ek_out,
+            dk_out,
+            oxicrypt_module::Service::MlKem768ExpandKey,
+            oxicrypt_ml_kem::ml_kem_768::expand_key,
+        )
+    })
 }
 
-/// Encapsulation against an ML-KEM-768 encapsulation key with a
-/// caller-supplied `m`, which is not a module service: FIPS 203 §3.3
-/// requires the module to perform the sampling of `m`, which it does in its
-/// own encapsulation service.
+/// ML-KEM-768 encapsulation (FIPS 203 Algorithm 20): checks `ek` (FIPS 203
+/// §7.2), draws m from the caller's DRBG handle and encapsulates against
+/// `ek`.
 ///
-/// Checks that `ek_ptr`, `m_ptr`, `ss_out` and `ct_out` are non-NULL, then
-/// returns `OxiResult::NotImplemented = 7` and writes nothing.
+/// Buffers: `ek_ptr`, 1184 bytes; `ss_out`, 32 writable bytes; `ct_out`,
+/// 1088 writable bytes.
+///
+/// Returns `Ok = 0` on success, otherwise the first of, in this order:
+/// - Each pointer, in parameter order: `NullPointer = 10` when it is NULL,
+///   `InvalidInput = 5` when its range runs past the top of the address
+///   space.
+/// - `InvalidInput = 5`: an output shares a byte with `ek`, with the other
+///   output or with the handle, or `ek` shares a byte with the handle.
+/// - `NotOperational = 1`: the module is not operational.
+/// - `AlgorithmRestricted = 6`: the active profile does not admit
+///   ML-KEM-768 encapsulation, or the handle's DRBG.
+/// - `InvalidInput = 5`: the handle was instantiated by another process.
+/// - `Busy = 32`: the handle is in use by another call.
+/// - `InvalidInput = 5`: `ek` fails the §7.2 modulus check; nothing is
+///   drawn.
+/// - `RbgTooWeak = 31`: the DRBG's security strength is below 192 bits;
+///   nothing is drawn.
+/// - The DRBG's codes: `Uninstantiated = 8` for a handle never
+///   instantiated; `Busy = 32` when its reseed waits too long on a seed
+///   path another thread holds; `EntropyUnavailable = 33` when the entropy
+///   source fails during that reseed.
+///
+/// Outputs are written only on success. A module that enters its error
+/// state between the copies zeroes the outputs already copied and returns
+/// `NotOperational = 1`.
 ///
 /// # Safety
 ///
-/// All pointer/length pairs must be valid.
+/// `rbg` must be NULL or a live handle from a `_new_rbg` function, and
+/// every non-NULL buffer valid for its stated length.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn oxi_ml_kem_768_encapsulate(
+pub unsafe extern "C" fn oxi_ml_kem_768_encapsulate_rbg(
     ek_ptr: *const u8,
-    m_ptr: *const u8,
+    rbg: *mut OxiDrbg,
     ss_out: *mut u8,
     ct_out: *mut u8,
 ) -> c_int {
-    if let Err(e) = unsafe { slice_from_raw(ek_ptr, 1184) } {
-        return e;
-    }
-    if let Err(e) = unsafe { slice_from_raw(m_ptr, 32) } {
-        return e;
-    }
-    if ss_out.is_null() || ct_out.is_null() {
-        return R::NullPointer as c_int;
-    }
-    R::NotImplemented as c_int
+    // SAFETY: every pointer meets `encapsulate_rbg`'s contract, which is
+    // this function's.
+    aes::code(unsafe {
+        pq::encapsulate_rbg(
+            ek_ptr,
+            rbg,
+            ss_out,
+            ct_out,
+            oxicrypt_module::Service::MlKem768Encaps,
+            oxicrypt_ml_kem::ml_kem_768::encapsulate::<DrbgKind>,
+        )
+    })
 }
 
-/// Decapsulate a shared secret from an ML-KEM-768 ciphertext
-/// (FIPS 203 §6.3 ML-KEM.Decaps, k=3 parameter set).
+/// ML-KEM-768 decapsulation (FIPS 203 Algorithm 21): checks `dk` (FIPS 203
+/// §7.3) and decapsulates `ct` under it.
 ///
-/// Reads exactly 2400 bytes from `dk_ptr` and exactly 1088 bytes
-/// from `ct_ptr`. Writes the 32-byte shared secret into `ss_out`.
-/// **Fully deterministic** — no caller randomness, no `Ok(false)`
-/// shape, no `TagMismatch = 22` mapping. The FO transform's
-/// implicit-rejection branch absorbs tampered ciphertext into a
-/// deterministic-but-pseudorandom shared secret; tamper does NOT
-/// surface as a discriminant. That this branch runs in constant time
-/// is unproven: no timing probe covers it.
+/// Buffers: `dk_ptr`, 2400 bytes; `ct_ptr`, 1088 bytes; `ss_out`, 32
+/// writable bytes. A ciphertext that does not match `dk` is not an error:
+/// implicit rejection (FIPS 203 §6.3) returns `Ok = 0` with a pseudorandom
+/// shared secret derived from `z` and `ct`.
 ///
-/// Returns `OxiResult::Ok = 0` on success, or a module error
-/// variant (`NotOperational`, `AlgorithmRestricted`).
+/// Returns `Ok = 0` on success, `NullPointer = 10` for a NULL pointer,
+/// `InvalidInput = 5` when `ss_out` shares a byte with `dk` or `ct` or a
+/// range runs past the top of the address space,
+/// `NotOperational = 1` when the module is not operational,
+/// `AlgorithmRestricted = 6` when the active profile does not admit
+/// ML-KEM-768 decapsulation, and `InvalidInput = 5` when `dk` fails the
+/// §7.3 hash check. The shared secret is written only on success.
 ///
 /// # Safety
 ///
-/// All pointer/length pairs must be valid. `ss_out` must be a
-/// non-NULL writable pointer to ≥32 bytes.
+/// Every non-NULL buffer must be valid for its stated length.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn oxi_ml_kem_768_decapsulate(
     dk_ptr: *const u8,
     ct_ptr: *const u8,
     ss_out: *mut u8,
 ) -> c_int {
-    let dk = match unsafe { slice_from_raw(dk_ptr, 2400) } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    let ct = match unsafe { slice_from_raw(ct_ptr, 1088) } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    if ss_out.is_null() {
-        return R::NullPointer as c_int;
-    }
-    let Ok(dk_arr) = <&[u8; 2400]>::try_from(dk) else {
-        return R::Internal as c_int;
-    };
-    let Ok(ct_arr) = <&[u8; 1088]>::try_from(ct) else {
-        return R::Internal as c_int;
-    };
-    let ss = match oxicrypt_ml_kem::ml_kem_768::decapsulate(dk_arr, ct_arr) {
-        Ok(s) => s,
-        Err(e) => return R::from(e) as c_int,
-    };
-    // SAFETY: `ss_out` is valid for writes of 32 bytes by contract,
-    // and the local `ss` does not overlap it.
-    if let Err(e) = unsafe { write_out(ss_out, &ss[..32]) } {
-        return e as c_int;
-    }
-    R::Ok as c_int
+    // SAFETY: every pointer meets `decapsulate`'s contract, which is this
+    // function's.
+    aes::code(unsafe {
+        pq::decapsulate(
+            dk_ptr,
+            ct_ptr,
+            ss_out,
+            oxicrypt_module::Service::MlKem768Decaps,
+            oxicrypt_ml_kem::ml_kem_768::decapsulate,
+        )
+    })
 }
 
-// ── SLH-DSA-SHA2-256s (FIPS 205) — stateless surface ─────────────
+// ── SLH-DSA-SHA2-256s (FIPS 205) ─────────────────────────────────
 //
-// Three pure entry points: keygen, sign, verify. SLH-DSA is the
-// third NIST-standardized post-quantum signature scheme — pure
-// hash-based, stateless, with security resting on the collision /
-// preimage resistance of SHA-2 alone. The SHA2-256s parameter set
-// ("small signatures") is the slow-sign / fast-verify, smallest-key
-// profile per FIPS 205 §10.1.
-//
-// All three operations are exposed at a stateless byte-array surface
-// with NO DRBG plumbing at the FFI boundary:
-//
-//   - keygen(xi) → (pk, sk)  per FIPS 205 §9.1 Algorithm 17.
-//     `xi` is 96 bytes (3 × 32) of caller-supplied randomness,
-//     internally split as `SK.seed ‖ SK.prf ‖ PK.seed`. The three
-//     32-byte components are NOT interchangeable: SK.seed drives
-//     WOTS+ / FORS secret derivation, SK.prf is the PRF key for
-//     deterministic message-randomness in sign, and PK.seed is the
-//     domain-separation tweak baked into every hash call. Mixing
-//     them would put PRF key material into the secret-derivation
-//     slot or vice-versa, breaking the FIPS 205 §10.2 security
-//     argument. Caller is responsible for sourcing each independently
-//     from an SP 800-90A DRBG.
-//   - sign(sk, msg, ctx) → sig  per FIPS 205 §9.2 Algorithm 22
-//     (external `slh_sign`). Signing is **deterministic** in this
-//     crate (opt_rand = PK.seed): bit-identical signature for the
-//     same `(sk, msg, ctx)` triple. Pass `ctx_len = 0` (with any
-//     `ctx_ptr`) for the empty context used by X.509 / CMS / LAMPS.
-//   - verify(pk, msg, ctx, sig)  per FIPS 205 §9.3 Algorithm 24
-//     (external `slh_verify`). Upstream returns `Result<(), Error>`
-//     where `Err(InvalidInput)` collapses decode-fail and
-//     verify-fail into a single discriminant. The FFI maps that to
-//     `OxiResult::TagMismatch = 22`, as RSA verify and ML-DSA
-//     verify do; the upstream `Result<()>` shape is what makes the
-//     mapping possible.
-//
-// Byte layout (FIPS 205 §10.1, SHA2-256s parameter set):
-//   xi  = 96 bytes (3 × 32: SK.seed ‖ SK.prf ‖ PK.seed)
-//   pk  = 64 bytes
-//   sk  = 128 bytes
-//   sig = 29 792 bytes (fixed — no length-out pointer)
-//   ctx ≤ 255 bytes (FIPS 205 §9.2 limit)
-//
-// Per-variant naming: this is `slh_dsa_sha2_256s` (not
-// `slh_dsa(param_set: int)` and not `slh_dsa_256s` collapsing the
-// hash family). The other 11 FIPS 205
-// §11 parameter sets — SHA2-{128s,128f,192s,192f,256f} and
-// SHAKE-{128s,128f,192s,192f,256s,256f} — are exposed as separate
-// per-variant fns below, so adding a variant never changes an
-// existing signature. Each fn forwards to its variant-specific
-// `oxicrypt_slh_dsa::slh_dsa_<family>_<level><sf>::{keygen,sign,
-// verify}` submodule; the crate-root re-export
-// `oxicrypt_slh_dsa::keygen` resolves to SHA2-256s for non-FFI
-// callers.
+// Sizes (FIPS 205 Table 2): seed 96 bytes (SK.seed ‖ SK.prf ‖ PK.seed),
+// pk 64, sk 128, sig 29 792; context 0 to 255 bytes. Admitted under the
+// unrestricted profile only, as is every SLH-DSA parameter set.
 
 /// Generate an SLH-DSA-SHA2-256s key pair from a 96-byte
 /// caller-supplied seed (FIPS 205 §9.1 Algorithm 17).
@@ -4088,9 +4150,11 @@ pub unsafe extern "C" fn oxi_ml_kem_768_decapsulate(
 /// `SK.seed ‖ SK.prf ‖ PK.seed`. Writes the 64-byte public key
 /// into `pk_out` and the 128-byte secret key into `sk_out`. The
 /// caller MUST source the 96 bytes from an approved DRBG
-/// (SP 800-90A); the FFI performs no entropy generation. The three
-/// 32-byte components are NOT interchangeable — see the section
-/// comment above for the semantic distinction.
+/// (SP 800-90A); the module draws nothing. The three 32-byte
+/// components have distinct roles and are not interchangeable:
+/// SK.seed derives the secret values, SK.prf keys the message
+/// randomizer, and PK.seed separates the hash calls of one key pair
+/// from another's (FIPS 205 §9.1).
 ///
 /// Returns `OxiResult::Ok = 0` on success, or a module error
 /// variant (`NotOperational`, `AlgorithmRestricted`).
@@ -4142,9 +4206,9 @@ pub unsafe extern "C" fn oxi_slh_dsa_sha2_256s_keygen(
 /// any `ctx_ptr`) for the empty context used by X.509 / CMS /
 /// LAMPS.
 ///
-/// Signing is **deterministic** (opt_rand = PK.seed): bit-identical
-/// signature across calls for the same `(sk, msg, ctx)` triple.
-/// NO randomized-mode variant is exposed.
+/// Signing is the deterministic variant (opt_rand = PK.seed, FIPS 205
+/// Algorithm 22): the same `(sk, msg, ctx)` gives the same signature on every
+/// call.
 ///
 /// Returns `OxiResult::Ok = 0` on success, `InvalidInput = 5` if
 /// `ctx_len > 255` (FIPS 205 §9.2 limit), or a module error
@@ -4200,10 +4264,8 @@ pub unsafe extern "C" fn oxi_slh_dsa_sha2_256s_sign(
 ///
 /// Returns `OxiResult::Ok = 0` for a valid signature,
 /// `OxiResult::TagMismatch = 22` for any verification failure
-/// (decode-fail OR signature-invalid — upstream collapses these
-/// into a single `Err(InvalidInput)`; same shape as RSA verify and
-/// ML-DSA verify), or a module error variant (`NotOperational`,
-/// `AlgorithmRestricted`).
+/// (a malformed signature included), or a module error variant
+/// (`NotOperational`, `AlgorithmRestricted`).
 ///
 /// # Safety
 ///
@@ -4240,37 +4302,11 @@ pub unsafe extern "C" fn oxi_slh_dsa_sha2_256s_verify(
     }
 }
 
-// ── SLH-DSA — SHA-2 family, 5 additional variants ───────────────
+// ── SLH-DSA — the other SHA-2 parameter sets (FIPS 205) ──────────
 //
-// The SHA2-256s surface above at the other SHA-2 parameter sets.
-// Same three-entry-point shape (keygen, sign, verify), same
-// deterministic-signing semantics, same `Err(InvalidInput)` →
-// `TagMismatch = 22` collapse on verify — only the byte counts
-// differ per FIPS 205 §11 Table 2:
-//
-//   n=16 (128-bit category): xi=48, pk=32, sk=64, sig-s=7 856,
-//                            sig-f=17 088
-//   n=24 (192-bit category): xi=72, pk=48, sk=96, sig-s=16 224,
-//                            sig-f=35 664
-//   n=32 (256-bit category): xi=96, pk=64, sk=128, sig-s=29 792,
-//                            sig-f=49 856
-//
-// xi frames as `SK.seed ‖ SK.prf ‖ PK.seed` (three
-// `n`-byte components, role-segregated and NOT interchangeable —
-// SK.seed drives WOTS+/FORS secret derivation, SK.prf is the PRF
-// key for deterministic message randomness, PK.seed is the
-// domain-separation tweak baked into every hash call; mixing them
-// would put PRF key material into the secret-derivation slot or
-// vice-versa, breaking the FIPS 205 §10 security argument).
-//
-// CNSA gating: CNSSP-15 lists no SLH-DSA parameter set, so all 12
-// variants — every entry in this block plus the SHAKE block
-// below — are permitted only under
-// `AlgorithmProfile::Unrestricted`; calls under either CNSA
-// profile return `OxiResult::AlgorithmRestricted = 6` via the
-// `require_allowed` gate in `oxicrypt_module` against
-// the per-parameter-set `Service::SlhDsa<Family><Level><SF><Op>`
-// discriminants (320-355, contiguous block).
+// Sizes (FIPS 205 Table 2), seed ‖ pk ‖ sk ‖ sig-s ‖ sig-f in bytes:
+// n = 16: 48, 32, 64, 7 856, 17 088; n = 24: 72, 48, 96, 16 224,
+// 35 664; n = 32: 96, 64, 128, 29 792, 49 856.
 
 /// Generate an SLH-DSA-SHA2-128s key pair from a 48-byte seed
 /// (FIPS 205 §9.1 Algorithm 17; n=16; xi=48, pk=32, sk=64).
@@ -4882,19 +4918,10 @@ pub unsafe extern "C" fn oxi_slh_dsa_sha2_256f_verify(
     }
 }
 
-// ── SLH-DSA — SHAKE family, all 6 variants ──────────────────────
+// ── SLH-DSA — the SHAKE parameter sets (FIPS 205) ────────────────
 //
-// FIPS 205 §10.2 SHAKE family. Parameter (n, h, d, a, k, w) tuples
-// match the SHA-2 family per FIPS 205 §11 Table 2 — so byte counts
-// (xi / pk / sk / sig) are identical across SHA-2 and SHAKE at the
-// same level + s/f. The functions below mirror their SHA-2
-// counterparts byte-for-byte at the FFI boundary; the only
-// difference is internal: SHAKE-256 (one-shot XOF) replaces every
-// SHA-256 / SHA-512 tweakable-hash call, PRF_msg is plain
-// concatenation (SHAKE provides native domain separation, no HMAC
-// needed), and H_msg is a single-shot squeeze (no MGF1 loop). All
-// 6 SHAKE variants share `AlgorithmProfile::Unrestricted` gating —
-// CNSSP-15 lists no SLH-DSA parameter set at all.
+// Sizes as for the SHA-2 parameter set of the same n and s/f
+// (FIPS 205 Table 2).
 
 /// Generate an SLH-DSA-SHAKE-128s key pair from a 48-byte seed
 /// (FIPS 205 §9.1 Algorithm 17; n=16).
@@ -5618,46 +5645,8 @@ pub unsafe extern "C" fn oxi_slh_dsa_shake_256f_verify(
 
 // ── LMS / XMSS — SP 800-208 stateful hash-based signatures ──────
 //
-// LMS (Leighton-Micali, RFC 8554) and XMSS (RFC 8391) are stateful
-// hash-based signature schemes approved by SP 800-208 for FIPS use,
-// and named in CNSA 2.0 for firmware signing. This C ABI offers
-// signature verification only, for both. SP 800-208 §8.1 confines
-// key generation and signing to hardware modules, and FIPS 140-3 IG
-// C.N resolutions 6 and 9 rule them out of a software module.
-//
-// `oxi_lms_verify` / `oxi_xmss_verify` verify one parameter set each:
-//
-//   LMS  — LMS_SHA256_M32_H10 / LMOTS_SHA256_N32_W4
-//   XMSS — XMSS-SHA2_10_256, OID 0x00000001
-//
-// and `oxi_lms_<family>_m<N>_h<H>_w<W>_verify` covers each of the 80
-// LMS pairs of SP 800-208 §4.1–§4.4 by name. `oxi_lms_verify_any`
-// takes lengths with each buffer and verifies under whichever of the 80
-// pairs the public key's typecodes name; input naming no pair returns
-// `OxiResult::InvalidInput = 5`, distinct from `TagMismatch = 22`.
-//
-// Mapping of the upstream `Result` shape to `OxiResult`:
-//
-//   verify → Result<(), Error>
-//     Ok                   → OxiResult::Ok = 0
-//     Err(InvalidInput)    → OxiResult::TagMismatch = 22
-//                            (verify-fail collapses parse, structural,
-//                            and cryptographic mismatch into a single
-//                            discriminant — same upstream shape as
-//                            RSA verify, ML-DSA verify, SLH-DSA
-//                            verify)
-//     Err(NotOperational)  → OxiResult::NotOperational = 1
-//     Err(AlgorithmRestricted) → OxiResult::AlgorithmRestricted = 6
-//
-// Byte layouts:
-//
-//   LMS  pk = 56 bytes   (lms_type(4) || ots_type(4) || I(16) || root(32))
-//   LMS  sig = 2508 bytes (q(4) || ots_sig(2180) || lms_type(4)
-//        || auth_path(10×32))
-//
-//   XMSS pk = 68 bytes   (OID(4) || root(32) || PUB_SEED(32))
-//   XMSS sig = 2500 bytes (idx(4) || r(32) || wots_sig(67×32)
-//        || auth_path(10×32))
+// Verification only: SP 800-208 §8.1 confines key generation and
+// signing to hardware modules.
 
 /// Length of an LMS public key in bytes (56).
 pub const OXI_LMS_PUBLIC_KEY_LEN: usize = 56;
@@ -5678,10 +5667,7 @@ pub const OXI_XMSS_SIGNATURE_LEN: usize = 2500;
 ///
 /// Returns `OxiResult::Ok = 0` for a valid signature,
 /// `OxiResult::TagMismatch = 22` for any verification failure
-/// (parse, structural mismatch, or cryptographic mismatch — upstream
-/// collapses these into a single `Err(InvalidInput)`; same shape
-/// as RSA verify, ML-DSA verify, SLH-DSA verify), or a module error
-/// variant.
+/// (a malformed key or signature included), or a module error variant.
 ///
 /// # Safety
 ///
@@ -5775,9 +5761,8 @@ pub unsafe extern "C" fn oxi_lms_verify_any(
 ///
 /// Reads 56-byte pk, `msg_len`-byte message, and
 /// 8684-byte signature. Returns `TagMismatch=22` on any
-/// verification failure (parse / structural / cryptographic — upstream
-/// collapses into a single `Err(InvalidInput)`; same convention as
-/// every other oxicrypt verify FFI). Spec: SP 800-208 §4.1.
+/// verification failure, a malformed key or signature included.
+/// Spec: SP 800-208 §4.1.
 ///
 /// # Safety
 ///
@@ -5826,9 +5811,8 @@ pub unsafe extern "C" fn oxi_lms_sha256_m32_h5_w1_verify(
 ///
 /// Reads 56-byte pk, `msg_len`-byte message, and
 /// 4460-byte signature. Returns `TagMismatch=22` on any
-/// verification failure (parse / structural / cryptographic — upstream
-/// collapses into a single `Err(InvalidInput)`; same convention as
-/// every other oxicrypt verify FFI). Spec: SP 800-208 §4.1.
+/// verification failure, a malformed key or signature included.
+/// Spec: SP 800-208 §4.1.
 ///
 /// # Safety
 ///
@@ -5877,9 +5861,8 @@ pub unsafe extern "C" fn oxi_lms_sha256_m32_h5_w2_verify(
 ///
 /// Reads 56-byte pk, `msg_len`-byte message, and
 /// 2348-byte signature. Returns `TagMismatch=22` on any
-/// verification failure (parse / structural / cryptographic — upstream
-/// collapses into a single `Err(InvalidInput)`; same convention as
-/// every other oxicrypt verify FFI). Spec: SP 800-208 §4.1.
+/// verification failure, a malformed key or signature included.
+/// Spec: SP 800-208 §4.1.
 ///
 /// # Safety
 ///
@@ -5928,9 +5911,8 @@ pub unsafe extern "C" fn oxi_lms_sha256_m32_h5_w4_verify(
 ///
 /// Reads 56-byte pk, `msg_len`-byte message, and
 /// 1292-byte signature. Returns `TagMismatch=22` on any
-/// verification failure (parse / structural / cryptographic — upstream
-/// collapses into a single `Err(InvalidInput)`; same convention as
-/// every other oxicrypt verify FFI). Spec: SP 800-208 §4.1.
+/// verification failure, a malformed key or signature included.
+/// Spec: SP 800-208 §4.1.
 ///
 /// # Safety
 ///
@@ -5979,9 +5961,8 @@ pub unsafe extern "C" fn oxi_lms_sha256_m32_h5_w8_verify(
 ///
 /// Reads 56-byte pk, `msg_len`-byte message, and
 /// 8844-byte signature. Returns `TagMismatch=22` on any
-/// verification failure (parse / structural / cryptographic — upstream
-/// collapses into a single `Err(InvalidInput)`; same convention as
-/// every other oxicrypt verify FFI). Spec: SP 800-208 §4.1.
+/// verification failure, a malformed key or signature included.
+/// Spec: SP 800-208 §4.1.
 ///
 /// # Safety
 ///
@@ -6030,9 +6011,8 @@ pub unsafe extern "C" fn oxi_lms_sha256_m32_h10_w1_verify(
 ///
 /// Reads 56-byte pk, `msg_len`-byte message, and
 /// 4620-byte signature. Returns `TagMismatch=22` on any
-/// verification failure (parse / structural / cryptographic — upstream
-/// collapses into a single `Err(InvalidInput)`; same convention as
-/// every other oxicrypt verify FFI). Spec: SP 800-208 §4.1.
+/// verification failure, a malformed key or signature included.
+/// Spec: SP 800-208 §4.1.
 ///
 /// # Safety
 ///
@@ -6081,9 +6061,8 @@ pub unsafe extern "C" fn oxi_lms_sha256_m32_h10_w2_verify(
 ///
 /// Reads 56-byte pk, `msg_len`-byte message, and
 /// 2508-byte signature. Returns `TagMismatch=22` on any
-/// verification failure (parse / structural / cryptographic — upstream
-/// collapses into a single `Err(InvalidInput)`; same convention as
-/// every other oxicrypt verify FFI). Spec: SP 800-208 §4.1.
+/// verification failure, a malformed key or signature included.
+/// Spec: SP 800-208 §4.1.
 ///
 /// # Safety
 ///
@@ -6132,9 +6111,8 @@ pub unsafe extern "C" fn oxi_lms_sha256_m32_h10_w4_verify(
 ///
 /// Reads 56-byte pk, `msg_len`-byte message, and
 /// 1452-byte signature. Returns `TagMismatch=22` on any
-/// verification failure (parse / structural / cryptographic — upstream
-/// collapses into a single `Err(InvalidInput)`; same convention as
-/// every other oxicrypt verify FFI). Spec: SP 800-208 §4.1.
+/// verification failure, a malformed key or signature included.
+/// Spec: SP 800-208 §4.1.
 ///
 /// # Safety
 ///
@@ -6183,9 +6161,8 @@ pub unsafe extern "C" fn oxi_lms_sha256_m32_h10_w8_verify(
 ///
 /// Reads 56-byte pk, `msg_len`-byte message, and
 /// 9004-byte signature. Returns `TagMismatch=22` on any
-/// verification failure (parse / structural / cryptographic — upstream
-/// collapses into a single `Err(InvalidInput)`; same convention as
-/// every other oxicrypt verify FFI). Spec: SP 800-208 §4.1.
+/// verification failure, a malformed key or signature included.
+/// Spec: SP 800-208 §4.1.
 ///
 /// # Safety
 ///
@@ -6234,9 +6211,8 @@ pub unsafe extern "C" fn oxi_lms_sha256_m32_h15_w1_verify(
 ///
 /// Reads 56-byte pk, `msg_len`-byte message, and
 /// 4780-byte signature. Returns `TagMismatch=22` on any
-/// verification failure (parse / structural / cryptographic — upstream
-/// collapses into a single `Err(InvalidInput)`; same convention as
-/// every other oxicrypt verify FFI). Spec: SP 800-208 §4.1.
+/// verification failure, a malformed key or signature included.
+/// Spec: SP 800-208 §4.1.
 ///
 /// # Safety
 ///
@@ -6285,9 +6261,8 @@ pub unsafe extern "C" fn oxi_lms_sha256_m32_h15_w2_verify(
 ///
 /// Reads 56-byte pk, `msg_len`-byte message, and
 /// 2668-byte signature. Returns `TagMismatch=22` on any
-/// verification failure (parse / structural / cryptographic — upstream
-/// collapses into a single `Err(InvalidInput)`; same convention as
-/// every other oxicrypt verify FFI). Spec: SP 800-208 §4.1.
+/// verification failure, a malformed key or signature included.
+/// Spec: SP 800-208 §4.1.
 ///
 /// # Safety
 ///
@@ -6336,9 +6311,8 @@ pub unsafe extern "C" fn oxi_lms_sha256_m32_h15_w4_verify(
 ///
 /// Reads 56-byte pk, `msg_len`-byte message, and
 /// 1612-byte signature. Returns `TagMismatch=22` on any
-/// verification failure (parse / structural / cryptographic — upstream
-/// collapses into a single `Err(InvalidInput)`; same convention as
-/// every other oxicrypt verify FFI). Spec: SP 800-208 §4.1.
+/// verification failure, a malformed key or signature included.
+/// Spec: SP 800-208 §4.1.
 ///
 /// # Safety
 ///
@@ -6387,9 +6361,8 @@ pub unsafe extern "C" fn oxi_lms_sha256_m32_h15_w8_verify(
 ///
 /// Reads 56-byte pk, `msg_len`-byte message, and
 /// 9164-byte signature. Returns `TagMismatch=22` on any
-/// verification failure (parse / structural / cryptographic — upstream
-/// collapses into a single `Err(InvalidInput)`; same convention as
-/// every other oxicrypt verify FFI). Spec: SP 800-208 §4.1.
+/// verification failure, a malformed key or signature included.
+/// Spec: SP 800-208 §4.1.
 ///
 /// # Safety
 ///
@@ -6438,9 +6411,8 @@ pub unsafe extern "C" fn oxi_lms_sha256_m32_h20_w1_verify(
 ///
 /// Reads 56-byte pk, `msg_len`-byte message, and
 /// 4940-byte signature. Returns `TagMismatch=22` on any
-/// verification failure (parse / structural / cryptographic — upstream
-/// collapses into a single `Err(InvalidInput)`; same convention as
-/// every other oxicrypt verify FFI). Spec: SP 800-208 §4.1.
+/// verification failure, a malformed key or signature included.
+/// Spec: SP 800-208 §4.1.
 ///
 /// # Safety
 ///
@@ -6489,9 +6461,8 @@ pub unsafe extern "C" fn oxi_lms_sha256_m32_h20_w2_verify(
 ///
 /// Reads 56-byte pk, `msg_len`-byte message, and
 /// 2828-byte signature. Returns `TagMismatch=22` on any
-/// verification failure (parse / structural / cryptographic — upstream
-/// collapses into a single `Err(InvalidInput)`; same convention as
-/// every other oxicrypt verify FFI). Spec: SP 800-208 §4.1.
+/// verification failure, a malformed key or signature included.
+/// Spec: SP 800-208 §4.1.
 ///
 /// # Safety
 ///
@@ -6540,9 +6511,8 @@ pub unsafe extern "C" fn oxi_lms_sha256_m32_h20_w4_verify(
 ///
 /// Reads 56-byte pk, `msg_len`-byte message, and
 /// 1772-byte signature. Returns `TagMismatch=22` on any
-/// verification failure (parse / structural / cryptographic — upstream
-/// collapses into a single `Err(InvalidInput)`; same convention as
-/// every other oxicrypt verify FFI). Spec: SP 800-208 §4.1.
+/// verification failure, a malformed key or signature included.
+/// Spec: SP 800-208 §4.1.
 ///
 /// # Safety
 ///
@@ -6591,9 +6561,8 @@ pub unsafe extern "C" fn oxi_lms_sha256_m32_h20_w8_verify(
 ///
 /// Reads 56-byte pk, `msg_len`-byte message, and
 /// 9324-byte signature. Returns `TagMismatch=22` on any
-/// verification failure (parse / structural / cryptographic — upstream
-/// collapses into a single `Err(InvalidInput)`; same convention as
-/// every other oxicrypt verify FFI). Spec: SP 800-208 §4.1.
+/// verification failure, a malformed key or signature included.
+/// Spec: SP 800-208 §4.1.
 ///
 /// # Safety
 ///
@@ -6642,9 +6611,8 @@ pub unsafe extern "C" fn oxi_lms_sha256_m32_h25_w1_verify(
 ///
 /// Reads 56-byte pk, `msg_len`-byte message, and
 /// 5100-byte signature. Returns `TagMismatch=22` on any
-/// verification failure (parse / structural / cryptographic — upstream
-/// collapses into a single `Err(InvalidInput)`; same convention as
-/// every other oxicrypt verify FFI). Spec: SP 800-208 §4.1.
+/// verification failure, a malformed key or signature included.
+/// Spec: SP 800-208 §4.1.
 ///
 /// # Safety
 ///
@@ -6693,9 +6661,8 @@ pub unsafe extern "C" fn oxi_lms_sha256_m32_h25_w2_verify(
 ///
 /// Reads 56-byte pk, `msg_len`-byte message, and
 /// 2988-byte signature. Returns `TagMismatch=22` on any
-/// verification failure (parse / structural / cryptographic — upstream
-/// collapses into a single `Err(InvalidInput)`; same convention as
-/// every other oxicrypt verify FFI). Spec: SP 800-208 §4.1.
+/// verification failure, a malformed key or signature included.
+/// Spec: SP 800-208 §4.1.
 ///
 /// # Safety
 ///
@@ -6744,9 +6711,8 @@ pub unsafe extern "C" fn oxi_lms_sha256_m32_h25_w4_verify(
 ///
 /// Reads 56-byte pk, `msg_len`-byte message, and
 /// 1932-byte signature. Returns `TagMismatch=22` on any
-/// verification failure (parse / structural / cryptographic — upstream
-/// collapses into a single `Err(InvalidInput)`; same convention as
-/// every other oxicrypt verify FFI). Spec: SP 800-208 §4.1.
+/// verification failure, a malformed key or signature included.
+/// Spec: SP 800-208 §4.1.
 ///
 /// # Safety
 ///
@@ -6797,9 +6763,8 @@ pub unsafe extern "C" fn oxi_lms_sha256_m32_h25_w8_verify(
 ///
 /// Reads 48-byte pk, `msg_len`-byte message, and
 /// 4956-byte signature. Returns `TagMismatch=22` on any
-/// verification failure (parse / structural / cryptographic — upstream
-/// collapses into a single `Err(InvalidInput)`; same convention as
-/// every other oxicrypt verify FFI). Spec: SP 800-208 §4.2.
+/// verification failure, a malformed key or signature included.
+/// Spec: SP 800-208 §4.2.
 ///
 /// # Safety
 ///
@@ -6848,9 +6813,8 @@ pub unsafe extern "C" fn oxi_lms_sha256_m24_h5_w1_verify(
 ///
 /// Reads 48-byte pk, `msg_len`-byte message, and
 /// 2580-byte signature. Returns `TagMismatch=22` on any
-/// verification failure (parse / structural / cryptographic — upstream
-/// collapses into a single `Err(InvalidInput)`; same convention as
-/// every other oxicrypt verify FFI). Spec: SP 800-208 §4.2.
+/// verification failure, a malformed key or signature included.
+/// Spec: SP 800-208 §4.2.
 ///
 /// # Safety
 ///
@@ -6899,9 +6863,8 @@ pub unsafe extern "C" fn oxi_lms_sha256_m24_h5_w2_verify(
 ///
 /// Reads 48-byte pk, `msg_len`-byte message, and
 /// 1380-byte signature. Returns `TagMismatch=22` on any
-/// verification failure (parse / structural / cryptographic — upstream
-/// collapses into a single `Err(InvalidInput)`; same convention as
-/// every other oxicrypt verify FFI). Spec: SP 800-208 §4.2.
+/// verification failure, a malformed key or signature included.
+/// Spec: SP 800-208 §4.2.
 ///
 /// # Safety
 ///
@@ -6950,9 +6913,8 @@ pub unsafe extern "C" fn oxi_lms_sha256_m24_h5_w4_verify(
 ///
 /// Reads 48-byte pk, `msg_len`-byte message, and
 /// 780-byte signature. Returns `TagMismatch=22` on any
-/// verification failure (parse / structural / cryptographic — upstream
-/// collapses into a single `Err(InvalidInput)`; same convention as
-/// every other oxicrypt verify FFI). Spec: SP 800-208 §4.2.
+/// verification failure, a malformed key or signature included.
+/// Spec: SP 800-208 §4.2.
 ///
 /// # Safety
 ///
@@ -7001,9 +6963,8 @@ pub unsafe extern "C" fn oxi_lms_sha256_m24_h5_w8_verify(
 ///
 /// Reads 48-byte pk, `msg_len`-byte message, and
 /// 5076-byte signature. Returns `TagMismatch=22` on any
-/// verification failure (parse / structural / cryptographic — upstream
-/// collapses into a single `Err(InvalidInput)`; same convention as
-/// every other oxicrypt verify FFI). Spec: SP 800-208 §4.2.
+/// verification failure, a malformed key or signature included.
+/// Spec: SP 800-208 §4.2.
 ///
 /// # Safety
 ///
@@ -7052,9 +7013,8 @@ pub unsafe extern "C" fn oxi_lms_sha256_m24_h10_w1_verify(
 ///
 /// Reads 48-byte pk, `msg_len`-byte message, and
 /// 2700-byte signature. Returns `TagMismatch=22` on any
-/// verification failure (parse / structural / cryptographic — upstream
-/// collapses into a single `Err(InvalidInput)`; same convention as
-/// every other oxicrypt verify FFI). Spec: SP 800-208 §4.2.
+/// verification failure, a malformed key or signature included.
+/// Spec: SP 800-208 §4.2.
 ///
 /// # Safety
 ///
@@ -7103,9 +7063,8 @@ pub unsafe extern "C" fn oxi_lms_sha256_m24_h10_w2_verify(
 ///
 /// Reads 48-byte pk, `msg_len`-byte message, and
 /// 1500-byte signature. Returns `TagMismatch=22` on any
-/// verification failure (parse / structural / cryptographic — upstream
-/// collapses into a single `Err(InvalidInput)`; same convention as
-/// every other oxicrypt verify FFI). Spec: SP 800-208 §4.2.
+/// verification failure, a malformed key or signature included.
+/// Spec: SP 800-208 §4.2.
 ///
 /// # Safety
 ///
@@ -7154,9 +7113,8 @@ pub unsafe extern "C" fn oxi_lms_sha256_m24_h10_w4_verify(
 ///
 /// Reads 48-byte pk, `msg_len`-byte message, and
 /// 900-byte signature. Returns `TagMismatch=22` on any
-/// verification failure (parse / structural / cryptographic — upstream
-/// collapses into a single `Err(InvalidInput)`; same convention as
-/// every other oxicrypt verify FFI). Spec: SP 800-208 §4.2.
+/// verification failure, a malformed key or signature included.
+/// Spec: SP 800-208 §4.2.
 ///
 /// # Safety
 ///
@@ -7205,9 +7163,8 @@ pub unsafe extern "C" fn oxi_lms_sha256_m24_h10_w8_verify(
 ///
 /// Reads 48-byte pk, `msg_len`-byte message, and
 /// 5196-byte signature. Returns `TagMismatch=22` on any
-/// verification failure (parse / structural / cryptographic — upstream
-/// collapses into a single `Err(InvalidInput)`; same convention as
-/// every other oxicrypt verify FFI). Spec: SP 800-208 §4.2.
+/// verification failure, a malformed key or signature included.
+/// Spec: SP 800-208 §4.2.
 ///
 /// # Safety
 ///
@@ -7256,9 +7213,8 @@ pub unsafe extern "C" fn oxi_lms_sha256_m24_h15_w1_verify(
 ///
 /// Reads 48-byte pk, `msg_len`-byte message, and
 /// 2820-byte signature. Returns `TagMismatch=22` on any
-/// verification failure (parse / structural / cryptographic — upstream
-/// collapses into a single `Err(InvalidInput)`; same convention as
-/// every other oxicrypt verify FFI). Spec: SP 800-208 §4.2.
+/// verification failure, a malformed key or signature included.
+/// Spec: SP 800-208 §4.2.
 ///
 /// # Safety
 ///
@@ -7307,9 +7263,8 @@ pub unsafe extern "C" fn oxi_lms_sha256_m24_h15_w2_verify(
 ///
 /// Reads 48-byte pk, `msg_len`-byte message, and
 /// 1620-byte signature. Returns `TagMismatch=22` on any
-/// verification failure (parse / structural / cryptographic — upstream
-/// collapses into a single `Err(InvalidInput)`; same convention as
-/// every other oxicrypt verify FFI). Spec: SP 800-208 §4.2.
+/// verification failure, a malformed key or signature included.
+/// Spec: SP 800-208 §4.2.
 ///
 /// # Safety
 ///
@@ -7358,9 +7313,8 @@ pub unsafe extern "C" fn oxi_lms_sha256_m24_h15_w4_verify(
 ///
 /// Reads 48-byte pk, `msg_len`-byte message, and
 /// 1020-byte signature. Returns `TagMismatch=22` on any
-/// verification failure (parse / structural / cryptographic — upstream
-/// collapses into a single `Err(InvalidInput)`; same convention as
-/// every other oxicrypt verify FFI). Spec: SP 800-208 §4.2.
+/// verification failure, a malformed key or signature included.
+/// Spec: SP 800-208 §4.2.
 ///
 /// # Safety
 ///
@@ -7409,9 +7363,8 @@ pub unsafe extern "C" fn oxi_lms_sha256_m24_h15_w8_verify(
 ///
 /// Reads 48-byte pk, `msg_len`-byte message, and
 /// 5316-byte signature. Returns `TagMismatch=22` on any
-/// verification failure (parse / structural / cryptographic — upstream
-/// collapses into a single `Err(InvalidInput)`; same convention as
-/// every other oxicrypt verify FFI). Spec: SP 800-208 §4.2.
+/// verification failure, a malformed key or signature included.
+/// Spec: SP 800-208 §4.2.
 ///
 /// # Safety
 ///
@@ -7460,9 +7413,8 @@ pub unsafe extern "C" fn oxi_lms_sha256_m24_h20_w1_verify(
 ///
 /// Reads 48-byte pk, `msg_len`-byte message, and
 /// 2940-byte signature. Returns `TagMismatch=22` on any
-/// verification failure (parse / structural / cryptographic — upstream
-/// collapses into a single `Err(InvalidInput)`; same convention as
-/// every other oxicrypt verify FFI). Spec: SP 800-208 §4.2.
+/// verification failure, a malformed key or signature included.
+/// Spec: SP 800-208 §4.2.
 ///
 /// # Safety
 ///
@@ -7511,9 +7463,8 @@ pub unsafe extern "C" fn oxi_lms_sha256_m24_h20_w2_verify(
 ///
 /// Reads 48-byte pk, `msg_len`-byte message, and
 /// 1740-byte signature. Returns `TagMismatch=22` on any
-/// verification failure (parse / structural / cryptographic — upstream
-/// collapses into a single `Err(InvalidInput)`; same convention as
-/// every other oxicrypt verify FFI). Spec: SP 800-208 §4.2.
+/// verification failure, a malformed key or signature included.
+/// Spec: SP 800-208 §4.2.
 ///
 /// # Safety
 ///
@@ -7562,9 +7513,8 @@ pub unsafe extern "C" fn oxi_lms_sha256_m24_h20_w4_verify(
 ///
 /// Reads 48-byte pk, `msg_len`-byte message, and
 /// 1140-byte signature. Returns `TagMismatch=22` on any
-/// verification failure (parse / structural / cryptographic — upstream
-/// collapses into a single `Err(InvalidInput)`; same convention as
-/// every other oxicrypt verify FFI). Spec: SP 800-208 §4.2.
+/// verification failure, a malformed key or signature included.
+/// Spec: SP 800-208 §4.2.
 ///
 /// # Safety
 ///
@@ -7613,9 +7563,8 @@ pub unsafe extern "C" fn oxi_lms_sha256_m24_h20_w8_verify(
 ///
 /// Reads 48-byte pk, `msg_len`-byte message, and
 /// 5436-byte signature. Returns `TagMismatch=22` on any
-/// verification failure (parse / structural / cryptographic — upstream
-/// collapses into a single `Err(InvalidInput)`; same convention as
-/// every other oxicrypt verify FFI). Spec: SP 800-208 §4.2.
+/// verification failure, a malformed key or signature included.
+/// Spec: SP 800-208 §4.2.
 ///
 /// # Safety
 ///
@@ -7664,9 +7613,8 @@ pub unsafe extern "C" fn oxi_lms_sha256_m24_h25_w1_verify(
 ///
 /// Reads 48-byte pk, `msg_len`-byte message, and
 /// 3060-byte signature. Returns `TagMismatch=22` on any
-/// verification failure (parse / structural / cryptographic — upstream
-/// collapses into a single `Err(InvalidInput)`; same convention as
-/// every other oxicrypt verify FFI). Spec: SP 800-208 §4.2.
+/// verification failure, a malformed key or signature included.
+/// Spec: SP 800-208 §4.2.
 ///
 /// # Safety
 ///
@@ -7715,9 +7663,8 @@ pub unsafe extern "C" fn oxi_lms_sha256_m24_h25_w2_verify(
 ///
 /// Reads 48-byte pk, `msg_len`-byte message, and
 /// 1860-byte signature. Returns `TagMismatch=22` on any
-/// verification failure (parse / structural / cryptographic — upstream
-/// collapses into a single `Err(InvalidInput)`; same convention as
-/// every other oxicrypt verify FFI). Spec: SP 800-208 §4.2.
+/// verification failure, a malformed key or signature included.
+/// Spec: SP 800-208 §4.2.
 ///
 /// # Safety
 ///
@@ -7766,9 +7713,8 @@ pub unsafe extern "C" fn oxi_lms_sha256_m24_h25_w4_verify(
 ///
 /// Reads 48-byte pk, `msg_len`-byte message, and
 /// 1260-byte signature. Returns `TagMismatch=22` on any
-/// verification failure (parse / structural / cryptographic — upstream
-/// collapses into a single `Err(InvalidInput)`; same convention as
-/// every other oxicrypt verify FFI). Spec: SP 800-208 §4.2.
+/// verification failure, a malformed key or signature included.
+/// Spec: SP 800-208 §4.2.
 ///
 /// # Safety
 ///
@@ -7819,9 +7765,8 @@ pub unsafe extern "C" fn oxi_lms_sha256_m24_h25_w8_verify(
 ///
 /// Reads 56-byte pk, `msg_len`-byte message, and
 /// 8684-byte signature. Returns `TagMismatch=22` on any
-/// verification failure (parse / structural / cryptographic — upstream
-/// collapses into a single `Err(InvalidInput)`; same convention as
-/// every other oxicrypt verify FFI). Spec: SP 800-208 §4.3.
+/// verification failure, a malformed key or signature included.
+/// Spec: SP 800-208 §4.3.
 ///
 /// # Safety
 ///
@@ -7870,9 +7815,8 @@ pub unsafe extern "C" fn oxi_lms_shake_m32_h5_w1_verify(
 ///
 /// Reads 56-byte pk, `msg_len`-byte message, and
 /// 4460-byte signature. Returns `TagMismatch=22` on any
-/// verification failure (parse / structural / cryptographic — upstream
-/// collapses into a single `Err(InvalidInput)`; same convention as
-/// every other oxicrypt verify FFI). Spec: SP 800-208 §4.3.
+/// verification failure, a malformed key or signature included.
+/// Spec: SP 800-208 §4.3.
 ///
 /// # Safety
 ///
@@ -7921,9 +7865,8 @@ pub unsafe extern "C" fn oxi_lms_shake_m32_h5_w2_verify(
 ///
 /// Reads 56-byte pk, `msg_len`-byte message, and
 /// 2348-byte signature. Returns `TagMismatch=22` on any
-/// verification failure (parse / structural / cryptographic — upstream
-/// collapses into a single `Err(InvalidInput)`; same convention as
-/// every other oxicrypt verify FFI). Spec: SP 800-208 §4.3.
+/// verification failure, a malformed key or signature included.
+/// Spec: SP 800-208 §4.3.
 ///
 /// # Safety
 ///
@@ -7972,9 +7915,8 @@ pub unsafe extern "C" fn oxi_lms_shake_m32_h5_w4_verify(
 ///
 /// Reads 56-byte pk, `msg_len`-byte message, and
 /// 1292-byte signature. Returns `TagMismatch=22` on any
-/// verification failure (parse / structural / cryptographic — upstream
-/// collapses into a single `Err(InvalidInput)`; same convention as
-/// every other oxicrypt verify FFI). Spec: SP 800-208 §4.3.
+/// verification failure, a malformed key or signature included.
+/// Spec: SP 800-208 §4.3.
 ///
 /// # Safety
 ///
@@ -8023,9 +7965,8 @@ pub unsafe extern "C" fn oxi_lms_shake_m32_h5_w8_verify(
 ///
 /// Reads 56-byte pk, `msg_len`-byte message, and
 /// 8844-byte signature. Returns `TagMismatch=22` on any
-/// verification failure (parse / structural / cryptographic — upstream
-/// collapses into a single `Err(InvalidInput)`; same convention as
-/// every other oxicrypt verify FFI). Spec: SP 800-208 §4.3.
+/// verification failure, a malformed key or signature included.
+/// Spec: SP 800-208 §4.3.
 ///
 /// # Safety
 ///
@@ -8074,9 +8015,8 @@ pub unsafe extern "C" fn oxi_lms_shake_m32_h10_w1_verify(
 ///
 /// Reads 56-byte pk, `msg_len`-byte message, and
 /// 4620-byte signature. Returns `TagMismatch=22` on any
-/// verification failure (parse / structural / cryptographic — upstream
-/// collapses into a single `Err(InvalidInput)`; same convention as
-/// every other oxicrypt verify FFI). Spec: SP 800-208 §4.3.
+/// verification failure, a malformed key or signature included.
+/// Spec: SP 800-208 §4.3.
 ///
 /// # Safety
 ///
@@ -8125,9 +8065,8 @@ pub unsafe extern "C" fn oxi_lms_shake_m32_h10_w2_verify(
 ///
 /// Reads 56-byte pk, `msg_len`-byte message, and
 /// 2508-byte signature. Returns `TagMismatch=22` on any
-/// verification failure (parse / structural / cryptographic — upstream
-/// collapses into a single `Err(InvalidInput)`; same convention as
-/// every other oxicrypt verify FFI). Spec: SP 800-208 §4.3.
+/// verification failure, a malformed key or signature included.
+/// Spec: SP 800-208 §4.3.
 ///
 /// # Safety
 ///
@@ -8176,9 +8115,8 @@ pub unsafe extern "C" fn oxi_lms_shake_m32_h10_w4_verify(
 ///
 /// Reads 56-byte pk, `msg_len`-byte message, and
 /// 1452-byte signature. Returns `TagMismatch=22` on any
-/// verification failure (parse / structural / cryptographic — upstream
-/// collapses into a single `Err(InvalidInput)`; same convention as
-/// every other oxicrypt verify FFI). Spec: SP 800-208 §4.3.
+/// verification failure, a malformed key or signature included.
+/// Spec: SP 800-208 §4.3.
 ///
 /// # Safety
 ///
@@ -8227,9 +8165,8 @@ pub unsafe extern "C" fn oxi_lms_shake_m32_h10_w8_verify(
 ///
 /// Reads 56-byte pk, `msg_len`-byte message, and
 /// 9004-byte signature. Returns `TagMismatch=22` on any
-/// verification failure (parse / structural / cryptographic — upstream
-/// collapses into a single `Err(InvalidInput)`; same convention as
-/// every other oxicrypt verify FFI). Spec: SP 800-208 §4.3.
+/// verification failure, a malformed key or signature included.
+/// Spec: SP 800-208 §4.3.
 ///
 /// # Safety
 ///
@@ -8278,9 +8215,8 @@ pub unsafe extern "C" fn oxi_lms_shake_m32_h15_w1_verify(
 ///
 /// Reads 56-byte pk, `msg_len`-byte message, and
 /// 4780-byte signature. Returns `TagMismatch=22` on any
-/// verification failure (parse / structural / cryptographic — upstream
-/// collapses into a single `Err(InvalidInput)`; same convention as
-/// every other oxicrypt verify FFI). Spec: SP 800-208 §4.3.
+/// verification failure, a malformed key or signature included.
+/// Spec: SP 800-208 §4.3.
 ///
 /// # Safety
 ///
@@ -8329,9 +8265,8 @@ pub unsafe extern "C" fn oxi_lms_shake_m32_h15_w2_verify(
 ///
 /// Reads 56-byte pk, `msg_len`-byte message, and
 /// 2668-byte signature. Returns `TagMismatch=22` on any
-/// verification failure (parse / structural / cryptographic — upstream
-/// collapses into a single `Err(InvalidInput)`; same convention as
-/// every other oxicrypt verify FFI). Spec: SP 800-208 §4.3.
+/// verification failure, a malformed key or signature included.
+/// Spec: SP 800-208 §4.3.
 ///
 /// # Safety
 ///
@@ -8380,9 +8315,8 @@ pub unsafe extern "C" fn oxi_lms_shake_m32_h15_w4_verify(
 ///
 /// Reads 56-byte pk, `msg_len`-byte message, and
 /// 1612-byte signature. Returns `TagMismatch=22` on any
-/// verification failure (parse / structural / cryptographic — upstream
-/// collapses into a single `Err(InvalidInput)`; same convention as
-/// every other oxicrypt verify FFI). Spec: SP 800-208 §4.3.
+/// verification failure, a malformed key or signature included.
+/// Spec: SP 800-208 §4.3.
 ///
 /// # Safety
 ///
@@ -8431,9 +8365,8 @@ pub unsafe extern "C" fn oxi_lms_shake_m32_h15_w8_verify(
 ///
 /// Reads 56-byte pk, `msg_len`-byte message, and
 /// 9164-byte signature. Returns `TagMismatch=22` on any
-/// verification failure (parse / structural / cryptographic — upstream
-/// collapses into a single `Err(InvalidInput)`; same convention as
-/// every other oxicrypt verify FFI). Spec: SP 800-208 §4.3.
+/// verification failure, a malformed key or signature included.
+/// Spec: SP 800-208 §4.3.
 ///
 /// # Safety
 ///
@@ -8482,9 +8415,8 @@ pub unsafe extern "C" fn oxi_lms_shake_m32_h20_w1_verify(
 ///
 /// Reads 56-byte pk, `msg_len`-byte message, and
 /// 4940-byte signature. Returns `TagMismatch=22` on any
-/// verification failure (parse / structural / cryptographic — upstream
-/// collapses into a single `Err(InvalidInput)`; same convention as
-/// every other oxicrypt verify FFI). Spec: SP 800-208 §4.3.
+/// verification failure, a malformed key or signature included.
+/// Spec: SP 800-208 §4.3.
 ///
 /// # Safety
 ///
@@ -8533,9 +8465,8 @@ pub unsafe extern "C" fn oxi_lms_shake_m32_h20_w2_verify(
 ///
 /// Reads 56-byte pk, `msg_len`-byte message, and
 /// 2828-byte signature. Returns `TagMismatch=22` on any
-/// verification failure (parse / structural / cryptographic — upstream
-/// collapses into a single `Err(InvalidInput)`; same convention as
-/// every other oxicrypt verify FFI). Spec: SP 800-208 §4.3.
+/// verification failure, a malformed key or signature included.
+/// Spec: SP 800-208 §4.3.
 ///
 /// # Safety
 ///
@@ -8584,9 +8515,8 @@ pub unsafe extern "C" fn oxi_lms_shake_m32_h20_w4_verify(
 ///
 /// Reads 56-byte pk, `msg_len`-byte message, and
 /// 1772-byte signature. Returns `TagMismatch=22` on any
-/// verification failure (parse / structural / cryptographic — upstream
-/// collapses into a single `Err(InvalidInput)`; same convention as
-/// every other oxicrypt verify FFI). Spec: SP 800-208 §4.3.
+/// verification failure, a malformed key or signature included.
+/// Spec: SP 800-208 §4.3.
 ///
 /// # Safety
 ///
@@ -8635,9 +8565,8 @@ pub unsafe extern "C" fn oxi_lms_shake_m32_h20_w8_verify(
 ///
 /// Reads 56-byte pk, `msg_len`-byte message, and
 /// 9324-byte signature. Returns `TagMismatch=22` on any
-/// verification failure (parse / structural / cryptographic — upstream
-/// collapses into a single `Err(InvalidInput)`; same convention as
-/// every other oxicrypt verify FFI). Spec: SP 800-208 §4.3.
+/// verification failure, a malformed key or signature included.
+/// Spec: SP 800-208 §4.3.
 ///
 /// # Safety
 ///
@@ -8686,9 +8615,8 @@ pub unsafe extern "C" fn oxi_lms_shake_m32_h25_w1_verify(
 ///
 /// Reads 56-byte pk, `msg_len`-byte message, and
 /// 5100-byte signature. Returns `TagMismatch=22` on any
-/// verification failure (parse / structural / cryptographic — upstream
-/// collapses into a single `Err(InvalidInput)`; same convention as
-/// every other oxicrypt verify FFI). Spec: SP 800-208 §4.3.
+/// verification failure, a malformed key or signature included.
+/// Spec: SP 800-208 §4.3.
 ///
 /// # Safety
 ///
@@ -8737,9 +8665,8 @@ pub unsafe extern "C" fn oxi_lms_shake_m32_h25_w2_verify(
 ///
 /// Reads 56-byte pk, `msg_len`-byte message, and
 /// 2988-byte signature. Returns `TagMismatch=22` on any
-/// verification failure (parse / structural / cryptographic — upstream
-/// collapses into a single `Err(InvalidInput)`; same convention as
-/// every other oxicrypt verify FFI). Spec: SP 800-208 §4.3.
+/// verification failure, a malformed key or signature included.
+/// Spec: SP 800-208 §4.3.
 ///
 /// # Safety
 ///
@@ -8788,9 +8715,8 @@ pub unsafe extern "C" fn oxi_lms_shake_m32_h25_w4_verify(
 ///
 /// Reads 56-byte pk, `msg_len`-byte message, and
 /// 1932-byte signature. Returns `TagMismatch=22` on any
-/// verification failure (parse / structural / cryptographic — upstream
-/// collapses into a single `Err(InvalidInput)`; same convention as
-/// every other oxicrypt verify FFI). Spec: SP 800-208 §4.3.
+/// verification failure, a malformed key or signature included.
+/// Spec: SP 800-208 §4.3.
 ///
 /// # Safety
 ///
@@ -8841,9 +8767,8 @@ pub unsafe extern "C" fn oxi_lms_shake_m32_h25_w8_verify(
 ///
 /// Reads 48-byte pk, `msg_len`-byte message, and
 /// 4956-byte signature. Returns `TagMismatch=22` on any
-/// verification failure (parse / structural / cryptographic — upstream
-/// collapses into a single `Err(InvalidInput)`; same convention as
-/// every other oxicrypt verify FFI). Spec: SP 800-208 §4.4.
+/// verification failure, a malformed key or signature included.
+/// Spec: SP 800-208 §4.4.
 ///
 /// # Safety
 ///
@@ -8892,9 +8817,8 @@ pub unsafe extern "C" fn oxi_lms_shake_m24_h5_w1_verify(
 ///
 /// Reads 48-byte pk, `msg_len`-byte message, and
 /// 2580-byte signature. Returns `TagMismatch=22` on any
-/// verification failure (parse / structural / cryptographic — upstream
-/// collapses into a single `Err(InvalidInput)`; same convention as
-/// every other oxicrypt verify FFI). Spec: SP 800-208 §4.4.
+/// verification failure, a malformed key or signature included.
+/// Spec: SP 800-208 §4.4.
 ///
 /// # Safety
 ///
@@ -8943,9 +8867,8 @@ pub unsafe extern "C" fn oxi_lms_shake_m24_h5_w2_verify(
 ///
 /// Reads 48-byte pk, `msg_len`-byte message, and
 /// 1380-byte signature. Returns `TagMismatch=22` on any
-/// verification failure (parse / structural / cryptographic — upstream
-/// collapses into a single `Err(InvalidInput)`; same convention as
-/// every other oxicrypt verify FFI). Spec: SP 800-208 §4.4.
+/// verification failure, a malformed key or signature included.
+/// Spec: SP 800-208 §4.4.
 ///
 /// # Safety
 ///
@@ -8994,9 +8917,8 @@ pub unsafe extern "C" fn oxi_lms_shake_m24_h5_w4_verify(
 ///
 /// Reads 48-byte pk, `msg_len`-byte message, and
 /// 780-byte signature. Returns `TagMismatch=22` on any
-/// verification failure (parse / structural / cryptographic — upstream
-/// collapses into a single `Err(InvalidInput)`; same convention as
-/// every other oxicrypt verify FFI). Spec: SP 800-208 §4.4.
+/// verification failure, a malformed key or signature included.
+/// Spec: SP 800-208 §4.4.
 ///
 /// # Safety
 ///
@@ -9045,9 +8967,8 @@ pub unsafe extern "C" fn oxi_lms_shake_m24_h5_w8_verify(
 ///
 /// Reads 48-byte pk, `msg_len`-byte message, and
 /// 5076-byte signature. Returns `TagMismatch=22` on any
-/// verification failure (parse / structural / cryptographic — upstream
-/// collapses into a single `Err(InvalidInput)`; same convention as
-/// every other oxicrypt verify FFI). Spec: SP 800-208 §4.4.
+/// verification failure, a malformed key or signature included.
+/// Spec: SP 800-208 §4.4.
 ///
 /// # Safety
 ///
@@ -9096,9 +9017,8 @@ pub unsafe extern "C" fn oxi_lms_shake_m24_h10_w1_verify(
 ///
 /// Reads 48-byte pk, `msg_len`-byte message, and
 /// 2700-byte signature. Returns `TagMismatch=22` on any
-/// verification failure (parse / structural / cryptographic — upstream
-/// collapses into a single `Err(InvalidInput)`; same convention as
-/// every other oxicrypt verify FFI). Spec: SP 800-208 §4.4.
+/// verification failure, a malformed key or signature included.
+/// Spec: SP 800-208 §4.4.
 ///
 /// # Safety
 ///
@@ -9147,9 +9067,8 @@ pub unsafe extern "C" fn oxi_lms_shake_m24_h10_w2_verify(
 ///
 /// Reads 48-byte pk, `msg_len`-byte message, and
 /// 1500-byte signature. Returns `TagMismatch=22` on any
-/// verification failure (parse / structural / cryptographic — upstream
-/// collapses into a single `Err(InvalidInput)`; same convention as
-/// every other oxicrypt verify FFI). Spec: SP 800-208 §4.4.
+/// verification failure, a malformed key or signature included.
+/// Spec: SP 800-208 §4.4.
 ///
 /// # Safety
 ///
@@ -9198,9 +9117,8 @@ pub unsafe extern "C" fn oxi_lms_shake_m24_h10_w4_verify(
 ///
 /// Reads 48-byte pk, `msg_len`-byte message, and
 /// 900-byte signature. Returns `TagMismatch=22` on any
-/// verification failure (parse / structural / cryptographic — upstream
-/// collapses into a single `Err(InvalidInput)`; same convention as
-/// every other oxicrypt verify FFI). Spec: SP 800-208 §4.4.
+/// verification failure, a malformed key or signature included.
+/// Spec: SP 800-208 §4.4.
 ///
 /// # Safety
 ///
@@ -9249,9 +9167,8 @@ pub unsafe extern "C" fn oxi_lms_shake_m24_h10_w8_verify(
 ///
 /// Reads 48-byte pk, `msg_len`-byte message, and
 /// 5196-byte signature. Returns `TagMismatch=22` on any
-/// verification failure (parse / structural / cryptographic — upstream
-/// collapses into a single `Err(InvalidInput)`; same convention as
-/// every other oxicrypt verify FFI). Spec: SP 800-208 §4.4.
+/// verification failure, a malformed key or signature included.
+/// Spec: SP 800-208 §4.4.
 ///
 /// # Safety
 ///
@@ -9300,9 +9217,8 @@ pub unsafe extern "C" fn oxi_lms_shake_m24_h15_w1_verify(
 ///
 /// Reads 48-byte pk, `msg_len`-byte message, and
 /// 2820-byte signature. Returns `TagMismatch=22` on any
-/// verification failure (parse / structural / cryptographic — upstream
-/// collapses into a single `Err(InvalidInput)`; same convention as
-/// every other oxicrypt verify FFI). Spec: SP 800-208 §4.4.
+/// verification failure, a malformed key or signature included.
+/// Spec: SP 800-208 §4.4.
 ///
 /// # Safety
 ///
@@ -9351,9 +9267,8 @@ pub unsafe extern "C" fn oxi_lms_shake_m24_h15_w2_verify(
 ///
 /// Reads 48-byte pk, `msg_len`-byte message, and
 /// 1620-byte signature. Returns `TagMismatch=22` on any
-/// verification failure (parse / structural / cryptographic — upstream
-/// collapses into a single `Err(InvalidInput)`; same convention as
-/// every other oxicrypt verify FFI). Spec: SP 800-208 §4.4.
+/// verification failure, a malformed key or signature included.
+/// Spec: SP 800-208 §4.4.
 ///
 /// # Safety
 ///
@@ -9402,9 +9317,8 @@ pub unsafe extern "C" fn oxi_lms_shake_m24_h15_w4_verify(
 ///
 /// Reads 48-byte pk, `msg_len`-byte message, and
 /// 1020-byte signature. Returns `TagMismatch=22` on any
-/// verification failure (parse / structural / cryptographic — upstream
-/// collapses into a single `Err(InvalidInput)`; same convention as
-/// every other oxicrypt verify FFI). Spec: SP 800-208 §4.4.
+/// verification failure, a malformed key or signature included.
+/// Spec: SP 800-208 §4.4.
 ///
 /// # Safety
 ///
@@ -9453,9 +9367,8 @@ pub unsafe extern "C" fn oxi_lms_shake_m24_h15_w8_verify(
 ///
 /// Reads 48-byte pk, `msg_len`-byte message, and
 /// 5316-byte signature. Returns `TagMismatch=22` on any
-/// verification failure (parse / structural / cryptographic — upstream
-/// collapses into a single `Err(InvalidInput)`; same convention as
-/// every other oxicrypt verify FFI). Spec: SP 800-208 §4.4.
+/// verification failure, a malformed key or signature included.
+/// Spec: SP 800-208 §4.4.
 ///
 /// # Safety
 ///
@@ -9504,9 +9417,8 @@ pub unsafe extern "C" fn oxi_lms_shake_m24_h20_w1_verify(
 ///
 /// Reads 48-byte pk, `msg_len`-byte message, and
 /// 2940-byte signature. Returns `TagMismatch=22` on any
-/// verification failure (parse / structural / cryptographic — upstream
-/// collapses into a single `Err(InvalidInput)`; same convention as
-/// every other oxicrypt verify FFI). Spec: SP 800-208 §4.4.
+/// verification failure, a malformed key or signature included.
+/// Spec: SP 800-208 §4.4.
 ///
 /// # Safety
 ///
@@ -9555,9 +9467,8 @@ pub unsafe extern "C" fn oxi_lms_shake_m24_h20_w2_verify(
 ///
 /// Reads 48-byte pk, `msg_len`-byte message, and
 /// 1740-byte signature. Returns `TagMismatch=22` on any
-/// verification failure (parse / structural / cryptographic — upstream
-/// collapses into a single `Err(InvalidInput)`; same convention as
-/// every other oxicrypt verify FFI). Spec: SP 800-208 §4.4.
+/// verification failure, a malformed key or signature included.
+/// Spec: SP 800-208 §4.4.
 ///
 /// # Safety
 ///
@@ -9606,9 +9517,8 @@ pub unsafe extern "C" fn oxi_lms_shake_m24_h20_w4_verify(
 ///
 /// Reads 48-byte pk, `msg_len`-byte message, and
 /// 1140-byte signature. Returns `TagMismatch=22` on any
-/// verification failure (parse / structural / cryptographic — upstream
-/// collapses into a single `Err(InvalidInput)`; same convention as
-/// every other oxicrypt verify FFI). Spec: SP 800-208 §4.4.
+/// verification failure, a malformed key or signature included.
+/// Spec: SP 800-208 §4.4.
 ///
 /// # Safety
 ///
@@ -9657,9 +9567,8 @@ pub unsafe extern "C" fn oxi_lms_shake_m24_h20_w8_verify(
 ///
 /// Reads 48-byte pk, `msg_len`-byte message, and
 /// 5436-byte signature. Returns `TagMismatch=22` on any
-/// verification failure (parse / structural / cryptographic — upstream
-/// collapses into a single `Err(InvalidInput)`; same convention as
-/// every other oxicrypt verify FFI). Spec: SP 800-208 §4.4.
+/// verification failure, a malformed key or signature included.
+/// Spec: SP 800-208 §4.4.
 ///
 /// # Safety
 ///
@@ -9708,9 +9617,8 @@ pub unsafe extern "C" fn oxi_lms_shake_m24_h25_w1_verify(
 ///
 /// Reads 48-byte pk, `msg_len`-byte message, and
 /// 3060-byte signature. Returns `TagMismatch=22` on any
-/// verification failure (parse / structural / cryptographic — upstream
-/// collapses into a single `Err(InvalidInput)`; same convention as
-/// every other oxicrypt verify FFI). Spec: SP 800-208 §4.4.
+/// verification failure, a malformed key or signature included.
+/// Spec: SP 800-208 §4.4.
 ///
 /// # Safety
 ///
@@ -9759,9 +9667,8 @@ pub unsafe extern "C" fn oxi_lms_shake_m24_h25_w2_verify(
 ///
 /// Reads 48-byte pk, `msg_len`-byte message, and
 /// 1860-byte signature. Returns `TagMismatch=22` on any
-/// verification failure (parse / structural / cryptographic — upstream
-/// collapses into a single `Err(InvalidInput)`; same convention as
-/// every other oxicrypt verify FFI). Spec: SP 800-208 §4.4.
+/// verification failure, a malformed key or signature included.
+/// Spec: SP 800-208 §4.4.
 ///
 /// # Safety
 ///
@@ -9810,9 +9717,8 @@ pub unsafe extern "C" fn oxi_lms_shake_m24_h25_w4_verify(
 ///
 /// Reads 48-byte pk, `msg_len`-byte message, and
 /// 1260-byte signature. Returns `TagMismatch=22` on any
-/// verification failure (parse / structural / cryptographic — upstream
-/// collapses into a single `Err(InvalidInput)`; same convention as
-/// every other oxicrypt verify FFI). Spec: SP 800-208 §4.4.
+/// verification failure, a malformed key or signature included.
+/// Spec: SP 800-208 §4.4.
 ///
 /// # Safety
 ///
@@ -9903,57 +9809,10 @@ pub unsafe extern "C" fn oxi_xmss_verify(
     }
 }
 
-// ── ECDSA DRBG-driven (FIPS 186-5 §A.2.2 + IG 10.3.A) — handle surface ───
+// ── ECDSA private-key handles (FIPS 186-5 §A.2.2, IG 10.3.A) ─────
 //
-// Eight C ABI entry points + two opaque types beside the stateless
-// ECDSA surface above: FIPS 186-5 §A.2.2 rejection-sampler-driven keygen
-// and SHA-{256,384}-based signing. The DRBG handle is a parameter, as in
-// `oxi_dh3072_generate_keypair`.
-//
-// Per-curve set:
-//   - OxiEcdsaP{256,384}PrivateKey — opaque handle that has passed an
-//     IG 10.3.A pairwise consistency test at construction time. Carries
-//     both the private scalar `d` and the derived uncompressed SEC1
-//     public key `Q`. Drop chain calls upstream
-//     `oxicrypt_zeroize::zeroize(&mut self.d)`; that the freed memory
-//     reads zero is unproven, since no test inspects it.
-//
-//   - oxi_ecdsa_p{256,384}_private_key_new_generate(drbg, **out_key) —
-//     allocates a heap handle, generates `d` via FIPS 186-5 §A.2.2
-//     rejection sampling on `drbg`, derives `Q`, and runs the
-//     IG 10.3.A PCT before returning. Allocation succeeds only on PCT
-//     pass; PCT-fail collapses to `OxiResult::InvalidInput = 5`.
-//
-//   - oxi_ecdsa_p{256,384}_private_key_free(key) — NULL-safe; releases
-//     the heap handle and runs Drop, which calls zeroize on `d`.
-//
-//   - oxi_ecdsa_p{256,384}_private_key_public_key(key, out_pk) — copies
-//     the SEC1 uncompressed public key (65 / 97 bytes) into the
-//     caller buffer.
-//
-//   - oxi_ecdsa_p{256,384}_private_key_sign_sha{256,384}(key, drbg,
-//     msg, msg_len, out_sig) — signs `msg`, sampling a fresh
-//     per-signature nonce `k` from `drbg` via FIPS 186-5 §A.2.2.
-//     Both handles must be live; `drbg` is borrowed mutably for the
-//     duration of the call (per-call-mutating-handle thread-safety
-//     contract — caller MUST serialise concurrent calls on the same
-//     `drbg` pointer). Returns `OxiResult::InvalidInput = 5` if the
-//     DRBG faults or the bounded retry chain (8 draws) fails to produce
-//     a non-zero `(r, s)` (astronomically improbable; signals a faulted
-//     primitive, not bad input).
-//
-// **PCT-at-construction handle invariant**: the C ABI surface preserves the upstream IG 10.3.A invariant
-// that no `EcdsaP{256,384}PrivateKey` exists without having passed a
-// sign-and-verify PCT against a fixed probe message under a fresh
-// DRBG-sampled `k`. Because the handle wraps the upstream type
-// directly (via `OxiHandle<EcdsaP{256,384}PrivateKey>`) and only the
-// DRBG-driven `_new_generate` constructor exists, every
-// reachable `OxiEcdsaP{256,384}PrivateKey` pointer in C land
-// corresponds to a Rust-side handle whose construction succeeded —
-// PCT-fail aborts allocation, never produces a half-initialised
-// pointer. The C ABI exposes neither the upstream `from_bytes(d, drbg)`
-// import constructor nor the `private_scalar(&self)` accessor; either
-// could be added without changing an existing signature.
+// `_new_generate` is the only constructor, so every handle holds a key
+// that passed its pairwise consistency test.
 
 /// Opaque ECDSA P-256 private-key handle that has passed an IG 10.3.A
 /// pairwise consistency test at construction time.
@@ -9991,7 +9850,7 @@ impl OxiEcdsaP384PrivateKey {
     }
 }
 
-// ── ECDSA P-256 — DRBG-driven keygen + sign ──────────────────────
+// ── ECDSA P-256 private key ──────────────────────────────────────
 
 /// Allocate a new ECDSA P-256 private-key handle, generating its
 /// private scalar via the FIPS 186-5 §A.2.2 rejection sampler on
@@ -10004,17 +9863,17 @@ impl OxiEcdsaP384PrivateKey {
 /// handle and MUST release it with
 /// [`oxi_ecdsa_p256_private_key_free`].
 ///
-/// Returns `OxiResult::InvalidInput = 5` if the DRBG faults during
-/// scalar / nonce sampling, or if the IG 10.3.A PCT sign-and-verify
-/// round-trip on the freshly-generated key fails (the latter would
-/// indicate a faulted sign or verify primitive). Returns
-/// `OxiResult::NotOperational = 1` if the FIPS module is not in the
-/// `Operational` state. Returns `OxiResult::AlgorithmRestricted = 6`
-/// if the active algorithm profile blocks ECDSA-P256 keygen.
-///
-/// Returns `OxiResult::Uninstantiated = 8` if the DRBG handle was never
-/// instantiated, and `OxiResult::InvalidInput = 5` if it was instantiated
-/// by another process; both are checked before the module state.
+/// Returns, in this order: `NullPointer = 10` for a NULL `drbg` or
+/// `out_key`; `InvalidInput = 5` for a DRBG handle instantiated by
+/// another process and `Uninstantiated = 8` for one never instantiated,
+/// both checked before the module state; `NotOperational = 1` when the
+/// module is not operational; `AlgorithmRestricted = 6` when the active
+/// profile does not admit ECDSA P-256 key generation; the DRBG's codes
+/// when it produces no output; `InvalidInput = 5` when scalar sampling
+/// exhausts its retries; and `ConditionalTestFailed = 3` when the
+/// pairwise consistency test fails, after which the module is in its
+/// error state and every later call returns `NotOperational = 1`. On any
+/// failure `*out_key` is unchanged.
 ///
 /// # Safety
 ///
@@ -10050,10 +9909,7 @@ pub unsafe extern "C" fn oxi_ecdsa_p256_private_key_new_generate(
 /// Free an ECDSA P-256 private-key handle. NULL-safe.
 ///
 /// After this call the caller's pointer is dangling; the caller
-/// SHOULD set their pointer to NULL to avoid use-after-free. Drop
-/// on the upstream `EcdsaP256PrivateKey` calls `oxicrypt-zeroize` on
-/// the private scalar `d`; no caller-side scrubbing is required. That
-/// the freed memory reads zero is unproven: no test inspects it.
+/// SHOULD set their pointer to NULL to avoid use-after-free.
 ///
 /// # Safety
 ///
@@ -10177,17 +10033,20 @@ pub unsafe extern "C" fn oxi_ecdsa_p256_private_key_sign_sha256(
     R::Ok as c_int
 }
 
-// ── ECDSA P-384 — DRBG-driven keygen + sign ──────────────────────
+// ── ECDSA P-384 private key ──────────────────────────────────────
 
 /// Allocate a new ECDSA P-384 private-key handle, generating its
 /// private scalar via the FIPS 186-5 §A.2.2 rejection sampler on
 /// `drbg`, deriving its public key, and running the IG 10.3.A
-/// pairwise consistency test before returning. Mirrors
-/// [`oxi_ecdsa_p256_private_key_new_generate`].
+/// pairwise consistency test before returning.
 ///
-/// Returns `OxiResult::Uninstantiated = 8` if the DRBG handle was never
-/// instantiated, and `OxiResult::InvalidInput = 5` if it was instantiated
-/// by another process; both are checked before the module state.
+/// Returns the codes of [`oxi_ecdsa_p256_private_key_new_generate`] in
+/// the same order, for ECDSA P-384 key generation: `NullPointer = 10`,
+/// `InvalidInput = 5` and `Uninstantiated = 8` for the DRBG handle,
+/// `NotOperational = 1`, `AlgorithmRestricted = 6`, the DRBG's codes,
+/// `InvalidInput = 5` on sampling exhaustion, and
+/// `ConditionalTestFailed = 3` when the pairwise consistency test fails,
+/// after which every call returns `NotOperational = 1`.
 ///
 /// # Safety
 ///
@@ -10218,8 +10077,8 @@ pub unsafe extern "C" fn oxi_ecdsa_p384_private_key_new_generate(
     R::Ok as c_int
 }
 
-/// Free an ECDSA P-384 private-key handle. NULL-safe. Mirrors
-/// [`oxi_ecdsa_p256_private_key_free`].
+/// Free an ECDSA P-384 private-key handle, as
+/// [`oxi_ecdsa_p256_private_key_free`] does. NULL is a no-op.
 ///
 /// # Safety
 ///
@@ -10272,9 +10131,9 @@ pub unsafe extern "C" fn oxi_ecdsa_p384_private_key_public_key(
 
 /// Sign `msg` with ECDSA P-384 + SHA-384 under the private-key
 /// handle, sampling a fresh per-signature nonce `k` from `drbg` via
-/// the FIPS 186-5 §A.2.2 rejection sampler. Mirrors
-/// [`oxi_ecdsa_p256_private_key_sign_sha256`] with `[u8; 96]`
-/// signature output.
+/// the FIPS 186-5 §A.2.2 rejection sampler, as
+/// [`oxi_ecdsa_p256_private_key_sign_sha256`] does, with a 96-byte
+/// signature.
 ///
 /// Returns `OxiResult::InvalidInput = 5` if the DRBG faults or the
 /// bounded retry chain exhausts. Returns `OxiResult::NotOperational
@@ -10332,65 +10191,15 @@ pub unsafe extern "C" fn oxi_ecdsa_p384_private_key_sign_sha384(
     R::Ok as c_int
 }
 
-// ── RSA DRBG-driven (FIPS 186-5 / RFC 8017 §8) — handle surface ──
+// ── RSA private-key handles (FIPS 186-5, RFC 8017 §8, IG 10.3.A) ─
 //
-// 24 entry points + 3 opaque types. Alongside the stateless
-// verify-only surface above (six fns: PKCS#1 v1.5 verify and PSS
-// verify across 2048/3072/4096), this surface provides DRBG-driven
-// keygen with PCT-at-construction, deterministic PKCS#1 v1.5 sign,
-// DRBG-driven PSS sign, public-key DRBG-driven OAEP encrypt,
-// handle-mediated OAEP decrypt, plus modulus and public-exponent
-// accessors per size.
-//
-// Per-size pattern (×3: 2048, 3072, 4096):
-//
-//   1. _new_generate(drbg, e, **out_key)        DRBG-driven, PCT-at-construction
-//   2. _free(key)                               Opaque-handle cleanup
-//   3. _modulus(key, out)                       Public n accessor
-//   4. _public_exponent(key, *out_e)            Public e accessor
-//   5. _sign_pkcs1_v15_sha256(key, msg, sig)    Deterministic
-//   6. _sign_pss_sha256(key, drbg, msg, sig)    DRBG-driven re-borrow for fresh salt
-//   7. _oaep_encrypt_sha256(drbg, n, e, ...)    Stateless public-key, DRBG seed
-//   8. _oaep_decrypt_sha256(key, label, ct, ...)Handle-mediated, length-out-pointer
-//
-// **CRT-secret-exfil safe by API shape:** the handle exposes only `n`
-// (modulus) and `e` (public exponent) via accessors. The CRT
-// components — `p`, `q`, `dP`, `dQ`, `qInv` — remain encapsulated
-// inside the upstream `RsaPrivateKey{N}` struct, whose `Drop` impl
-// calls zeroize on them at handle release (that the freed memory reads
-// zero is unproven: no test inspects it). There is no FFI accessor that
-// can extract the secret half-moduli or private exponent: the C API
-// does not surface them and the underlying Rust struct's CRT field is
-// `pub(crate)`-private to `oxicrypt-rsa`.
-//
-// **PCT-at-construction handle invariant** (as for ECDSA above):
-// `_new_generate` is the sole construction
-// path exposed via FFI; it routes through `RsaPrivateKey{N}::generate`,
-// which runs the IG 10.3.A pairwise consistency test on the CRT path
-// (sign a fixed probe with `_crt_internal`, verify with the public
-// exponent) before returning the handle. Every handle a C caller can
-// observe has therefore already produced a valid sign/verify pair on
-// the same code path the caller will exercise.
-//
-// **DRBG-handle-as-parameter** (through `drbg::typed_drbg_access`):
-// keygen takes the DRBG by mutable pointer; sign-PSS re-borrows the
-// same DRBG for per-signature salt sampling; OAEP encrypt borrows the
-// DRBG for seed sampling. Three sites per size = nine DRBG re-borrows
-// in all — single-threaded callers are unaffected; concurrent C
-// callers must serialize access to a DRBG handle, because every call
-// mutates its state.
-//
-// **TagMismatch=22 mapping (verify-only)** applies to the stateless
-// verify functions; sign / decrypt / keygen on this surface use the
-// generic `R::from(Error)` mapping and add no `OxiResult`
-// discriminants.
-
-// ── Opaque RSA private-key handles ───────────────────────────────
+// `_new_generate` is the only constructor, so every handle holds a key
+// that passed its pairwise consistency test. The handle exposes `n` and
+// `e` and no private component.
 
 /// Opaque RSA-2048 private-key handle that has passed an IG 10.3.A
-/// pairwise consistency test at construction time. Mirrors the
-/// `OxiEcdsaP256PrivateKey` pattern: its only constructor runs the
-/// PCT, so no handle exists that has not passed it.
+/// pairwise consistency test at construction time: its only constructor
+/// runs the test, so no handle exists that has not passed it.
 ///
 /// cbindgen:opaque
 pub struct OxiRsaPrivateKey2048 {
@@ -10435,7 +10244,7 @@ impl OxiRsaPrivateKey4096 {
     }
 }
 
-// ── RSA-2048 — DRBG-driven keygen + sign + OAEP ──────────────────
+// ── RSA-2048 ─────────────────────────────────────────────────────
 
 /// Allocate a new RSA-2048 private-key handle, generating a fresh
 /// keypair via FIPS 186-5 §A.1.1 / §B.3.1 prime sampling on `drbg`,
@@ -10448,18 +10257,17 @@ impl OxiRsaPrivateKey4096 {
 /// `out_key` and returns `OxiResult::Ok = 0`. The caller owns the
 /// handle and MUST release it with [`oxi_rsa_2048_private_key_free`].
 ///
-/// Returns `OxiResult::InvalidInput = 5` if the DRBG faults during
-/// prime sampling, the prime-candidate retry budget is exceeded,
-/// `e` fails the structural check, or the resulting keypair fails
-/// the pairwise consistency test (the latter would indicate internal
-/// corruption). Returns `OxiResult::NotOperational = 1` if the FIPS
-/// module is not in the `Operational` state. Returns
-/// `OxiResult::AlgorithmRestricted = 6` if the active algorithm
-/// profile blocks RSA-2048 keygen.
-///
-/// Returns `OxiResult::Uninstantiated = 8` if the DRBG handle was never
-/// instantiated, and `OxiResult::InvalidInput = 5` if it was instantiated
-/// by another process; both are checked before the module state.
+/// Returns, in this order: `NullPointer = 10` for a NULL `drbg` or
+/// `out_key`; `InvalidInput = 5` for a DRBG handle instantiated by
+/// another process and `Uninstantiated = 8` for one never instantiated,
+/// both checked before the module state; `NotOperational = 1` when the
+/// module is not operational; `AlgorithmRestricted = 6` when the active
+/// profile does not admit RSA-2048 key generation; the DRBG's codes when
+/// it produces no output; `InvalidInput = 5` when `e` fails its check or
+/// prime sampling exceeds its retry budget; and
+/// `ConditionalTestFailed = 3` when the pairwise consistency test fails,
+/// after which the module is in its error state and every later call
+/// returns `NotOperational = 1`. On any failure `*out_key` is unchanged.
 ///
 /// # Safety
 ///
@@ -10495,11 +10303,7 @@ pub unsafe extern "C" fn oxi_rsa_2048_private_key_new_generate(
 
 /// Free an RSA-2048 private-key handle. NULL-safe.
 ///
-/// After this call the caller's pointer is dangling. Drop on the
-/// upstream `RsaPrivateKey2048` calls `oxicrypt-zeroize` on the
-/// private exponent `d` and (when present) the CRT components
-/// `p, q, dP, dQ, qInv`. That the freed memory reads zero is unproven:
-/// no test inspects it.
+/// After this call the caller's pointer is dangling.
 ///
 /// # Safety
 ///
@@ -10758,10 +10562,7 @@ pub unsafe extern "C" fn oxi_rsa_2048_oaep_encrypt_sha256(
 /// All OAEP decode failures (bad `Y` byte, `lHash'` mismatch,
 /// malformed `PS`, missing `0x01` delimiter, wrong label) collapse
 /// to `OxiResult::InvalidInput = 5` without revealing which check
-/// failed (Manger-resistance contract). When the handle was built
-/// with CRT material (the only path exposed via `_new_generate`), a
-/// single CRT-half fault is caught by the Bellcore verify-after-
-/// decrypt step in the upstream primitive.
+/// failed (Manger-resistance contract).
 ///
 /// # Safety
 ///
@@ -10823,16 +10624,13 @@ pub unsafe extern "C" fn oxi_rsa_2048_oaep_decrypt_sha256(
     code
 }
 
-// ── RSA-3072 — DRBG-driven keygen + sign + OAEP ──────────────────
+// ── RSA-3072 ─────────────────────────────────────────────────────
 
-/// Allocate a new RSA-3072 private-key handle. Mirrors
-/// [`oxi_rsa_2048_private_key_new_generate`] for the 3072-bit
-/// modulus; PCT-at-construction runs on the CRT path with Bellcore
-/// verify-after-sign.
-///
-/// Returns `OxiResult::Uninstantiated = 8` if the DRBG handle was never
-/// instantiated, and `OxiResult::InvalidInput = 5` if it was instantiated
-/// by another process; both are checked before the module state.
+/// Allocate a new RSA-3072 private-key handle, as
+/// [`oxi_rsa_2048_private_key_new_generate`] does for a 2048-bit modulus,
+/// with the same codes in the same order: `ConditionalTestFailed = 3`
+/// when the pairwise consistency test fails, and `NotOperational = 1` on
+/// every later call.
 ///
 /// # Safety
 ///
@@ -11086,9 +10884,8 @@ pub unsafe extern "C" fn oxi_rsa_3072_oaep_encrypt_sha256(
 }
 
 /// Decrypt an RSAES-OAEP SHA-256 ciphertext under the RSA-3072
-/// handle. `out_max_len` must be ≥ 318. Mirrors the Manger-
-/// resistance and Bellcore-on-CRT contracts of
-/// [`oxi_rsa_2048_oaep_decrypt_sha256`].
+/// handle. `out_max_len` must be ≥ 318. Every decode failure returns
+/// `InvalidInput = 5`, as for [`oxi_rsa_2048_oaep_decrypt_sha256`].
 ///
 /// # Safety
 ///
@@ -11150,15 +10947,13 @@ pub unsafe extern "C" fn oxi_rsa_3072_oaep_decrypt_sha256(
     code
 }
 
-// ── RSA-4096 — DRBG-driven keygen + sign + OAEP ──────────────────
+// ── RSA-4096 ─────────────────────────────────────────────────────
 
-/// Allocate a new RSA-4096 private-key handle. Mirrors
-/// [`oxi_rsa_2048_private_key_new_generate`] for the 4096-bit
-/// modulus.
-///
-/// Returns `OxiResult::Uninstantiated = 8` if the DRBG handle was never
-/// instantiated, and `OxiResult::InvalidInput = 5` if it was instantiated
-/// by another process; both are checked before the module state.
+/// Allocate a new RSA-4096 private-key handle, as
+/// [`oxi_rsa_2048_private_key_new_generate`] does for a 2048-bit modulus,
+/// with the same codes in the same order: `ConditionalTestFailed = 3`
+/// when the pairwise consistency test fails, and `NotOperational = 1` on
+/// every later call.
 ///
 /// # Safety
 ///
@@ -11409,8 +11204,8 @@ pub unsafe extern "C" fn oxi_rsa_4096_oaep_encrypt_sha256(
 }
 
 /// Decrypt an RSAES-OAEP SHA-256 ciphertext under the RSA-4096
-/// handle. `out_max_len` must be ≥ 446. Manger-resistant and
-/// Bellcore-protected on the CRT path.
+/// handle. `out_max_len` must be ≥ 446. Every decode failure returns
+/// `InvalidInput = 5`, as for [`oxi_rsa_2048_oaep_decrypt_sha256`].
 ///
 /// # Safety
 ///

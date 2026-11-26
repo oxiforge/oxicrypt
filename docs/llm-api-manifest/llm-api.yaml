@@ -622,7 +622,7 @@ types:
       - name: Uninstantiated
         description: generate or reseed was called before instantiate succeeded on this DRBG handle.
       - name: ReseedRequired
-        description: The reseed counter passed the SP 800-90A reseed interval on an instance that does not reseed itself, a state no exported function reaches at ABI 3.
+        description: The reseed counter passed the SP 800-90A reseed interval on an instance that does not reseed itself, a state no exported function reaches.
       - name: NullPointer
         description: Caller passed a NULL pointer where one is required.
       - name: BufferTooSmall
@@ -8012,10 +8012,36 @@ functions:
       handles_secrets: false
       fips_approved: false
 
+  - name: "seam::reset"
+    module: oxicrypt-ecdh
+    description: "Disarms seam::corrupt_next_pk, so the next key generation takes its production path; available with the fault-injection feature or in the crate's own tests."
+    signature: "pub fn reset()"
+    returns:
+      type: "()"
+      description: "Nothing."
+    thread_safety: thread-safe
+    security:
+      constant_time: false
+      handles_secrets: false
+      fips_approved: false
+
   - name: "seam::corrupt_next_pk"
     module: oxicrypt-ecdsa
     description: "Arms the next ECDSA key generation in the process, P-256 or P-384, through EcdsaP256PrivateKey::generate or EcdsaP384PrivateKey::generate, to flip byte 1 of the encoded public key (the first x-coordinate byte) before its pairwise consistency test, which then fails and puts the module in its error state; available with the fault-injection feature or in the crate's own tests."
     signature: "pub fn corrupt_next_pk()"
+    returns:
+      type: "()"
+      description: "Nothing."
+    thread_safety: thread-safe
+    security:
+      constant_time: false
+      handles_secrets: false
+      fips_approved: false
+
+  - name: "seam::reset"
+    module: oxicrypt-ecdsa
+    description: "Disarms seam::corrupt_next_pk, so the next key generation takes its production path; available with the fault-injection feature or in the crate's own tests."
+    signature: "pub fn reset()"
     returns:
       type: "()"
       description: "Nothing."
@@ -8038,10 +8064,36 @@ functions:
       handles_secrets: false
       fips_approved: false
 
+  - name: "seam::reset"
+    module: oxicrypt-eddsa
+    description: "Disarms seam::corrupt_next_pk, so the next key generation takes its production path; available with the fault-injection feature or in the crate's own tests."
+    signature: "pub fn reset()"
+    returns:
+      type: "()"
+      description: "Nothing."
+    thread_safety: thread-safe
+    security:
+      constant_time: false
+      handles_secrets: false
+      fips_approved: false
+
   - name: "seam::corrupt_next_pk"
     module: oxicrypt-rsa
-    description: "Arms the next RSA key generation in the process, of any modulus size, through the generate of RsaPrivateKey2048, RsaPrivateKey3072 or RsaPrivateKey4096, to flip byte 0 of the big-endian modulus n before its pairwise consistency test, which then fails and puts the module in its error state; available with the fault-injection feature or in the crate's own tests."
+    description: "Arms the next RSA key generation in the process, of any modulus size, through the generate of RsaPrivateKey2048, RsaPrivateKey3072 or RsaPrivateKey4096, to flip bit 0 of byte 0 of the big-endian modulus n before its pairwise consistency test, which then fails and puts the module in its error state; available with the fault-injection feature or in the crate's own tests."
     signature: "pub fn corrupt_next_pk()"
+    returns:
+      type: "()"
+      description: "Nothing."
+    thread_safety: thread-safe
+    security:
+      constant_time: false
+      handles_secrets: false
+      fips_approved: false
+
+  - name: "seam::reset"
+    module: oxicrypt-rsa
+    description: "Disarms seam::corrupt_next_pk, so the next key generation takes its production path; available with the fault-injection feature or in the crate's own tests."
+    signature: "pub fn reset()"
     returns:
       type: "()"
       description: "Nothing."
@@ -8278,6 +8330,19 @@ functions:
     module: oxicrypt-ml-kem
     description: "Arms the next ML-KEM key generation in the process, of any parameter set and through keygen, keygen_with_seed or expand_key, to flip byte 0 of the decapsulation key before its pairwise consistency test, which then fails and puts the module in its error state; available with the fault-injection feature or in the crate's own tests."
     signature: "pub fn corrupt_next_dk()"
+    returns:
+      type: "()"
+      description: "Nothing."
+    thread_safety: thread-safe
+    security:
+      constant_time: false
+      handles_secrets: false
+      fips_approved: false
+
+  - name: "seam::disarm"
+    module: oxicrypt-ml-kem
+    description: "Disarms seam::corrupt_next_dk, so the next key generation takes its production path; available with the fault-injection feature or in the crate's own tests."
+    signature: "pub fn disarm()"
     returns:
       type: "()"
       description: "Nothing."
@@ -9147,6 +9212,19 @@ functions:
       handles_secrets: false
       fips_approved: false
 
+  - name: "seam::disarm"
+    module: oxicrypt-ml-dsa
+    description: "Disarms seam::corrupt_next_pk, so the next key generation takes its production path; available with the fault-injection feature or in the crate's own tests."
+    signature: "pub fn disarm()"
+    returns:
+      type: "()"
+      description: "Nothing."
+    thread_safety: thread-safe
+    security:
+      constant_time: false
+      handles_secrets: false
+      fips_approved: false
+
   - name: "seam::ML_DSA_44_ACVP_SEED"
     module: oxicrypt-ml-dsa
     type: "[u8; 32]"
@@ -9166,6 +9244,16 @@ functions:
     module: oxicrypt-ml-dsa
     type: "[u8; 32]"
     description: "SHA2-256(pk ‖ sk) of the key pair seam::ML_DSA_65_ACVP_SEED expands to, from the same row; available with the fault-injection feature or in the crate's own tests."
+
+  - name: "seam::ML_DSA_87_ACVP_SEED"
+    module: oxicrypt-ml-dsa
+    type: "[u8; 32]"
+    description: "The ML-DSA-87 key-generation seed of the ACVP ML-DSA specification (draft-celi-acvp-ml-dsa-01) §6.1.2 Table 1, row 13; available with the fault-injection feature or in the crate's own tests."
+
+  - name: "seam::ML_DSA_87_ACVP_KEY_HASH"
+    module: oxicrypt-ml-dsa
+    type: "[u8; 32]"
+    description: "SHA2-256(pk ‖ sk) of the key pair seam::ML_DSA_87_ACVP_SEED expands to, from the same row; available with the fault-injection feature or in the crate's own tests."
 
   - name: sign
     module: oxicrypt-ml-dsa
@@ -13699,7 +13787,7 @@ functions:
 
   - name: oxi_ecdsa_p256_private_key_new_generate
     module: oxicrypt-ffi
-    description: Allocate a new ECDSA P-256 private-key handle, sampling the scalar via the FIPS 186-5 §A.2.2 rejection sampler on the caller's DRBG and running the IG 10.3.A PCT before returning; PCT failure collapses to OxiResult::InvalidInput = 5.
+    description: Allocate a new ECDSA P-256 private-key handle, sampling the scalar via the FIPS 186-5 §A.2.2 rejection sampler on the caller's DRBG and running the IG 10.3.A PCT before returning; a PCT failure returns ConditionalTestFailed and puts the module in its error state.
     signature: >-
       int oxi_ecdsa_p256_private_key_new_generate(OxiHmacDrbgSha256 *drbg,
       OxiEcdsaP256PrivateKey **out_key)
@@ -13716,8 +13804,12 @@ functions:
       type: int
       description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
       error_variants:
+        - name: ConditionalTestFailed
+          condition: "The pairwise consistency test failed; no handle is returned, the module has entered its error state, and every later call returns NotOperational."
+        - name: Uninstantiated
+          condition: "The DRBG handle was never instantiated."
         - name: InvalidInput
-          condition: An argument was not a valid domain element, such as a scalar out of range or a point not on the curve.
+          condition: "The DRBG handle was instantiated by another process, or scalar sampling exhausted its retries."
         - name: NotOperational
           condition: oxi_init has not completed successfully, or the module has entered the terminal Error state.
         - name: AlgorithmRestricted
@@ -13837,8 +13929,12 @@ functions:
       type: int
       description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
       error_variants:
+        - name: ConditionalTestFailed
+          condition: "The pairwise consistency test failed; no handle is returned, the module has entered its error state, and every later call returns NotOperational."
+        - name: Uninstantiated
+          condition: "The DRBG handle was never instantiated."
         - name: InvalidInput
-          condition: An argument was not a valid domain element, such as a scalar out of range or a point not on the curve.
+          condition: "The DRBG handle was instantiated by another process, or scalar sampling exhausted its retries."
         - name: NotOperational
           condition: oxi_init has not completed successfully, or the module has entered the terminal Error state.
         - name: AlgorithmRestricted
@@ -14146,8 +14242,12 @@ functions:
       type: int
       description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
       error_variants:
+        - name: ConditionalTestFailed
+          condition: "The pairwise consistency test failed; nothing is written, the module has entered its error state, and every later call returns NotOperational."
+        - name: Uninstantiated
+          condition: "The DRBG handle was never instantiated."
         - name: InvalidInput
-          condition: An argument was not a valid domain element, such as a scalar out of range or a point not on the curve.
+          condition: "The DRBG handle was instantiated by another process, or scalar sampling exhausted its retries."
         - name: NotOperational
           condition: oxi_init has not completed successfully, or the module has entered the terminal Error state.
         - name: AlgorithmRestricted
@@ -14182,8 +14282,12 @@ functions:
       type: int
       description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
       error_variants:
+        - name: ConditionalTestFailed
+          condition: "The pairwise consistency test failed; nothing is written, the module has entered its error state, and every later call returns NotOperational."
+        - name: Uninstantiated
+          condition: "The DRBG handle was never instantiated."
         - name: InvalidInput
-          condition: An argument was not a valid domain element, such as a scalar out of range or a point not on the curve.
+          condition: "The DRBG handle was instantiated by another process, or scalar sampling exhausted its retries."
         - name: NotOperational
           condition: oxi_init has not completed successfully, or the module has entered the terminal Error state.
         - name: AlgorithmRestricted
@@ -14525,35 +14629,93 @@ functions:
       handles_secrets: false
       fips_approved: true
 
-  - name: oxi_ml_dsa_87_keygen
+  - name: oxi_ml_dsa_87_keygen_rbg
     module: oxicrypt-ffi
-    description: Generate an ML-DSA-87 key pair from a 32-byte caller-supplied seed (FIPS 204 §6.1); reads 32 bytes from seed_ptr, writes the 2592-byte public key into pk_out and the 4896-byte secret key into sk_out.
-    signature: >-
-      int oxi_ml_dsa_87_keygen(const uint8_t *seed_ptr, uint8_t *pk_out,
-      uint8_t *sk_out)
+    description: "ML-DSA-87 key generation (FIPS 204 Algorithm 1) with the seed ξ drawn from the caller's DRBG handle and the pairwise consistency test (FIPS 140-3 IG 10.3.A) run before anything is written; writes the 2592-byte public key, the 4896-byte secret key and, when seed_out is not NULL, the 32-byte seed."
+    signature: "int oxi_ml_dsa_87_keygen_rbg(OxiDrbg *rbg, uint8_t *pk_out, uint8_t *sk_out, uint8_t *seed_out)"
     parameters:
-      - name: seed_ptr
-        type: const uint8_t *
+      - name: rbg
+        type: "OxiDrbg *"
         direction: in
-        description: 32-byte keygen seed (xi)
+        description: "Instantiated DRBG handle of at least 256 bits of security strength; ξ is drawn from it."
       - name: pk_out
-        type: uint8_t *
+        type: "uint8_t *"
         direction: out
-        description: 2592-byte public key buffer
+        description: "2592 writable bytes."
       - name: sk_out
-        type: uint8_t *
+        type: "uint8_t *"
         direction: out
-        description: 4896-byte secret key buffer
+        description: "4896 writable bytes."
+      - name: seed_out
+        type: "uint8_t *"
+        direction: out
+        description: "32 writable bytes for ξ, from which oxi_ml_dsa_87_expand_key reproduces the pair, or NULL to withhold it."
     returns:
       type: int
-      description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
+      description: "OxiResult discriminant: Ok on success, otherwise the first of the error variants below, in the order listed."
       error_variants:
-        - name: NotOperational
-          condition: oxi_init has not completed successfully, or the module has entered the terminal Error state.
-        - name: AlgorithmRestricted
-          condition: The active algorithm profile does not permit this service.
         - name: NullPointer
-          condition: A pointer argument that the call requires was NULL.
+          condition: "rbg, pk_out or sk_out is NULL; each pointer is checked in parameter order, and a range that runs past the top of the address space returns InvalidInput at its position."
+        - name: InvalidInput
+          condition: "An output shares a byte with another output or with the handle; checked before the module state. Also returned, after the profile check, for a handle instantiated by another process."
+        - name: NotOperational
+          condition: "oxi_init has not completed successfully, or the module has entered the terminal Error state."
+        - name: AlgorithmRestricted
+          condition: "The active algorithm profile does not permit ML-DSA-87 key generation or the handle's DRBG."
+        - name: Busy
+          condition: "The DRBG handle is in use by another call, or the DRBG's reseed waited too long on a seed path another thread holds."
+        - name: RbgTooWeak
+          condition: "The DRBG's security strength is below 256 bits; nothing is drawn."
+        - name: Uninstantiated
+          condition: "The DRBG handle was never instantiated."
+        - name: EntropyUnavailable
+          condition: "The entropy source failed while the DRBG reseeded; the module has entered its error state."
+        - name: ConditionalTestFailed
+          condition: "The pairwise consistency test failed; nothing is written, the module has entered its error state, and every later call returns NotOperational."
+    preconditions:
+      - description: "oxi_init has succeeded and the DRBG handle is instantiated."
+    postconditions:
+      - description: "On success the outputs hold a key pair that passed its pairwise consistency test; on any failure no output is written."
+    security:
+      constant_time: false
+      handles_secrets: true
+      fips_approved: true
+
+  - name: oxi_ml_dsa_87_expand_key
+    module: oxicrypt-ffi
+    description: "ML-DSA-87 key expansion from a stored 32-byte seed ξ (FIPS 204 Algorithm 6), with the pairwise consistency test (FIPS 140-3 IG 10.3.A) run before anything is written; writes the 2592-byte public key and the 4896-byte secret key."
+    signature: "int oxi_ml_dsa_87_expand_key(const uint8_t *seed_ptr, uint8_t *pk_out, uint8_t *sk_out)"
+    parameters:
+      - name: seed_ptr
+        type: "const uint8_t *"
+        direction: in
+        description: "32-byte seed ξ, as oxi_ml_dsa_87_keygen_rbg returns it."
+      - name: pk_out
+        type: "uint8_t *"
+        direction: out
+        description: "2592 writable bytes."
+      - name: sk_out
+        type: "uint8_t *"
+        direction: out
+        description: "4896 writable bytes."
+    returns:
+      type: int
+      description: "OxiResult discriminant: Ok on success, otherwise the first of the error variants below, in the order listed."
+      error_variants:
+        - name: NullPointer
+          condition: "A pointer is NULL; each pointer is checked in parameter order, and a range that runs past the top of the address space returns InvalidInput at its position."
+        - name: InvalidInput
+          condition: "An output shares a byte with the seed or with the other output."
+        - name: NotOperational
+          condition: "oxi_init has not completed successfully, or the module has entered the terminal Error state."
+        - name: AlgorithmRestricted
+          condition: "The active algorithm profile does not permit ML-DSA-87 key expansion."
+        - name: ConditionalTestFailed
+          condition: "The pairwise consistency test failed; nothing is written, the module has entered its error state, and every later call returns NotOperational."
+    preconditions:
+      - description: "oxi_init has succeeded."
+    postconditions:
+      - description: "On success the outputs hold the key pair the seed determines; on any failure no output is written."
     security:
       constant_time: false
       handles_secrets: true
@@ -14594,7 +14756,7 @@ functions:
       description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
       error_variants:
         - name: InvalidInput
-          condition: An argument was not a valid domain element, such as a scalar out of range or a point not on the curve.
+          condition: "ctx_len exceeds 255 (FIPS 204 §5.2), or the signing loop reached its iteration bound."
         - name: NotOperational
           condition: oxi_init has not completed successfully, or the module has entered the terminal Error state.
         - name: AlgorithmRestricted
@@ -14653,35 +14815,93 @@ functions:
       handles_secrets: false
       fips_approved: true
 
-  - name: oxi_ml_dsa_44_keygen
+  - name: oxi_ml_dsa_44_keygen_rbg
     module: oxicrypt-ffi
-    description: Generate an ML-DSA-44 key pair from a 32-byte caller-supplied seed (FIPS 204 §6.1, k=4 l=4); reads 32 bytes from seed_ptr, writes the 1312-byte public key into pk_out and the 2560-byte secret key into sk_out.
-    signature: >-
-      int oxi_ml_dsa_44_keygen(const uint8_t *seed_ptr, uint8_t *pk_out,
-      uint8_t *sk_out)
+    description: "ML-DSA-44 key generation (FIPS 204 Algorithm 1) with the seed ξ drawn from the caller's DRBG handle and the pairwise consistency test (FIPS 140-3 IG 10.3.A) run before anything is written; writes the 1312-byte public key, the 2560-byte secret key and, when seed_out is not NULL, the 32-byte seed; admitted under the unrestricted profile only."
+    signature: "int oxi_ml_dsa_44_keygen_rbg(OxiDrbg *rbg, uint8_t *pk_out, uint8_t *sk_out, uint8_t *seed_out)"
     parameters:
-      - name: seed_ptr
-        type: const uint8_t *
+      - name: rbg
+        type: "OxiDrbg *"
         direction: in
-        description: 32-byte keygen seed (xi)
+        description: "Instantiated DRBG handle of at least 192 bits of security strength; ξ is drawn from it."
       - name: pk_out
-        type: uint8_t *
+        type: "uint8_t *"
         direction: out
-        description: 1312-byte public key buffer
+        description: "1312 writable bytes."
       - name: sk_out
-        type: uint8_t *
+        type: "uint8_t *"
         direction: out
-        description: 2560-byte secret key buffer
+        description: "2560 writable bytes."
+      - name: seed_out
+        type: "uint8_t *"
+        direction: out
+        description: "32 writable bytes for ξ, from which oxi_ml_dsa_44_expand_key reproduces the pair, or NULL to withhold it."
     returns:
       type: int
-      description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
+      description: "OxiResult discriminant: Ok on success, otherwise the first of the error variants below, in the order listed."
       error_variants:
-        - name: NotOperational
-          condition: oxi_init has not completed successfully, or the module has entered the terminal Error state.
-        - name: AlgorithmRestricted
-          condition: The active algorithm profile does not permit this service.
         - name: NullPointer
-          condition: A pointer argument that the call requires was NULL.
+          condition: "rbg, pk_out or sk_out is NULL; each pointer is checked in parameter order, and a range that runs past the top of the address space returns InvalidInput at its position."
+        - name: InvalidInput
+          condition: "An output shares a byte with another output or with the handle; checked before the module state. Also returned, after the profile check, for a handle instantiated by another process."
+        - name: NotOperational
+          condition: "oxi_init has not completed successfully, or the module has entered the terminal Error state."
+        - name: AlgorithmRestricted
+          condition: "The active algorithm profile does not permit ML-DSA-44 key generation or the handle's DRBG."
+        - name: Busy
+          condition: "The DRBG handle is in use by another call, or the DRBG's reseed waited too long on a seed path another thread holds."
+        - name: RbgTooWeak
+          condition: "The DRBG's security strength is below 192 bits; nothing is drawn."
+        - name: Uninstantiated
+          condition: "The DRBG handle was never instantiated."
+        - name: EntropyUnavailable
+          condition: "The entropy source failed while the DRBG reseeded; the module has entered its error state."
+        - name: ConditionalTestFailed
+          condition: "The pairwise consistency test failed; nothing is written, the module has entered its error state, and every later call returns NotOperational."
+    preconditions:
+      - description: "oxi_init has succeeded and the DRBG handle is instantiated."
+    postconditions:
+      - description: "On success the outputs hold a key pair that passed its pairwise consistency test; on any failure no output is written."
+    security:
+      constant_time: false
+      handles_secrets: true
+      fips_approved: true
+
+  - name: oxi_ml_dsa_44_expand_key
+    module: oxicrypt-ffi
+    description: "ML-DSA-44 key expansion from a stored 32-byte seed ξ (FIPS 204 Algorithm 6), with the pairwise consistency test (FIPS 140-3 IG 10.3.A) run before anything is written; writes the 1312-byte public key and the 2560-byte secret key; admitted under the unrestricted profile only."
+    signature: "int oxi_ml_dsa_44_expand_key(const uint8_t *seed_ptr, uint8_t *pk_out, uint8_t *sk_out)"
+    parameters:
+      - name: seed_ptr
+        type: "const uint8_t *"
+        direction: in
+        description: "32-byte seed ξ, as oxi_ml_dsa_44_keygen_rbg returns it."
+      - name: pk_out
+        type: "uint8_t *"
+        direction: out
+        description: "1312 writable bytes."
+      - name: sk_out
+        type: "uint8_t *"
+        direction: out
+        description: "2560 writable bytes."
+    returns:
+      type: int
+      description: "OxiResult discriminant: Ok on success, otherwise the first of the error variants below, in the order listed."
+      error_variants:
+        - name: NullPointer
+          condition: "A pointer is NULL; each pointer is checked in parameter order, and a range that runs past the top of the address space returns InvalidInput at its position."
+        - name: InvalidInput
+          condition: "An output shares a byte with the seed or with the other output."
+        - name: NotOperational
+          condition: "oxi_init has not completed successfully, or the module has entered the terminal Error state."
+        - name: AlgorithmRestricted
+          condition: "The active algorithm profile does not permit ML-DSA-44 key expansion."
+        - name: ConditionalTestFailed
+          condition: "The pairwise consistency test failed; nothing is written, the module has entered its error state, and every later call returns NotOperational."
+    preconditions:
+      - description: "oxi_init has succeeded."
+    postconditions:
+      - description: "On success the outputs hold the key pair the seed determines; on any failure no output is written."
     security:
       constant_time: false
       handles_secrets: true
@@ -14722,7 +14942,7 @@ functions:
       description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
       error_variants:
         - name: InvalidInput
-          condition: An argument was not a valid domain element, such as a scalar out of range or a point not on the curve.
+          condition: "ctx_len exceeds 255 (FIPS 204 §5.2), or the signing loop reached its iteration bound."
         - name: NotOperational
           condition: oxi_init has not completed successfully, or the module has entered the terminal Error state.
         - name: AlgorithmRestricted
@@ -14781,35 +15001,93 @@ functions:
       handles_secrets: false
       fips_approved: true
 
-  - name: oxi_ml_dsa_65_keygen
+  - name: oxi_ml_dsa_65_keygen_rbg
     module: oxicrypt-ffi
-    description: Generate an ML-DSA-65 key pair from a 32-byte caller-supplied seed (FIPS 204 §6.1, k=6 l=5); reads 32 bytes from seed_ptr, writes the 1952-byte public key into pk_out and the 4032-byte secret key into sk_out.
-    signature: >-
-      int oxi_ml_dsa_65_keygen(const uint8_t *seed_ptr, uint8_t *pk_out,
-      uint8_t *sk_out)
+    description: "ML-DSA-65 key generation (FIPS 204 Algorithm 1) with the seed ξ drawn from the caller's DRBG handle and the pairwise consistency test (FIPS 140-3 IG 10.3.A) run before anything is written; writes the 1952-byte public key, the 4032-byte secret key and, when seed_out is not NULL, the 32-byte seed; admitted under the unrestricted profile only."
+    signature: "int oxi_ml_dsa_65_keygen_rbg(OxiDrbg *rbg, uint8_t *pk_out, uint8_t *sk_out, uint8_t *seed_out)"
     parameters:
-      - name: seed_ptr
-        type: const uint8_t *
+      - name: rbg
+        type: "OxiDrbg *"
         direction: in
-        description: 32-byte keygen seed (xi)
+        description: "Instantiated DRBG handle of at least 192 bits of security strength; ξ is drawn from it."
       - name: pk_out
-        type: uint8_t *
+        type: "uint8_t *"
         direction: out
-        description: 1952-byte public key buffer
+        description: "1952 writable bytes."
       - name: sk_out
-        type: uint8_t *
+        type: "uint8_t *"
         direction: out
-        description: 4032-byte secret key buffer
+        description: "4032 writable bytes."
+      - name: seed_out
+        type: "uint8_t *"
+        direction: out
+        description: "32 writable bytes for ξ, from which oxi_ml_dsa_65_expand_key reproduces the pair, or NULL to withhold it."
     returns:
       type: int
-      description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
+      description: "OxiResult discriminant: Ok on success, otherwise the first of the error variants below, in the order listed."
       error_variants:
-        - name: NotOperational
-          condition: oxi_init has not completed successfully, or the module has entered the terminal Error state.
-        - name: AlgorithmRestricted
-          condition: The active algorithm profile does not permit this service.
         - name: NullPointer
-          condition: A pointer argument that the call requires was NULL.
+          condition: "rbg, pk_out or sk_out is NULL; each pointer is checked in parameter order, and a range that runs past the top of the address space returns InvalidInput at its position."
+        - name: InvalidInput
+          condition: "An output shares a byte with another output or with the handle; checked before the module state. Also returned, after the profile check, for a handle instantiated by another process."
+        - name: NotOperational
+          condition: "oxi_init has not completed successfully, or the module has entered the terminal Error state."
+        - name: AlgorithmRestricted
+          condition: "The active algorithm profile does not permit ML-DSA-65 key generation or the handle's DRBG."
+        - name: Busy
+          condition: "The DRBG handle is in use by another call, or the DRBG's reseed waited too long on a seed path another thread holds."
+        - name: RbgTooWeak
+          condition: "The DRBG's security strength is below 192 bits; nothing is drawn."
+        - name: Uninstantiated
+          condition: "The DRBG handle was never instantiated."
+        - name: EntropyUnavailable
+          condition: "The entropy source failed while the DRBG reseeded; the module has entered its error state."
+        - name: ConditionalTestFailed
+          condition: "The pairwise consistency test failed; nothing is written, the module has entered its error state, and every later call returns NotOperational."
+    preconditions:
+      - description: "oxi_init has succeeded and the DRBG handle is instantiated."
+    postconditions:
+      - description: "On success the outputs hold a key pair that passed its pairwise consistency test; on any failure no output is written."
+    security:
+      constant_time: false
+      handles_secrets: true
+      fips_approved: true
+
+  - name: oxi_ml_dsa_65_expand_key
+    module: oxicrypt-ffi
+    description: "ML-DSA-65 key expansion from a stored 32-byte seed ξ (FIPS 204 Algorithm 6), with the pairwise consistency test (FIPS 140-3 IG 10.3.A) run before anything is written; writes the 1952-byte public key and the 4032-byte secret key; admitted under the unrestricted profile only."
+    signature: "int oxi_ml_dsa_65_expand_key(const uint8_t *seed_ptr, uint8_t *pk_out, uint8_t *sk_out)"
+    parameters:
+      - name: seed_ptr
+        type: "const uint8_t *"
+        direction: in
+        description: "32-byte seed ξ, as oxi_ml_dsa_65_keygen_rbg returns it."
+      - name: pk_out
+        type: "uint8_t *"
+        direction: out
+        description: "1952 writable bytes."
+      - name: sk_out
+        type: "uint8_t *"
+        direction: out
+        description: "4032 writable bytes."
+    returns:
+      type: int
+      description: "OxiResult discriminant: Ok on success, otherwise the first of the error variants below, in the order listed."
+      error_variants:
+        - name: NullPointer
+          condition: "A pointer is NULL; each pointer is checked in parameter order, and a range that runs past the top of the address space returns InvalidInput at its position."
+        - name: InvalidInput
+          condition: "An output shares a byte with the seed or with the other output."
+        - name: NotOperational
+          condition: "oxi_init has not completed successfully, or the module has entered the terminal Error state."
+        - name: AlgorithmRestricted
+          condition: "The active algorithm profile does not permit ML-DSA-65 key expansion."
+        - name: ConditionalTestFailed
+          condition: "The pairwise consistency test failed; nothing is written, the module has entered its error state, and every later call returns NotOperational."
+    preconditions:
+      - description: "oxi_init has succeeded."
+    postconditions:
+      - description: "On success the outputs hold the key pair the seed determines; on any failure no output is written."
     security:
       constant_time: false
       handles_secrets: true
@@ -14850,7 +15128,7 @@ functions:
       description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
       error_variants:
         - name: InvalidInput
-          condition: An argument was not a valid domain element, such as a scalar out of range or a point not on the curve.
+          condition: "ctx_len exceeds 255 (FIPS 204 §5.2), or the signing loop reached its iteration bound."
         - name: NotOperational
           condition: oxi_init has not completed successfully, or the module has entered the terminal Error state.
         - name: AlgorithmRestricted
@@ -14909,81 +15187,151 @@ functions:
       handles_secrets: false
       fips_approved: true
 
-  - name: oxi_ml_kem_1024_keygen
+  - name: oxi_ml_kem_1024_keygen_rbg
     module: oxicrypt-ffi
-    description: Expand an ML-KEM-1024 key pair from a stored seed (d, z) (FIPS 203 Algorithm 16) under the MlKem1024ExpandKey service and run the pairwise consistency test (FIPS 140-3 IG 10.3.A) before anything is written; reads 32 bytes from d_ptr and z_ptr, writes the 1568-byte encapsulation key into ek_out and the 3168-byte decapsulation key into dk_out. d and z are not interchangeable.
-    signature: >-
-      int oxi_ml_kem_1024_keygen(const uint8_t *d_ptr,
-      const uint8_t *z_ptr, uint8_t *ek_out, uint8_t *dk_out)
+    description: "ML-KEM-1024 key generation (FIPS 203 Algorithm 19) with the seeds d and z drawn from the caller's DRBG handle and the pairwise consistency test (FIPS 140-3 IG 10.3.A) run before anything is written; writes the 1568-byte encapsulation key, the 3168-byte decapsulation key and, when seed_out is not NULL, the 64-byte seed d ‖ z."
+    signature: "int oxi_ml_kem_1024_keygen_rbg(OxiDrbg *rbg, uint8_t *ek_out, uint8_t *dk_out, uint8_t *seed_out)"
     parameters:
-      - name: d_ptr
-        type: const uint8_t *
+      - name: rbg
+        type: "OxiDrbg *"
         direction: in
-        description: 32-byte K-PKE keygen randomness
-      - name: z_ptr
-        type: const uint8_t *
-        direction: in
-        description: 32-byte implicit-rejection seed (embedded in dk)
+        description: "Instantiated DRBG handle of at least 256 bits of security strength; d and z are drawn from it."
       - name: ek_out
-        type: uint8_t *
+        type: "uint8_t *"
         direction: out
-        description: 1568-byte encapsulation key buffer
+        description: "1568 writable bytes."
       - name: dk_out
-        type: uint8_t *
+        type: "uint8_t *"
         direction: out
-        description: 3168-byte decapsulation key buffer
+        description: "3168 writable bytes."
+      - name: seed_out
+        type: "uint8_t *"
+        direction: out
+        description: "64 writable bytes for d ‖ z, d first, from which oxi_ml_kem_1024_expand_key reproduces the pair, or NULL to withhold them."
     returns:
       type: int
-      description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
+      description: "OxiResult discriminant: Ok on success, otherwise the first of the error variants below, in the order listed."
       error_variants:
-        - name: ConditionalTestFailed
-          condition: 'The pairwise consistency test failed (reason "ML-KEM-1024 pairwise consistency"); nothing is written and the module has entered its error state.'
-        - name: NotOperational
-          condition: oxi_init has not completed successfully, or the module has entered the terminal Error state.
-        - name: AlgorithmRestricted
-          condition: The active algorithm profile does not permit this service.
         - name: NullPointer
-          condition: A pointer argument that the call requires was NULL.
+          condition: "rbg, ek_out or dk_out is NULL; each pointer is checked in parameter order, and a range that runs past the top of the address space returns InvalidInput at its position."
+        - name: InvalidInput
+          condition: "An output shares a byte with another output or with the handle; checked before the module state. Also returned, after the profile check, for a handle instantiated by another process."
+        - name: NotOperational
+          condition: "oxi_init has not completed successfully, or the module has entered the terminal Error state."
+        - name: AlgorithmRestricted
+          condition: "The active algorithm profile does not permit ML-KEM-1024 key generation or the handle's DRBG."
+        - name: Busy
+          condition: "The DRBG handle is in use by another call, or the DRBG's reseed waited too long on a seed path another thread holds."
+        - name: RbgTooWeak
+          condition: "The DRBG's security strength is below 256 bits; nothing is drawn."
+        - name: Uninstantiated
+          condition: "The DRBG handle was never instantiated."
+        - name: EntropyUnavailable
+          condition: "The entropy source failed while the DRBG reseeded; the module has entered its error state."
+        - name: ConditionalTestFailed
+          condition: "The pairwise consistency test failed; nothing is written, the module has entered its error state, and every later call returns NotOperational."
+    preconditions:
+      - description: "oxi_init has succeeded and the DRBG handle is instantiated."
+    postconditions:
+      - description: "On success the outputs hold a key pair that passed its pairwise consistency test; on any failure no output is written."
     security:
       constant_time: false
       handles_secrets: true
       fips_approved: true
 
-  - name: oxi_ml_kem_1024_encapsulate
+  - name: oxi_ml_kem_1024_expand_key
     module: oxicrypt-ffi
-    description: Refuses encapsulation against an ML-KEM-1024 encapsulation key with a caller-supplied m, which is not a module service (FIPS 203 §3.3 requires the module to sample m); checks that ek_ptr, m_ptr, ss_out and ct_out are non-NULL, then returns NotImplemented and writes nothing.
-    signature: >-
-      int oxi_ml_kem_1024_encapsulate(const uint8_t *ek_ptr,
-      const uint8_t *m_ptr, uint8_t *ss_out, uint8_t *ct_out)
+    description: "ML-KEM-1024 key expansion from a stored seed (FIPS 203 Algorithm 16), with the pairwise consistency test (FIPS 140-3 IG 10.3.A) run before anything is written; writes the 1568-byte encapsulation key and the 3168-byte decapsulation key. d and z are not interchangeable."
+    signature: "int oxi_ml_kem_1024_expand_key(const uint8_t *d_ptr, const uint8_t *z_ptr, uint8_t *ek_out, uint8_t *dk_out)"
     parameters:
-      - name: ek_ptr
-        type: const uint8_t *
+      - name: d_ptr
+        type: "const uint8_t *"
         direction: in
-        description: 1568-byte ML-KEM-1024 encapsulation key
-      - name: m_ptr
-        type: const uint8_t *
+        description: "32-byte K-PKE seed d."
+      - name: z_ptr
+        type: "const uint8_t *"
         direction: in
-        description: 32-byte encapsulation randomness
-      - name: ss_out
-        type: uint8_t *
+        description: "32-byte implicit-rejection seed z."
+      - name: ek_out
+        type: "uint8_t *"
         direction: out
-        description: 32-byte shared secret buffer
-      - name: ct_out
-        type: uint8_t *
+        description: "1568 writable bytes."
+      - name: dk_out
+        type: "uint8_t *"
         direction: out
-        description: 1568-byte ciphertext buffer
+        description: "3168 writable bytes."
     returns:
       type: int
-      description: "OxiResult discriminant: NotImplemented once the pointers pass, otherwise the error below."
+      description: "OxiResult discriminant: Ok on success, otherwise the first of the error variants below, in the order listed."
       error_variants:
-        - name: NotImplemented
-          condition: Every call whose pointers are non-NULL; nothing is written.
         - name: NullPointer
-          condition: A pointer argument that the call requires was NULL.
+          condition: "A pointer is NULL; each pointer is checked in parameter order, and a range that runs past the top of the address space returns InvalidInput at its position."
+        - name: InvalidInput
+          condition: "An output shares a byte with a seed or with the other output."
+        - name: NotOperational
+          condition: "oxi_init has not completed successfully, or the module has entered the terminal Error state."
+        - name: AlgorithmRestricted
+          condition: "The active algorithm profile does not permit ML-KEM-1024 key expansion."
+        - name: ConditionalTestFailed
+          condition: "The pairwise consistency test failed; nothing is written, the module has entered its error state, and every later call returns NotOperational."
+    preconditions:
+      - description: "oxi_init has succeeded."
+    postconditions:
+      - description: "On success the outputs hold the key pair the seed determines; on any failure no output is written."
     security:
       constant_time: false
-      handles_secrets: false
-      fips_approved: false
+      handles_secrets: true
+      fips_approved: true
+
+  - name: oxi_ml_kem_1024_encapsulate_rbg
+    module: oxicrypt-ffi
+    description: "ML-KEM-1024 encapsulation (FIPS 203 Algorithm 20): checks the encapsulation key (FIPS 203 §7.2), draws m from the caller's DRBG handle (FIPS 203 §3.3) and writes the 32-byte shared secret and the 1568-byte ciphertext."
+    signature: "int oxi_ml_kem_1024_encapsulate_rbg(const uint8_t *ek_ptr, OxiDrbg *rbg, uint8_t *ss_out, uint8_t *ct_out)"
+    parameters:
+      - name: ek_ptr
+        type: "const uint8_t *"
+        direction: in
+        description: "1568-byte encapsulation key."
+      - name: rbg
+        type: "OxiDrbg *"
+        direction: in
+        description: "Instantiated DRBG handle of at least 256 bits of security strength; m is drawn from it."
+      - name: ss_out
+        type: "uint8_t *"
+        direction: out
+        description: "32 writable bytes."
+      - name: ct_out
+        type: "uint8_t *"
+        direction: out
+        description: "1568 writable bytes."
+    returns:
+      type: int
+      description: "OxiResult discriminant: Ok on success, otherwise the first of the error variants below, in the order listed."
+      error_variants:
+        - name: NullPointer
+          condition: "A pointer is NULL; each pointer is checked in parameter order, and a range that runs past the top of the address space returns InvalidInput at its position."
+        - name: InvalidInput
+          condition: "An output shares a byte with ek, the other output or the handle, or ek shares a byte with the handle; checked before the module state. Also returned, after the profile check, for a handle instantiated by another process, and, after the busy check, for an ek that fails the §7.2 modulus check, before any draw."
+        - name: NotOperational
+          condition: "oxi_init has not completed successfully, or the module has entered the terminal Error state."
+        - name: AlgorithmRestricted
+          condition: "The active algorithm profile does not permit ML-KEM-1024 encapsulation or the handle's DRBG."
+        - name: Busy
+          condition: "The DRBG handle is in use by another call, or the DRBG's reseed waited too long on a seed path another thread holds."
+        - name: RbgTooWeak
+          condition: "The DRBG's security strength is below 256 bits; nothing is drawn."
+        - name: Uninstantiated
+          condition: "The DRBG handle was never instantiated."
+        - name: EntropyUnavailable
+          condition: "The entropy source failed while the DRBG reseeded; the module has entered its error state."
+    preconditions:
+      - description: "oxi_init has succeeded and the DRBG handle is instantiated."
+    postconditions:
+      - description: "On success ss_out holds the shared secret the ciphertext in ct_out encapsulates; on any failure no output is written."
+    security:
+      constant_time: false
+      handles_secrets: true
+      fips_approved: true
 
   - name: oxi_ml_kem_1024_decapsulate
     module: oxicrypt-ffi
@@ -15006,7 +15354,7 @@ functions:
         description: 32-byte shared secret buffer
     returns:
       type: int
-      description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
+      description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below; a ciphertext that does not match dk is not an error, since implicit rejection returns Ok with a pseudorandom shared secret."
       error_variants:
         - name: NotOperational
           condition: oxi_init has not completed successfully, or the module has entered the terminal Error state.
@@ -15014,86 +15362,154 @@ functions:
           condition: The active algorithm profile does not permit this service.
         - name: NullPointer
           condition: A pointer argument that the call requires was NULL.
+        - name: InvalidInput
+          condition: "dk fails the FIPS 203 §7.3 hash check, or ss_out shares a byte with dk or ct; nothing is written."
     security:
-      constant_time: true
+      constant_time: false
       handles_secrets: true
       fips_approved: true
 
-  - name: oxi_ml_kem_512_keygen
+  - name: oxi_ml_kem_512_keygen_rbg
     module: oxicrypt-ffi
-    description: Expand an ML-KEM-512 key pair from a stored seed (d, z) (FIPS 203 Algorithm 16, k=2) under the MlKem512ExpandKey service and run the pairwise consistency test (FIPS 140-3 IG 10.3.A) before anything is written; reads 32 bytes from d_ptr and z_ptr, writes the 800-byte encapsulation key into ek_out and the 1632-byte decapsulation key into dk_out. d and z are not interchangeable; gated to AlgorithmProfile::Unrestricted.
-    signature: >-
-      int oxi_ml_kem_512_keygen(const uint8_t *d_ptr,
-      const uint8_t *z_ptr, uint8_t *ek_out, uint8_t *dk_out)
+    description: "ML-KEM-512 key generation (FIPS 203 Algorithm 19) with the seeds d and z drawn from the caller's DRBG handle and the pairwise consistency test (FIPS 140-3 IG 10.3.A) run before anything is written; writes the 800-byte encapsulation key, the 1632-byte decapsulation key and, when seed_out is not NULL, the 64-byte seed d ‖ z; admitted under the unrestricted profile only."
+    signature: "int oxi_ml_kem_512_keygen_rbg(OxiDrbg *rbg, uint8_t *ek_out, uint8_t *dk_out, uint8_t *seed_out)"
+    parameters:
+      - name: rbg
+        type: "OxiDrbg *"
+        direction: in
+        description: "Instantiated DRBG handle of at least 128 bits of security strength; d and z are drawn from it."
+      - name: ek_out
+        type: "uint8_t *"
+        direction: out
+        description: "800 writable bytes."
+      - name: dk_out
+        type: "uint8_t *"
+        direction: out
+        description: "1632 writable bytes."
+      - name: seed_out
+        type: "uint8_t *"
+        direction: out
+        description: "64 writable bytes for d ‖ z, d first, from which oxi_ml_kem_512_expand_key reproduces the pair, or NULL to withhold them."
+    returns:
+      type: int
+      description: "OxiResult discriminant: Ok on success, otherwise the first of the error variants below, in the order listed."
+      error_variants:
+        - name: NullPointer
+          condition: "rbg, ek_out or dk_out is NULL; each pointer is checked in parameter order, and a range that runs past the top of the address space returns InvalidInput at its position."
+        - name: InvalidInput
+          condition: "An output shares a byte with another output or with the handle; checked before the module state. Also returned, after the profile check, for a handle instantiated by another process."
+        - name: NotOperational
+          condition: "oxi_init has not completed successfully, or the module has entered the terminal Error state."
+        - name: AlgorithmRestricted
+          condition: "The active algorithm profile does not permit ML-KEM-512 key generation or the handle's DRBG."
+        - name: Busy
+          condition: "The DRBG handle is in use by another call, or the DRBG's reseed waited too long on a seed path another thread holds."
+        - name: Uninstantiated
+          condition: "The DRBG handle was never instantiated."
+        - name: EntropyUnavailable
+          condition: "The entropy source failed while the DRBG reseeded; the module has entered its error state."
+        - name: ConditionalTestFailed
+          condition: "The pairwise consistency test failed; nothing is written, the module has entered its error state, and every later call returns NotOperational."
+    preconditions:
+      - description: "oxi_init has succeeded and the DRBG handle is instantiated."
+    postconditions:
+      - description: "On success the outputs hold a key pair that passed its pairwise consistency test; on any failure no output is written."
+    security:
+      constant_time: false
+      handles_secrets: true
+      fips_approved: true
+
+  - name: oxi_ml_kem_512_expand_key
+    module: oxicrypt-ffi
+    description: "ML-KEM-512 key expansion from a stored seed (FIPS 203 Algorithm 16), with the pairwise consistency test (FIPS 140-3 IG 10.3.A) run before anything is written; writes the 800-byte encapsulation key and the 1632-byte decapsulation key. d and z are not interchangeable; admitted under the unrestricted profile only."
+    signature: "int oxi_ml_kem_512_expand_key(const uint8_t *d_ptr, const uint8_t *z_ptr, uint8_t *ek_out, uint8_t *dk_out)"
     parameters:
       - name: d_ptr
-        type: const uint8_t *
+        type: "const uint8_t *"
         direction: in
-        description: 32-byte K-PKE keygen randomness
+        description: "32-byte K-PKE seed d."
       - name: z_ptr
-        type: const uint8_t *
+        type: "const uint8_t *"
         direction: in
-        description: 32-byte implicit-rejection seed (embedded in dk)
+        description: "32-byte implicit-rejection seed z."
       - name: ek_out
-        type: uint8_t *
+        type: "uint8_t *"
         direction: out
-        description: 800-byte encapsulation key buffer
+        description: "800 writable bytes."
       - name: dk_out
-        type: uint8_t *
+        type: "uint8_t *"
         direction: out
-        description: 1632-byte decapsulation key buffer
+        description: "1632 writable bytes."
     returns:
       type: int
-      description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
+      description: "OxiResult discriminant: Ok on success, otherwise the first of the error variants below, in the order listed."
       error_variants:
-        - name: ConditionalTestFailed
-          condition: 'The pairwise consistency test failed (reason "ML-KEM-512 pairwise consistency"); nothing is written and the module has entered its error state.'
-        - name: NotOperational
-          condition: oxi_init has not completed successfully, or the module has entered the terminal Error state.
-        - name: AlgorithmRestricted
-          condition: The active algorithm profile does not permit this service.
         - name: NullPointer
-          condition: A pointer argument that the call requires was NULL.
+          condition: "A pointer is NULL; each pointer is checked in parameter order, and a range that runs past the top of the address space returns InvalidInput at its position."
+        - name: InvalidInput
+          condition: "An output shares a byte with a seed or with the other output."
+        - name: NotOperational
+          condition: "oxi_init has not completed successfully, or the module has entered the terminal Error state."
+        - name: AlgorithmRestricted
+          condition: "The active algorithm profile does not permit ML-KEM-512 key expansion."
+        - name: ConditionalTestFailed
+          condition: "The pairwise consistency test failed; nothing is written, the module has entered its error state, and every later call returns NotOperational."
+    preconditions:
+      - description: "oxi_init has succeeded."
+    postconditions:
+      - description: "On success the outputs hold the key pair the seed determines; on any failure no output is written."
     security:
       constant_time: false
       handles_secrets: true
       fips_approved: true
 
-  - name: oxi_ml_kem_512_encapsulate
+  - name: oxi_ml_kem_512_encapsulate_rbg
     module: oxicrypt-ffi
-    description: Refuses encapsulation against an ML-KEM-512 encapsulation key with a caller-supplied m, which is not a module service (FIPS 203 §3.3 requires the module to sample m); checks that ek_ptr, m_ptr, ss_out and ct_out are non-NULL, then returns NotImplemented and writes nothing.
-    signature: >-
-      int oxi_ml_kem_512_encapsulate(const uint8_t *ek_ptr,
-      const uint8_t *m_ptr, uint8_t *ss_out, uint8_t *ct_out)
+    description: "ML-KEM-512 encapsulation (FIPS 203 Algorithm 20): checks the encapsulation key (FIPS 203 §7.2), draws m from the caller's DRBG handle (FIPS 203 §3.3) and writes the 32-byte shared secret and the 768-byte ciphertext; admitted under the unrestricted profile only."
+    signature: "int oxi_ml_kem_512_encapsulate_rbg(const uint8_t *ek_ptr, OxiDrbg *rbg, uint8_t *ss_out, uint8_t *ct_out)"
     parameters:
       - name: ek_ptr
-        type: const uint8_t *
+        type: "const uint8_t *"
         direction: in
-        description: 800-byte ML-KEM-512 encapsulation key
-      - name: m_ptr
-        type: const uint8_t *
+        description: "800-byte encapsulation key."
+      - name: rbg
+        type: "OxiDrbg *"
         direction: in
-        description: 32-byte encapsulation randomness
+        description: "Instantiated DRBG handle of at least 128 bits of security strength; m is drawn from it."
       - name: ss_out
-        type: uint8_t *
+        type: "uint8_t *"
         direction: out
-        description: 32-byte shared secret buffer
+        description: "32 writable bytes."
       - name: ct_out
-        type: uint8_t *
+        type: "uint8_t *"
         direction: out
-        description: 768-byte ciphertext buffer
+        description: "768 writable bytes."
     returns:
       type: int
-      description: "OxiResult discriminant: NotImplemented once the pointers pass, otherwise the error below."
+      description: "OxiResult discriminant: Ok on success, otherwise the first of the error variants below, in the order listed."
       error_variants:
-        - name: NotImplemented
-          condition: Every call whose pointers are non-NULL; nothing is written.
         - name: NullPointer
-          condition: A pointer argument that the call requires was NULL.
+          condition: "A pointer is NULL; each pointer is checked in parameter order, and a range that runs past the top of the address space returns InvalidInput at its position."
+        - name: InvalidInput
+          condition: "An output shares a byte with ek, the other output or the handle, or ek shares a byte with the handle; checked before the module state. Also returned, after the profile check, for a handle instantiated by another process, and, after the busy check, for an ek that fails the §7.2 modulus check, before any draw."
+        - name: NotOperational
+          condition: "oxi_init has not completed successfully, or the module has entered the terminal Error state."
+        - name: AlgorithmRestricted
+          condition: "The active algorithm profile does not permit ML-KEM-512 encapsulation or the handle's DRBG."
+        - name: Busy
+          condition: "The DRBG handle is in use by another call, or the DRBG's reseed waited too long on a seed path another thread holds."
+        - name: Uninstantiated
+          condition: "The DRBG handle was never instantiated."
+        - name: EntropyUnavailable
+          condition: "The entropy source failed while the DRBG reseeded; the module has entered its error state."
+    preconditions:
+      - description: "oxi_init has succeeded and the DRBG handle is instantiated."
+    postconditions:
+      - description: "On success ss_out holds the shared secret the ciphertext in ct_out encapsulates; on any failure no output is written."
     security:
       constant_time: false
-      handles_secrets: false
-      fips_approved: false
+      handles_secrets: true
+      fips_approved: true
 
   - name: oxi_ml_kem_512_decapsulate
     module: oxicrypt-ffi
@@ -15116,7 +15532,7 @@ functions:
         description: 32-byte shared secret buffer
     returns:
       type: int
-      description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
+      description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below; a ciphertext that does not match dk is not an error, since implicit rejection returns Ok with a pseudorandom shared secret."
       error_variants:
         - name: NotOperational
           condition: oxi_init has not completed successfully, or the module has entered the terminal Error state.
@@ -15124,86 +15540,158 @@ functions:
           condition: The active algorithm profile does not permit this service.
         - name: NullPointer
           condition: A pointer argument that the call requires was NULL.
+        - name: InvalidInput
+          condition: "dk fails the FIPS 203 §7.3 hash check, or ss_out shares a byte with dk or ct; nothing is written."
     security:
-      constant_time: true
+      constant_time: false
       handles_secrets: true
       fips_approved: true
 
-  - name: oxi_ml_kem_768_keygen
+  - name: oxi_ml_kem_768_keygen_rbg
     module: oxicrypt-ffi
-    description: Expand an ML-KEM-768 key pair from a stored seed (d, z) (FIPS 203 Algorithm 16, k=3) under the MlKem768ExpandKey service and run the pairwise consistency test (FIPS 140-3 IG 10.3.A) before anything is written; reads 32 bytes from d_ptr and z_ptr, writes the 1184-byte encapsulation key into ek_out and the 2400-byte decapsulation key into dk_out. d and z are not interchangeable; gated to AlgorithmProfile::Unrestricted.
-    signature: >-
-      int oxi_ml_kem_768_keygen(const uint8_t *d_ptr,
-      const uint8_t *z_ptr, uint8_t *ek_out, uint8_t *dk_out)
+    description: "ML-KEM-768 key generation (FIPS 203 Algorithm 19) with the seeds d and z drawn from the caller's DRBG handle and the pairwise consistency test (FIPS 140-3 IG 10.3.A) run before anything is written; writes the 1184-byte encapsulation key, the 2400-byte decapsulation key and, when seed_out is not NULL, the 64-byte seed d ‖ z; admitted under the unrestricted profile only."
+    signature: "int oxi_ml_kem_768_keygen_rbg(OxiDrbg *rbg, uint8_t *ek_out, uint8_t *dk_out, uint8_t *seed_out)"
+    parameters:
+      - name: rbg
+        type: "OxiDrbg *"
+        direction: in
+        description: "Instantiated DRBG handle of at least 192 bits of security strength; d and z are drawn from it."
+      - name: ek_out
+        type: "uint8_t *"
+        direction: out
+        description: "1184 writable bytes."
+      - name: dk_out
+        type: "uint8_t *"
+        direction: out
+        description: "2400 writable bytes."
+      - name: seed_out
+        type: "uint8_t *"
+        direction: out
+        description: "64 writable bytes for d ‖ z, d first, from which oxi_ml_kem_768_expand_key reproduces the pair, or NULL to withhold them."
+    returns:
+      type: int
+      description: "OxiResult discriminant: Ok on success, otherwise the first of the error variants below, in the order listed."
+      error_variants:
+        - name: NullPointer
+          condition: "rbg, ek_out or dk_out is NULL; each pointer is checked in parameter order, and a range that runs past the top of the address space returns InvalidInput at its position."
+        - name: InvalidInput
+          condition: "An output shares a byte with another output or with the handle; checked before the module state. Also returned, after the profile check, for a handle instantiated by another process."
+        - name: NotOperational
+          condition: "oxi_init has not completed successfully, or the module has entered the terminal Error state."
+        - name: AlgorithmRestricted
+          condition: "The active algorithm profile does not permit ML-KEM-768 key generation or the handle's DRBG."
+        - name: Busy
+          condition: "The DRBG handle is in use by another call, or the DRBG's reseed waited too long on a seed path another thread holds."
+        - name: RbgTooWeak
+          condition: "The DRBG's security strength is below 192 bits; nothing is drawn."
+        - name: Uninstantiated
+          condition: "The DRBG handle was never instantiated."
+        - name: EntropyUnavailable
+          condition: "The entropy source failed while the DRBG reseeded; the module has entered its error state."
+        - name: ConditionalTestFailed
+          condition: "The pairwise consistency test failed; nothing is written, the module has entered its error state, and every later call returns NotOperational."
+    preconditions:
+      - description: "oxi_init has succeeded and the DRBG handle is instantiated."
+    postconditions:
+      - description: "On success the outputs hold a key pair that passed its pairwise consistency test; on any failure no output is written."
+    security:
+      constant_time: false
+      handles_secrets: true
+      fips_approved: true
+
+  - name: oxi_ml_kem_768_expand_key
+    module: oxicrypt-ffi
+    description: "ML-KEM-768 key expansion from a stored seed (FIPS 203 Algorithm 16), with the pairwise consistency test (FIPS 140-3 IG 10.3.A) run before anything is written; writes the 1184-byte encapsulation key and the 2400-byte decapsulation key. d and z are not interchangeable; admitted under the unrestricted profile only."
+    signature: "int oxi_ml_kem_768_expand_key(const uint8_t *d_ptr, const uint8_t *z_ptr, uint8_t *ek_out, uint8_t *dk_out)"
     parameters:
       - name: d_ptr
-        type: const uint8_t *
+        type: "const uint8_t *"
         direction: in
-        description: 32-byte K-PKE keygen randomness
+        description: "32-byte K-PKE seed d."
       - name: z_ptr
-        type: const uint8_t *
+        type: "const uint8_t *"
         direction: in
-        description: 32-byte implicit-rejection seed (embedded in dk)
+        description: "32-byte implicit-rejection seed z."
       - name: ek_out
-        type: uint8_t *
+        type: "uint8_t *"
         direction: out
-        description: 1184-byte encapsulation key buffer
+        description: "1184 writable bytes."
       - name: dk_out
-        type: uint8_t *
+        type: "uint8_t *"
         direction: out
-        description: 2400-byte decapsulation key buffer
+        description: "2400 writable bytes."
     returns:
       type: int
-      description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
+      description: "OxiResult discriminant: Ok on success, otherwise the first of the error variants below, in the order listed."
       error_variants:
-        - name: ConditionalTestFailed
-          condition: 'The pairwise consistency test failed (reason "ML-KEM-768 pairwise consistency"); nothing is written and the module has entered its error state.'
-        - name: NotOperational
-          condition: oxi_init has not completed successfully, or the module has entered the terminal Error state.
-        - name: AlgorithmRestricted
-          condition: The active algorithm profile does not permit this service.
         - name: NullPointer
-          condition: A pointer argument that the call requires was NULL.
+          condition: "A pointer is NULL; each pointer is checked in parameter order, and a range that runs past the top of the address space returns InvalidInput at its position."
+        - name: InvalidInput
+          condition: "An output shares a byte with a seed or with the other output."
+        - name: NotOperational
+          condition: "oxi_init has not completed successfully, or the module has entered the terminal Error state."
+        - name: AlgorithmRestricted
+          condition: "The active algorithm profile does not permit ML-KEM-768 key expansion."
+        - name: ConditionalTestFailed
+          condition: "The pairwise consistency test failed; nothing is written, the module has entered its error state, and every later call returns NotOperational."
+    preconditions:
+      - description: "oxi_init has succeeded."
+    postconditions:
+      - description: "On success the outputs hold the key pair the seed determines; on any failure no output is written."
     security:
       constant_time: false
       handles_secrets: true
       fips_approved: true
 
-  - name: oxi_ml_kem_768_encapsulate
+  - name: oxi_ml_kem_768_encapsulate_rbg
     module: oxicrypt-ffi
-    description: Refuses encapsulation against an ML-KEM-768 encapsulation key with a caller-supplied m, which is not a module service (FIPS 203 §3.3 requires the module to sample m); checks that ek_ptr, m_ptr, ss_out and ct_out are non-NULL, then returns NotImplemented and writes nothing.
-    signature: >-
-      int oxi_ml_kem_768_encapsulate(const uint8_t *ek_ptr,
-      const uint8_t *m_ptr, uint8_t *ss_out, uint8_t *ct_out)
+    description: "ML-KEM-768 encapsulation (FIPS 203 Algorithm 20): checks the encapsulation key (FIPS 203 §7.2), draws m from the caller's DRBG handle (FIPS 203 §3.3) and writes the 32-byte shared secret and the 1088-byte ciphertext; admitted under the unrestricted profile only."
+    signature: "int oxi_ml_kem_768_encapsulate_rbg(const uint8_t *ek_ptr, OxiDrbg *rbg, uint8_t *ss_out, uint8_t *ct_out)"
     parameters:
       - name: ek_ptr
-        type: const uint8_t *
+        type: "const uint8_t *"
         direction: in
-        description: 1184-byte ML-KEM-768 encapsulation key
-      - name: m_ptr
-        type: const uint8_t *
+        description: "1184-byte encapsulation key."
+      - name: rbg
+        type: "OxiDrbg *"
         direction: in
-        description: 32-byte encapsulation randomness
+        description: "Instantiated DRBG handle of at least 192 bits of security strength; m is drawn from it."
       - name: ss_out
-        type: uint8_t *
+        type: "uint8_t *"
         direction: out
-        description: 32-byte shared secret buffer
+        description: "32 writable bytes."
       - name: ct_out
-        type: uint8_t *
+        type: "uint8_t *"
         direction: out
-        description: 1088-byte ciphertext buffer
+        description: "1088 writable bytes."
     returns:
       type: int
-      description: "OxiResult discriminant: NotImplemented once the pointers pass, otherwise the error below."
+      description: "OxiResult discriminant: Ok on success, otherwise the first of the error variants below, in the order listed."
       error_variants:
-        - name: NotImplemented
-          condition: Every call whose pointers are non-NULL; nothing is written.
         - name: NullPointer
-          condition: A pointer argument that the call requires was NULL.
+          condition: "A pointer is NULL; each pointer is checked in parameter order, and a range that runs past the top of the address space returns InvalidInput at its position."
+        - name: InvalidInput
+          condition: "An output shares a byte with ek, the other output or the handle, or ek shares a byte with the handle; checked before the module state. Also returned, after the profile check, for a handle instantiated by another process, and, after the busy check, for an ek that fails the §7.2 modulus check, before any draw."
+        - name: NotOperational
+          condition: "oxi_init has not completed successfully, or the module has entered the terminal Error state."
+        - name: AlgorithmRestricted
+          condition: "The active algorithm profile does not permit ML-KEM-768 encapsulation or the handle's DRBG."
+        - name: Busy
+          condition: "The DRBG handle is in use by another call, or the DRBG's reseed waited too long on a seed path another thread holds."
+        - name: RbgTooWeak
+          condition: "The DRBG's security strength is below 192 bits; nothing is drawn."
+        - name: Uninstantiated
+          condition: "The DRBG handle was never instantiated."
+        - name: EntropyUnavailable
+          condition: "The entropy source failed while the DRBG reseeded; the module has entered its error state."
+    preconditions:
+      - description: "oxi_init has succeeded and the DRBG handle is instantiated."
+    postconditions:
+      - description: "On success ss_out holds the shared secret the ciphertext in ct_out encapsulates; on any failure no output is written."
     security:
       constant_time: false
-      handles_secrets: false
-      fips_approved: false
+      handles_secrets: true
+      fips_approved: true
 
   - name: oxi_ml_kem_768_decapsulate
     module: oxicrypt-ffi
@@ -15226,7 +15714,7 @@ functions:
         description: 32-byte shared secret buffer
     returns:
       type: int
-      description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
+      description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below; a ciphertext that does not match dk is not an error, since implicit rejection returns Ok with a pseudorandom shared secret."
       error_variants:
         - name: NotOperational
           condition: oxi_init has not completed successfully, or the module has entered the terminal Error state.
@@ -15234,8 +15722,10 @@ functions:
           condition: The active algorithm profile does not permit this service.
         - name: NullPointer
           condition: A pointer argument that the call requires was NULL.
+        - name: InvalidInput
+          condition: "dk fails the FIPS 203 §7.3 hash check, or ss_out shares a byte with dk or ct; nothing is written."
     security:
-      constant_time: true
+      constant_time: false
       handles_secrets: true
       fips_approved: true
 
@@ -17478,16 +17968,80 @@ functions:
       handles_secrets: false
       fips_approved: false
 
+  - name: oxi_test_corrupt_next_pk_ml_dsa
+    module: oxicrypt-ffi
+    description: "Make the next ML-DSA key generation or key expansion in the process fail its pairwise consistency test, returning ConditionalTestFailed and putting the module in its error state; available with the fault-injection feature"
+    signature: "void oxi_test_corrupt_next_pk_ml_dsa(void)"
+    returns:
+      type: void
+      description: "No return value"
+    thread_safety: "thread-safe"
+    security:
+      constant_time: false
+      handles_secrets: false
+      fips_approved: false
+
+  - name: oxi_test_corrupt_next_dk_ml_kem
+    module: oxicrypt-ffi
+    description: "Make the next ML-KEM key generation or key expansion in the process fail its pairwise consistency test, returning ConditionalTestFailed and putting the module in its error state; available with the fault-injection feature"
+    signature: "void oxi_test_corrupt_next_dk_ml_kem(void)"
+    returns:
+      type: void
+      description: "No return value"
+    thread_safety: "thread-safe"
+    security:
+      constant_time: false
+      handles_secrets: false
+      fips_approved: false
+
+  - name: oxi_test_corrupt_next_pk_ecdsa
+    module: oxicrypt-ffi
+    description: "Make the next ECDSA key generation in the process fail its pairwise consistency test, returning ConditionalTestFailed and putting the module in its error state; available with the fault-injection feature"
+    signature: "void oxi_test_corrupt_next_pk_ecdsa(void)"
+    returns:
+      type: void
+      description: "No return value"
+    thread_safety: "thread-safe"
+    security:
+      constant_time: false
+      handles_secrets: false
+      fips_approved: false
+
+  - name: oxi_test_corrupt_next_pk_ecdh
+    module: oxicrypt-ffi
+    description: "Make the next ECDH key generation in the process fail its pairwise consistency test, returning ConditionalTestFailed and putting the module in its error state; available with the fault-injection feature"
+    signature: "void oxi_test_corrupt_next_pk_ecdh(void)"
+    returns:
+      type: void
+      description: "No return value"
+    thread_safety: "thread-safe"
+    security:
+      constant_time: false
+      handles_secrets: false
+      fips_approved: false
+
+  - name: oxi_test_corrupt_next_pk_rsa
+    module: oxicrypt-ffi
+    description: "Make the next RSA key generation in the process fail its pairwise consistency test, returning ConditionalTestFailed and putting the module in its error state; available with the fault-injection feature"
+    signature: "void oxi_test_corrupt_next_pk_rsa(void)"
+    returns:
+      type: void
+      description: "No return value"
+    thread_safety: "thread-safe"
+    security:
+      constant_time: false
+      handles_secrets: false
+      fips_approved: false
+
   - name: oxi_test_corrupt_next_key
     module: oxicrypt-ffi
-    description: "Arm or disarm a pairwise consistency test failure in the next key generation; available with the fault-injection feature"
-    signature: >-
-      void oxi_test_corrupt_next_key(int on)
+    description: "Arm or disarm a pairwise consistency test failure in the next key generation of each of ML-DSA, ML-KEM, ECDSA, ECDH and RSA, each then returning ConditionalTestFailed and putting the module in its error state; Ed25519 is not armed, since no C function runs the Ed25519 pairwise consistency test; available with the fault-injection feature"
+    signature: "void oxi_test_corrupt_next_key(int on)"
     parameters:
       - name: on
         type: "int"
         direction: in
-        description: "Non-zero arms, zero disarms"
+        description: "Non-zero arms all five families, zero disarms them"
     returns:
       type: void
       description: "No return value"
@@ -18993,7 +19547,7 @@ functions:
 
   - name: oxi_rsa_2048_private_key_new_generate
     module: oxicrypt-ffi
-    description: Allocate a new RSA-2048 private-key handle, generating a keypair via FIPS 186-5 §A.1.1 / §B.3.1 prime sampling on the caller's DRBG and running the IG 10.3.A PCT on the CRT path before returning. e must be an odd prime in [65537, 2^64) (in practice 65537); failures collapse to OxiResult::InvalidInput = 5.
+    description: Allocate a new RSA-2048 private-key handle, generating a keypair via FIPS 186-5 §A.1.1 / §B.3.1 prime sampling on the caller's DRBG and running the IG 10.3.A PCT on the CRT path before returning. e must be an odd prime in [65537, 2^64) (in practice 65537); a PCT failure returns ConditionalTestFailed and puts the module in its error state.
     signature: >-
       int oxi_rsa_2048_private_key_new_generate(OxiHmacDrbgSha256 *drbg,
       uint64_t e, OxiRsaPrivateKey2048 **out_key)
@@ -19014,8 +19568,12 @@ functions:
       type: int
       description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
       error_variants:
+        - name: ConditionalTestFailed
+          condition: "The pairwise consistency test failed; no handle is returned, the module has entered its error state, and every later call returns NotOperational."
+        - name: Uninstantiated
+          condition: "The DRBG handle was never instantiated."
         - name: InvalidInput
-          condition: An argument was not a valid domain element, such as a scalar out of range or a point not on the curve.
+          condition: "The DRBG handle was instantiated by another process, e fails its check, or prime sampling exceeded its retry budget."
         - name: NotOperational
           condition: oxi_init has not completed successfully, or the module has entered the terminal Error state.
         - name: AlgorithmRestricted
@@ -19321,8 +19879,12 @@ functions:
       type: int
       description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
       error_variants:
+        - name: ConditionalTestFailed
+          condition: "The pairwise consistency test failed; no handle is returned, the module has entered its error state, and every later call returns NotOperational."
+        - name: Uninstantiated
+          condition: "The DRBG handle was never instantiated."
         - name: InvalidInput
-          condition: An argument was not a valid domain element, such as a scalar out of range or a point not on the curve.
+          condition: "The DRBG handle was instantiated by another process, e fails its check, or prime sampling exceeded its retry budget."
         - name: NotOperational
           condition: oxi_init has not completed successfully, or the module has entered the terminal Error state.
         - name: AlgorithmRestricted
@@ -19628,8 +20190,12 @@ functions:
       type: int
       description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
       error_variants:
+        - name: ConditionalTestFailed
+          condition: "The pairwise consistency test failed; no handle is returned, the module has entered its error state, and every later call returns NotOperational."
+        - name: Uninstantiated
+          condition: "The DRBG handle was never instantiated."
         - name: InvalidInput
-          condition: An argument was not a valid domain element, such as a scalar out of range or a point not on the curve.
+          condition: "The DRBG handle was instantiated by another process, e fails its check, or prime sampling exceeded its retry budget."
         - name: NotOperational
           condition: oxi_init has not completed successfully, or the module has entered the terminal Error state.
         - name: AlgorithmRestricted
@@ -22862,7 +23428,7 @@ error_types:
         user_action: Call the matching instantiate function on this handle and check it returns Ok, then retry.
       - name: ReseedRequired
         value: 9
-        description: The DRBG's reseed counter passed the SP 800-90A Table 3 reseed interval on an instance that does not reseed itself, a state no exported function reaches at ABI 3.
+        description: The DRBG's reseed counter passed the SP 800-90A Table 3 reseed interval on an instance that does not reseed itself, a state no exported function reaches.
         recoverable: true
         user_action: Not returned through the C interface. The oxicrypt_drbg testing interface returns it from generate on an instance instantiated with a caller-supplied entropy input; reseed that instance through the same interface.
       - name: NullPointer

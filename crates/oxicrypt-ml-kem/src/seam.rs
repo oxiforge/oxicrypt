@@ -31,6 +31,11 @@ pub fn corrupt_next_dk() {
     CORRUPT_NEXT_DK.store(true, Ordering::SeqCst);
 }
 
+/// Disarms [`corrupt_next_dk`].
+pub fn disarm() {
+    CORRUPT_NEXT_DK.store(false, Ordering::SeqCst);
+}
+
 /// The seed d of the ML-KEM-512 key-generation case.
 pub const ML_KEM_512_KEYGEN_D: &[u8; 32] =
     include_bytes!("../tests/data/mlkem512_nist_keygen_tg1_tc1_d.bin");

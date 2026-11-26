@@ -52,6 +52,11 @@ fault-injection = [
     "oxicrypt-drbg/fault-injection",
     "oxicrypt-aes/fault-injection",
     "oxicrypt-cmac/fault-injection",
+    "oxicrypt-ml-dsa/fault-injection",
+    "oxicrypt-ml-kem/fault-injection",
+    "oxicrypt-ecdh/fault-injection",
+    "oxicrypt-ecdsa/fault-injection",
+    "oxicrypt-rsa/fault-injection",
 ]
 
 [package.metadata.lama]

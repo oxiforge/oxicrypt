@@ -23,17 +23,9 @@
 //!   invocation limit
 //! - 255:         Catch-all `Internal` (reserved)
 //!
-//! Four codes are mapped but returned by no exported function at ABI 3:
-//! `ReseedRequired = 9`, `EntropyInputTooShort = 29`, `NonceTooShort = 30`
-//! and `RbgTooWeak = 31`.
-//!
-//! `RbgTooWeak` is unreachable because the one service that checks the
-//! strength of an `OxiDrbg`, `oxi_aes_gcm_seal`, requires 96 bits and every
-//! `OxiDrbg` is instantiated at 128 bits or more, and the one typed DRBG
-//! handle the services take, HMAC_DRBG-SHA-256, is instantiated at 256
-//! bits, above every service's strength requirement.
-//!
-//! The other three are unreachable because the C interface takes no
+//! Three codes are mapped but returned by no exported function:
+//! `ReseedRequired = 9`, `EntropyInputTooShort = 29` and
+//! `NonceTooShort = 30`. They are unreachable because the C interface takes no
 //! entropy input or nonce. Every C DRBG instantiate and reseed function
 //! draws from the module's seed path, which supplies a full-length
 //! entropy input and nonce, and a module-seeded DRBG reseeds itself at
@@ -84,7 +76,7 @@ pub enum OxiResult {
     Uninstantiated = 8,
     /// The DRBG's reseed counter passed the SP 800-90A Table 3 reseed
     /// interval and the DRBG cannot reseed itself. No exported function
-    /// returns it at ABI 3: every C DRBG handle is seeded by the module and
+    /// returns it: every C DRBG handle is seeded by the module and
     /// reseeds itself at the interval. It is returned by `generate` on an
     /// `oxicrypt_drbg` instance instantiated through the testing interface
     /// with a caller-supplied entropy input, which does not reseed itself at
@@ -135,7 +127,7 @@ pub enum OxiResult {
     IntegrityUnverified = 28,
     /// A DRBG instantiate or reseed was given an entropy input shorter than
     /// the minimum for the instantiated security strength (SP 800-90A Rev. 1
-    /// Tables 2 and 3). No exported function returns it at ABI 3: the C
+    /// Tables 2 and 3). No exported function returns it: the C
     /// interface takes no entropy input, and the module's seed path supplies
     /// a full-length one. It is returned by the `oxicrypt_drbg` testing
     /// interface's caller-entropy forms: HMAC_DRBG and Hash_DRBG
@@ -148,7 +140,7 @@ pub enum OxiResult {
     /// instantiated security strength, the module's nonce floor
     /// (permitted by SP 800-90A Rev. 1 §9.1 step 8; a shorter nonce that
     /// would meet only the uniqueness condition of §8.6.7 is refused). No
-    /// exported function returns it at ABI 3: the C interface takes no
+    /// exported function returns it: the C interface takes no
     /// nonce, and the module's seed path supplies a full-length one. It is
     /// returned by the `oxicrypt_drbg` testing interface's caller-nonce
     /// forms: HMAC_DRBG and Hash_DRBG `instantiate`, and CTR_DRBG
@@ -271,8 +263,7 @@ impl From<oxicrypt_drbg::DrbgError> for OxiResult {
             // because the caller's recovery is the same.
             oxicrypt_drbg::DrbgError::InputTooLong
             | oxicrypt_drbg::DrbgError::InvalidSeedLength => OxiResult::InvalidInput,
-            // SP 800-90A Table 3 max_number_of_bits_per_request — output bound,
-            // semantically identical to KDF's HKDF-Expand 255*HashLen ceiling.
+            // SP 800-90A Table 3 max_number_of_bits_per_request.
             oxicrypt_drbg::DrbgError::RequestTooLong => OxiResult::OutputTooLong,
             oxicrypt_drbg::DrbgError::EntropyInputTooShort => OxiResult::EntropyInputTooShort,
             oxicrypt_drbg::DrbgError::Module(m) => OxiResult::from(m),

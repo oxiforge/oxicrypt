@@ -43,6 +43,7 @@ fn frozen(abi: i32) -> Option<(usize, u64)> {
         1 => Some((316, 0xe5b4_7830_6154_6473)),
         2 => Some((327, 0x5735_146b_5c28_b336)),
         3 => Some((348, 0xdd18_7fce_24d5_bce7)),
+        4 => Some((354, 0x4b00_318f_ab17_f8d7)),
         _ => None,
     }
 }

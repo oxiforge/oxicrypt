@@ -63,10 +63,67 @@ pub unsafe extern "C" fn oxi_test_hold_busy(h: *mut OxiDrbg, on: c_int) {
 }
 
 /// Arm (`on` non-zero) or disarm a pairwise consistency test failure in the
-/// next key generation.
+/// next key generation of each of ML-DSA, ML-KEM, ECDSA, ECDH and RSA, as
+/// the five `oxi_test_corrupt_next_*_<family>` functions do one family at a
+/// time: the next key generation or key expansion of each armed family
+/// returns `ConditionalTestFailed = 3` and puts the module in its error
+/// state. Ed25519 is not armed: no C function runs the Ed25519 pairwise
+/// consistency test.
 #[unsafe(no_mangle)]
 pub extern "C" fn oxi_test_corrupt_next_key(on: c_int) {
-    oxicrypt_drbg::seam::set_corrupt_next_key(on != 0);
+    if on != 0 {
+        oxicrypt_ml_dsa::seam::corrupt_next_pk();
+        oxicrypt_ml_kem::seam::corrupt_next_dk();
+        oxicrypt_ecdsa::seam::corrupt_next_pk();
+        oxicrypt_ecdh::seam::corrupt_next_pk();
+        oxicrypt_rsa::seam::corrupt_next_pk();
+    } else {
+        oxicrypt_ml_dsa::seam::disarm();
+        oxicrypt_ml_kem::seam::disarm();
+        oxicrypt_ecdsa::seam::reset();
+        oxicrypt_ecdh::seam::reset();
+        oxicrypt_rsa::seam::reset();
+    }
+}
+
+/// Make the next ML-DSA key generation or key expansion in the process, of
+/// any parameter set, fail its pairwise consistency test: it returns
+/// `ConditionalTestFailed = 3` and the module enters its error state.
+#[unsafe(no_mangle)]
+pub extern "C" fn oxi_test_corrupt_next_pk_ml_dsa() {
+    oxicrypt_ml_dsa::seam::corrupt_next_pk();
+}
+
+/// Make the next ML-KEM key generation or key expansion in the process, of
+/// any parameter set, fail its pairwise consistency test: it returns
+/// `ConditionalTestFailed = 3` and the module enters its error state.
+#[unsafe(no_mangle)]
+pub extern "C" fn oxi_test_corrupt_next_dk_ml_kem() {
+    oxicrypt_ml_kem::seam::corrupt_next_dk();
+}
+
+/// Make the next ECDSA key generation in the process, of either curve, fail
+/// its pairwise consistency test: it returns `ConditionalTestFailed = 3`
+/// and the module enters its error state.
+#[unsafe(no_mangle)]
+pub extern "C" fn oxi_test_corrupt_next_pk_ecdsa() {
+    oxicrypt_ecdsa::seam::corrupt_next_pk();
+}
+
+/// Make the next ECDH key generation in the process, of either curve, fail
+/// its pairwise consistency test: it returns `ConditionalTestFailed = 3`
+/// and the module enters its error state.
+#[unsafe(no_mangle)]
+pub extern "C" fn oxi_test_corrupt_next_pk_ecdh() {
+    oxicrypt_ecdh::seam::corrupt_next_pk();
+}
+
+/// Make the next RSA key generation in the process, of any modulus size,
+/// fail its pairwise consistency test: it returns
+/// `ConditionalTestFailed = 3` and the module enters its error state.
+#[unsafe(no_mangle)]
+pub extern "C" fn oxi_test_corrupt_next_pk_rsa() {
+    oxicrypt_rsa::seam::corrupt_next_pk();
 }
 
 /// Make the entropy source fail its start-up health tests, which puts the
@@ -167,7 +224,7 @@ mod tests {
         };
         let exported = exported_names(&read("src/test_api.rs"));
         let declared = declared_names(&read("include/oxicrypt-test.h"));
-        assert_eq!(exported.len(), 10, "{exported:?}");
+        assert_eq!(exported.len(), 15, "{exported:?}");
         assert_eq!(declared, exported);
         assert!(!read("include/oxicrypt.h").contains("oxi_test_"));
 
