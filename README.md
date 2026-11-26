@@ -69,6 +69,8 @@ lib.oxi_sha256(b"abc", 3, out)
 print(bytes(out).hex())                       # ba7816bf…15ad
 ```
 
+[`examples/python/`](examples/python/) continues from here to an ML-DSA-87 signature and an ML-KEM-1024 shared secret.
+
 The same from C, linked against the extracted bundle directory `$DIR`:
 
 ```c
@@ -90,6 +92,8 @@ DIR=$PWD/oxicrypt-ffi-<version>-<platform>     # the extracted bundle
 cc -o sha256_demo sha256_demo.c -I"$DIR" -L"$DIR" -loxicrypt_ffi -Wl,-rpath,"$DIR"
 ./sha256_demo
 ```
+
+[`examples/c/`](examples/c/) continues from here to an ML-DSA-87 signature and an ML-KEM-1024 shared secret.
 
 The same program in Go, Node.js, Java and C#, each with the commands to
 build and run it against a bundle, is in [`examples/`](examples/).

@@ -1,8 +1,8 @@
 {
-  "name": "oxicrypt-sha256-example",
+  "name": "oxicrypt-example",
   "private": true,
-  "description": "SHA-256 of \"abc\" from the oxicrypt C library, loaded with koffi",
-  "main": "sha256.js",
+  "description": "SHA-256, ML-DSA-87 and ML-KEM-1024 from the oxicrypt C library, loaded with koffi",
+  "main": "example.js",
   "dependencies": {
     "koffi": "3.3.8"
   }

@@ -74,10 +74,17 @@
 #          fault-injection test symbols, which a shipped library must not
 #          contain.
 # examples Each examples/<language>/ directory holding a run.sh runs it with
-#          the bundle directory as its argument, and it must exit 0 and print
-#              ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad
-#          An example whose toolchain is not on PATH is skipped with
-#          `skip: <language> (<reason>)`: go needs a `go` at least as new as
+#          the bundle directory as its argument. It must exit 0, and its
+#          standard output must be exactly nine lines: the eight fixed lines
+#          of the ```text block in examples/README.md that holds
+#          `drbg instantiated`, in order, then `ml-kem-1024 ss ` followed by
+#          64 lowercase hex digits, as that block's ninth line describes. A
+#          README block of another shape fails the check before any example
+#          runs. An example that fails is reported as
+#          `FAILED: examples/<language> <reason>`, naming the first line that
+#          differs. An example whose toolchain is not on PATH is skipped with
+#          `skip: <language> (<reason>)`: c needs `cc`, python needs
+#          `python3` or `python`, go needs a `go` at least as new as
 #          the `go` directive of examples/go/go.mod and the C compiler
 #          `go env CC` names, node needs `node` and `npm`, java needs `java`
 #          and a `javac` of 22 or later, csharp needs `dotnet` listing a .NET
@@ -129,6 +136,44 @@ run_program() {
     out="$("$@" 2>&1 | tr -d '\r'; exit "${PIPESTATUS[0]}")"
     rc=$?
     printf '%s (exit %s):\n%s\n' "$what" "$rc" "$out"
+}
+
+# run_example <what> <run.sh> <bundle-dir> <fixed lines>: runs the example
+# against the bundle and prints its standard output and error. Returns 0 when
+# it exited 0 and its standard output, carriage returns removed, is exactly
+# the fixed lines followed by `ml-kem-1024 ss ` and 64 lowercase hex digits;
+# otherwise prints `FAILED: <what> <reason>`, naming the first difference,
+# and returns 1.
+run_example() {
+    local what="$1" script="$2" bundle_dir="$3" status reason
+    printf '%s\n' "$4" > "$tmp/fixed" || return 1
+    bash "$script" "$bundle_dir" > "$tmp/stdout" 2> "$tmp/stderr"
+    status=$?
+    printf '%s (exit %s):\n' "$what" "$status"
+    tr -d '\r' < "$tmp/stdout"
+    tr -d '\r' < "$tmp/stderr"
+    if [ "$status" -ne 0 ]; then
+        echo "FAILED: $what exited $status" >&2
+        return 1
+    fi
+    reason="$(tr -d '\r' < "$tmp/stdout" | awk '
+        FILENAME == ARGV[1] { want[++w] = $0; next }
+        {
+            n++
+            if (n <= w && $0 != want[n]) {
+                printf "printed \"%s\" as line %d, not \"%s\"", $0, n, want[n]; bad = 1; exit
+            }
+            if (n == w + 1 && !(substr($0, 1, 15) == "ml-kem-1024 ss " && length($0) == 79 && substr($0, 16) ~ /^[0-9a-f]+$/)) {
+                printf "printed \"%s\" as line %d, not ml-kem-1024 ss and 64 hex digits", $0, n; bad = 1; exit
+            }
+            if (n > w + 1) { printf "printed more than %d lines", w + 1; bad = 1; exit }
+        }
+        END { if (!bad && n != w + 1) printf "printed %d lines, not %d", n, w + 1 }
+    ' "$tmp/fixed" -)" || { echo "FAILED: $what could not be compared with examples/README.md" >&2; return 1; }
+    if [ -n "$reason" ]; then
+        echo "FAILED: $what $reason" >&2
+        return 1
+    fi
 }
 
 # require <what> <line...>: the program last run exited 0 and printed each
@@ -514,6 +559,18 @@ case "$mode" in
         [ $# -eq 2 ] || { echo "usage: release-archive-check.sh examples <archive.tar.gz>" >&2; exit 1; }
         dir="$(bundle "$2")" || exit 1
         lib="$(shared_library "$dir")" || exit 1
+        expected="$(awk '
+            { sub(/\r$/, "") }
+            !inside && $0 == "```text" { inside = 1; block = ""; hit = 0; next }
+            inside && $0 == "```" { if (hit) { printf "%s", block; exit } inside = 0; next }
+            inside { block = block $0 "\n"; if ($0 == "drbg instantiated") hit = 1 }
+        ' "$root/examples/README.md")"
+        if [ "$(printf '%s\n' "$expected" | grep -c '')" -ne 9 ] \
+            || [ "$(printf '%s\n' "$expected" | sed -n 9p)" != "ml-kem-1024 ss <64 lowercase hex digits>" ]; then
+            echo "FAILED: examples/README.md has no \`\`\`text block of eight fixed lines and the ml-kem-1024 ss line" >&2
+            exit 1
+        fi
+        fixed="$(printf '%s\n' "$expected" | sed -n 1,8p)"
         failed=0
         ran=""
         seen=""
@@ -525,6 +582,8 @@ case "$mode" in
             language="$(basename "$example")"
             seen="$seen $language "
             case "$language" in
+                c) tools="cc" ;;
+                python) tools="" ;;
                 go) tools="go" ;;
                 node) tools="node npm" ;;
                 java) tools="java javac" ;;
@@ -535,6 +594,9 @@ case "$mode" in
             for t in $tools; do
                 command -v "$t" >/dev/null 2>&1 || { skip="no $t on PATH"; break; }
             done
+            if [ "$language" = python ] && ! command -v python3 >/dev/null 2>&1 && ! command -v python >/dev/null 2>&1; then
+                skip="no python3 or python on PATH"
+            fi
             if [ -z "$skip" ] && [ "$language" = go ]; then
                 go_have="$(go version 2>&1 | tr -d '\r' | sed -nE 's/^go version go([0-9]+(\.[0-9]+)*).*/\1/p')"
                 go_need="$(tr -d '\r' < "$example/go.mod" | sed -nE 's/^go ([0-9]+(\.[0-9]+)*)[[:space:]]*$/\1/p')"
@@ -578,8 +640,7 @@ case "$mode" in
                 continue
             fi
             ran="$ran $language"
-            run_program "examples/$language" bash "$example/run.sh" "$dir"
-            require "examples/$language" "$abc_digest" || failed=1
+            run_example "examples/$language" "$example/run.sh" "$dir" "$fixed" || failed=1
         done
         for language in $required; do
             if [ "${seen#* "$language" }" = "$seen" ]; then

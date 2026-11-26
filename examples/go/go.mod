@@ -1,3 +1,3 @@
-module oxicrypt.example/sha256
+module oxicrypt.example/example
 
 go 1.24

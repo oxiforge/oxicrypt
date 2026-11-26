@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Tests check-release-tag.sh, attach-draft.sh, release-archive-check.sh,
-# android-device-check.sh and list-caller-entropy-sites.sh against fixtures.
+# android-device-check.sh, list-caller-entropy-sites.sh and
+# check-example-inputs.sh against fixtures.
 #
 #   test-release-scripts.sh
 #
@@ -17,15 +18,32 @@
 # against a stand-in library compiled here, whose oxi_init fails when
 # STUB_OXI_INIT_FAILS is set and whose oxi_sha256 writes the digest of "abc"
 # when it is given the three bytes "abc" and fails otherwise.
-# Its examples mode runs examples/*/run.sh against stub toolchains, which
-# test which examples run, which are skipped and which are required, and
-# against a PATH that hides every toolchain. With OXICRYPT_TEST_EXAMPLES=1 it
-# also runs them against the same stand-in with the PATH it is given, where
-# each example whose toolchain is present must pass and each other must be
-# reported as skipped. Those cases need the toolchains the script names (go
-# and the C compiler `go env CC` names, node and npm, java and javac 22 or
+# Its examples mode runs examples/*/run.sh against stub toolchains printing
+# the nine expected lines, which test which examples run, which are skipped
+# and which are required and how a line that differs from examples/README.md
+# is reported, and against a PATH that hides every toolchain. With
+# OXICRYPT_TEST_EXAMPLES=1 it also runs them with the PATH it is given
+# against a second stand-in, built from the shipped oxicrypt.h, whose ML-DSA
+# and ML-KEM functions keep their contracts (a signature verifies only
+# unchanged, a ciphertext decapsulates to its secret only unchanged) without
+# being either algorithm, and whose oxi_drbg_instantiate fails when
+# STUB_DRBG_INSTANTIATE_FAILS is set. There each example whose toolchain is
+# present must pass and each other must be reported as skipped, and each
+# program with its expected digest altered must exit 1 printing both values.
+# Those cases need the toolchains the script names (cc, python3 or python,
+# go and the C compiler `go env CC` names, node and npm, java and javac 22 or
 # later, dotnet with a .NET SDK 10 or later) and network access for the
-# packages npm and dotnet fetch.
+# packages npm and dotnet fetch. When OXICRYPT_TEST_BUNDLE and
+# OXICRYPT_TEST_FAULT_BUNDLE also name library archives, a signed library and
+# a signed library built with the fault-injection feature, and
+# OXICRYPT_TEST_SIGNER names the oxicrypt-integrity-sign that signed them,
+# the examples also run against the real libraries: every one must pass
+# against the signed library, exit 1 printing integrity status 2 against a
+# copy with one signed byte flipped as release-load-check.sh flips it, and
+# exit 1 printing code 33 from oxi_drbg_instantiate against the
+# fault-injection library with OXI_FAULT=poison-entropy.
+# check-example-inputs.sh runs against a copy of examples/ completed with
+# how-to stand-ins that state the fixed inputs as examples/README.md does.
 # Its imports mode runs against a bundle holding a shared library compiled
 # here that calls puts, with allow-lists written from `nm -D` independently
 # of the script, and against stub objdump, llvm-readobj, nm, readelf and
@@ -526,22 +544,29 @@ FFI_ONE="$T/ffi/one/oxicrypt-ffi-v9.9.9-linux-x86_64.tar.gz"
 out_examples="$(PATH="$T/minpath" archive_check examples "$FFI_ONE" 2>&1)" && status=0 || status=$?
 check "archive examples: no toolchain on PATH exits 1" [ "$status" = 1 ]
 check "archive examples: no toolchain on PATH is named" grep -qxF "FAILED: no example toolchain on PATH" <<<"$out_examples"
-for skip in "go (no go on PATH)" "node (no node on PATH)" "java (no java on PATH)" "csharp (no dotnet on PATH)"; do
+for skip in "c (no cc on PATH)" "python (no python3 or python on PATH)" "go (no go on PATH)" \
+    "node (no node on PATH)" "java (no java on PATH)" "csharp (no dotnet on PATH)"; do
     check "archive examples: skip: $skip" grep -qxF "skip: $skip" <<<"$out_examples"
 done
 expect "archive examples: a required language without its toolchain fails" 1 \
     "FAILED: examples/node is required here and no node on PATH" \
     env PATH="$T/minpath" OXICRYPT_EXAMPLES_REQUIRED=node "$HERE/release-archive-check.sh" examples "$FFI_ONE"
 
-# Stub toolchains: each prints the digest the stand-in would, so these cases
-# test which examples the script runs, not the examples. $STUB_GO_VERSION,
+# Stub toolchains: each program prints the nine lines examples/README.md
+# expects, so these cases test which examples the script runs and how it
+# compares their output, not the examples. $STUB_GO_VERSION,
 # $STUB_DOTNET_SDKS and $STUB_JAVAC_VERSION set what `go version`, `dotnet
 # --list-sdks` and `javac -version` report. $STUB_EXAMPLE_FAIL=<language>
-# makes that language's program exit 1 without printing the digest. The java
-# and javac stubs sit in their own directory, on PATH only where a case puts
-# them there.
+# makes that language's program exit 1 without printing. The java and javac
+# stubs sit in their own directory, on PATH only where a case puts them
+# there.
 mkdir -p "$T/toolstub" "$T/javastub" "$T/toolstub-nocc"
-fail_or_digest() { printf '#!/usr/bin/env bash\n[ "${STUB_EXAMPLE_FAIL:-}" != %s ] || exit 1\necho ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad\n' "$1"; }
+NINE_LINES="$(printf '%s\n' \
+    "sha256 abc ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad" \
+    "drbg instantiated" "ml-dsa-87 keygen ok" "ml-dsa-87 verify ok" "ml-dsa-87 verify-tampered rejected 22" \
+    "ml-kem-1024 keygen ok" "ml-kem-1024 decaps match" "ml-kem-1024 decaps-tampered differs" \
+    "ml-kem-1024 ss $(printf '%064d' 0 | tr 0 7)")"
+fail_or_lines() { printf '#!/usr/bin/env bash\n[ "${STUB_EXAMPLE_FAIL:-}" != %s ] || exit 1\nprintf %%s\\\\n %q\n' "$1" "$NINE_LINES"; }
 cat > "$T/toolstub/go" <<'STUB'
 #!/usr/bin/env bash
 case "$1" in
@@ -551,26 +576,26 @@ case "$1" in
     *) exit 3 ;;
 esac
 STUB
-fail_or_digest go > "$T/toolstub/go-program"
+fail_or_lines go >"$T/toolstub/go-program"
 cat > "$T/toolstub/dotnet" <<'STUB'
 #!/usr/bin/env bash
 case "$1" in
     --list-sdks) printf '%s\n' "${STUB_DOTNET_SDKS:-10.0.100 [/stub/sdk]}" ;;
     build) ;;
-    *) [ "${STUB_EXAMPLE_FAIL:-}" != csharp ] || exit 1
-       echo ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad ;;
+    *) exec "$(dirname "$0")/dotnet-program" ;;
 esac
 STUB
-fail_or_digest node > "$T/toolstub/node"
+fail_or_lines csharp > "$T/toolstub/dotnet-program"
+fail_or_lines node >"$T/toolstub/node"
 printf '#!/usr/bin/env bash\n' > "$T/toolstub/npm"
 printf '#!/usr/bin/env bash\n' > "$T/toolstub/stub-cc"
 cat > "$T/javastub/javac" <<'STUB'
 #!/usr/bin/env bash
 [ "$1" != -version ] || echo "javac ${STUB_JAVAC_VERSION:-21}"
 STUB
-fail_or_digest java > "$T/javastub/java"
+fail_or_lines java >"$T/javastub/java"
 chmod +x "$T/toolstub/"* "$T/javastub/"*
-for t in go go-program dotnet node npm; do ln -s "$T/toolstub/$t" "$T/toolstub-nocc/$t"; done
+for t in go go-program dotnet dotnet-program node npm; do ln -s "$T/toolstub/$t" "$T/toolstub-nocc/$t"; done
 # stub_examples <go version> <dotnet sdks> <required>: examples mode on the
 # stand-in with the stub toolchains on $stub_path.
 stub_path="$T/toolstub:$T/minpath"
@@ -625,6 +650,39 @@ expect "archive examples: go without the C compiler cgo needs is skipped" 0 \
     stub_examples 1.24.0 "10.0.100 [/stub/sdk]" ""
 stub_path="$T/toolstub:$T/minpath"
 
+# examples_tree <name>: a copy of release-archive-check.sh and examples/
+# under $T/trees/<name>, for the cases that change a file the script or an
+# example reads.
+examples_tree() {
+    mkdir -p "$T/trees/$1/scripts"
+    cp "$HERE/release-archive-check.sh" "$T/trees/$1/scripts/"
+    cp -R "$HERE/../examples" "$T/trees/$1/examples"
+}
+examples_tree altered-line
+sed -i.orig 's/^ml-dsa-87 verify ok$/ml-dsa-87 verify okay/' "$T/trees/altered-line/examples/README.md"
+check "examples: one expected line altered: the copy differs in one line" \
+    [ "$(diff "$T/trees/altered-line/examples/README.md.orig" "$T/trees/altered-line/examples/README.md" | grep -c '^>')" = 1 ]
+out_examples="$(env PATH="$stub_path" OXICRYPT_EXAMPLES_REQUIRED="go node csharp" \
+    "$T/trees/altered-line/scripts/release-archive-check.sh" examples "$FFI_ONE" 2>&1)" && status=0 || status=$?
+check "examples: one expected line altered fails" [ "$status" = 1 ]
+for language in csharp go node; do
+    check "examples: one expected line altered fails examples/$language" grep -qxF \
+        "FAILED: examples/$language printed \"ml-dsa-87 verify ok\" as line 4, not \"ml-dsa-87 verify okay\"" <<<"$out_examples"
+done
+examples_tree no-ss-line
+sed -i.orig '/^ml-kem-1024 ss </d' "$T/trees/no-ss-line/examples/README.md"
+expect "archive examples: a README block without the ss line fails" 1 \
+    "FAILED: examples/README.md has no \`\`\`text block of eight fixed lines and the ml-kem-1024 ss line" \
+    env PATH="$stub_path" "$T/trees/no-ss-line/scripts/release-archive-check.sh" examples "$FFI_ONE"
+printf '#!/usr/bin/env bash\nprintf %%s\\\\n %q extra\n' "$NINE_LINES" > "$T/toolstub/node"
+expect "archive examples: a tenth line fails" 1 "FAILED: examples/node printed more than 9 lines" \
+    stub_examples 1.24.0 "10.0.100 [/stub/sdk]" ""
+printf '#!/usr/bin/env bash\nprintf %%s\\\\n %q\n' "${NINE_LINES%?}" > "$T/toolstub/node"
+expect "archive examples: a shared secret one digit short fails" 1 \
+    "FAILED: examples/node printed \"ml-kem-1024 ss $(printf '%063d' 0 | tr 0 7)\" as line 9, not ml-kem-1024 ss and 64 hex digits" \
+    stub_examples 1.24.0 "10.0.100 [/stub/sdk]" ""
+fail_or_lines node > "$T/toolstub/node"
+
 # example_runs <language>: the toolchain release-archive-check.sh's header
 # names for examples/<language> is on PATH, at a version it accepts.
 example_runs() {
@@ -641,13 +699,120 @@ example_runs() {
             && [ "$(javac -version 2>&1 | sed -nE 's/^javac ([0-9]+).*/\1/p')" -ge 22 ] 2>/dev/null ;;
         csharp) command -v dotnet >/dev/null \
             && dotnet --list-sdks 2>/dev/null | awk '{ split($1, v, "."); if (v[1] + 0 >= 10) ok = 1 } END { exit !ok }' ;;
+        c) command -v cc >/dev/null ;;
+        python) command -v python3 >/dev/null || command -v python >/dev/null ;;
         *) return 1 ;;
     esac
 }
+
+# section <language>: the lines release-archive-check.sh printed for
+# examples/<language>, read from standard input: its `(exit N):` heading and
+# the program's output after it.
+section() {
+    awk -v head="examples/$1 (exit " '
+        index($0, head) == 1 { on = 1; print; next }
+        /^examples\/[a-z]+ \(exit [0-9]+\):$/ { on = 0 }
+        on
+    '
+}
+
+# each_prints <case> <output> <line...>: for every language in $examples_ran,
+# the section of <output> for it holds each <line> as a whole line.
+each_prints() {
+    local name="$1" output="$2" language line
+    shift 2
+    for language in $examples_ran; do
+        for line in "$@"; do
+            check "$name: examples/$language prints \"$line\"" grep -qxF -- "$line" <<<"$(section "$language" <<<"$output")"
+        done
+    done
+}
+
 examples_ran=""
+built_library="not run (set OXICRYPT_TEST_EXAMPLES=1, OXICRYPT_TEST_BUNDLE, OXICRYPT_TEST_FAULT_BUNDLE and OXICRYPT_TEST_SIGNER)"
 if [ "${OXICRYPT_TEST_EXAMPLES:-}" = 1 ]; then
-    out_examples="$(archive_check examples "$FFI_ONE" 2>&1)" && status=0 || status=$?
-    for language in go node java csharp; do
+    # The examples' stand-in: the shipped header, and functions with the
+    # ML-DSA and ML-KEM contracts the examples check, over an FNV-1a digest
+    # and a splitmix64 stream rather than the algorithms.
+    EX="$T/ffi/examples/oxicrypt-ffi-v9.9.9-linux-x86_64"
+    mkdir -p "$EX"
+    cp "$HERE/../crates/oxicrypt-ffi/include/oxicrypt.h" "$EX/"
+    {
+        printf 'static const unsigned char abc_digest[32] = { %s };\n' \
+            "$(printf '%s' ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad | sed -E 's/(..)/0x\1, /g')"
+        cat <<'C'
+#include <stdlib.h>
+#include <string.h>
+#include "oxicrypt.h"
+struct OxiDrbg { uint64_t state; };
+static int init_failed;
+static uint64_t next(uint64_t *s) {
+    uint64_t z = (*s += 0x9e3779b97f4a7c15ULL);
+    z = (z ^ (z >> 30)) * 0xbf58476d1ce4e5b9ULL;
+    z = (z ^ (z >> 27)) * 0x94d049bb133111ebULL;
+    return z ^ (z >> 31);
+}
+static void stream(uint64_t seed, uint8_t *out, size_t n) { while (n--) *out++ = (uint8_t)next(&seed); }
+static uint64_t fnv(uint64_t h, const uint8_t *p, size_t n) { while (n--) h = (h ^ *p++) * 0x100000001b3ULL; return h; }
+int oxi_init(int profile) { (void)profile; init_failed = getenv("STUB_OXI_INIT_FAILS") != NULL; return init_failed ? 2 : 0; }
+int oxi_integrity_status(void) { return init_failed ? 2 : 1; }
+int oxi_integrity_key_fingerprint(uint8_t *out, uintptr_t n) { if (n < 32) return 11; memset(out, 0xaa, 32); return 0; }
+int oxi_sha256(const uint8_t *d, uintptr_t n, uint8_t *out) {
+    if (n != 3 || memcmp(d, "abc", 3) != 0) return 1;
+    memcpy(out, abc_digest, 32);
+    return 0;
+}
+int oxi_hmac_drbg_sha256_new_rbg(OxiDrbg **out) { *out = calloc(1, sizeof **out); return *out ? 0 : 255; }
+int oxi_drbg_instantiate(OxiDrbg *h, const uint8_t *p, uintptr_t n) {
+    if (getenv("STUB_DRBG_INSTANTIATE_FAILS")) return 33;
+    h->state = fnv(0xcbf29ce484222325ULL, p, n);
+    return 0;
+}
+void oxi_drbg_free(OxiDrbg *h) { free(h); }
+int oxi_ml_dsa_87_keygen_rbg(OxiDrbg *rbg, uint8_t *pk, uint8_t *sk, uint8_t *seed) {
+    (void)seed;
+    stream(next(&rbg->state), pk, 2592);
+    memcpy(sk, pk, 2592);
+    stream(next(&rbg->state), sk + 2592, 4896 - 2592);
+    return 0;
+}
+int oxi_ml_dsa_87_sign(const uint8_t *sk, const uint8_t *m, uintptr_t m_len, const uint8_t *ctx, uintptr_t ctx_len, uint8_t *sig) {
+    (void)ctx; (void)ctx_len;
+    stream(fnv(fnv(1, sk, 2592), m, m_len), sig, 4627);
+    return 0;
+}
+int oxi_ml_dsa_87_verify(const uint8_t *pk, const uint8_t *m, uintptr_t m_len, const uint8_t *ctx, uintptr_t ctx_len, const uint8_t *sig) {
+    uint8_t want[4627];
+    (void)ctx; (void)ctx_len;
+    stream(fnv(fnv(1, pk, 2592), m, m_len), want, sizeof want);
+    return memcmp(want, sig, sizeof want) == 0 ? 0 : 22;
+}
+int oxi_ml_kem_1024_keygen_rbg(OxiDrbg *rbg, uint8_t *ek, uint8_t *dk, uint8_t *seed) {
+    (void)seed;
+    stream(next(&rbg->state), ek, 1568);
+    memcpy(dk, ek, 1568);
+    stream(next(&rbg->state), dk + 1568, 3168 - 1568);
+    return 0;
+}
+int oxi_ml_kem_1024_encapsulate_rbg(const uint8_t *ek, OxiDrbg *rbg, uint8_t *ss, uint8_t *ct) {
+    stream(fnv(next(&rbg->state), ek, 1568), ct, 1568);
+    stream(fnv(fnv(2, ek, 1568), ct, 1568), ss, 32);
+    return 0;
+}
+int oxi_ml_kem_1024_decapsulate(const uint8_t *dk, const uint8_t *ct, uint8_t *ss) {
+    stream(fnv(fnv(2, dk, 1568), ct, 1568), ss, 32);
+    return 0;
+}
+C
+    } > "$T/ffi/examples-stub.c"
+    cc -Wall -Wextra -Werror -shared -fPIC -Wl,-soname,"liboxicrypt_ffi.so.$ABI" -I"$EX" \
+        -o "$EX/liboxicrypt_ffi.so.$ABI" "$T/ffi/examples-stub.c"
+    ln -s "liboxicrypt_ffi.so.$ABI" "$EX/liboxicrypt_ffi.so"
+    EX_STAND="$T/ffi/examples/oxicrypt-ffi-v9.9.9-linux-x86_64.tar.gz"
+    tar -czf "$EX_STAND" -C "$T/ffi/examples" oxicrypt-ffi-v9.9.9-linux-x86_64
+
+    out_examples="$(archive_check examples "$EX_STAND" 2>&1)" && status=0 || status=$?
+    for language in c python go node java csharp; do
         if example_runs "$language"; then
             examples_ran="$examples_ran $language"
             check "archive examples: $language runs against the stand-in" \
@@ -660,19 +825,74 @@ if [ "${OXICRYPT_TEST_EXAMPLES:-}" = 1 ]; then
     if [ -n "$examples_ran" ]; then
         check "archive examples: every example whose toolchain is present passes" [ "$status" = 0 ]
         expect "archive examples: every present language required passes" 0 "ok: the examples for" \
-            env OXICRYPT_EXAMPLES_REQUIRED="$examples_ran" "$HERE/release-archive-check.sh" examples "$FFI_ONE"
+            env OXICRYPT_EXAMPLES_REQUIRED="$examples_ran" "$HERE/release-archive-check.sh" examples "$EX_STAND"
     else
         check "archive examples: no toolchain present fails" [ "$status" = 1 ]
     fi
-    out_examples="$(STUB_OXI_INIT_FAILS=1 archive_check examples "$FFI_ONE" 2>&1)" && status=0 || status=$?
+    out_examples="$(STUB_OXI_INIT_FAILS=1 archive_check examples "$EX_STAND" 2>&1)" && status=0 || status=$?
     check "archive examples: a failing oxi_init exits 1" [ "$status" = 1 ]
+    each_prints "archive examples: a failing oxi_init" "$out_examples" \
+        "oxi_init returned 2: the module refused to start" "integrity status 2"
     for language in $examples_ran; do
         check "archive examples: a failing oxi_init fails $language" \
             grep -qxF "FAILED: examples/$language exited 1" <<<"$out_examples"
     done
+    out_examples="$(STUB_DRBG_INSTANTIATE_FAILS=1 archive_check examples "$EX_STAND" 2>&1)" && status=0 || status=$?
+    check "archive examples: a failing oxi_drbg_instantiate exits 1" [ "$status" = 1 ]
+    each_prints "archive examples: a failing oxi_drbg_instantiate" "$out_examples" "oxi_drbg_instantiate returned 33"
+
+    # Each program's expected digest, and only that, is altered in a copy.
+    examples_tree altered-value
+    altered=0
+    for program in c/example.c python/example.py go/main.go node/example.js java/Example.java csharp/Program.cs; do
+        f="$T/trees/altered-value/examples/$program"
+        [ "$(grep -c ba7816bf "$f")" = 1 ] && sed -i.orig 's/ba7816bf/ca7816bf/' "$f" \
+            && [ "$(grep -c ca7816bf "$f")" = 1 ] && altered=$((altered + 1))
+    done
+    check "examples: altered expected value: each of the six programs altered once" [ "$altered" = 6 ]
+    out_examples="$("$T/trees/altered-value/scripts/release-archive-check.sh" examples "$EX_STAND" 2>&1)" && status=0 || status=$?
+    check "examples: altered expected value exits 1" [ "$status" = 1 ]
+    each_prints "examples: altered expected value exits 1" "$out_examples" \
+        "expected: sha256 abc ca7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad" \
+        "     got: sha256 abc ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+    for language in $examples_ran; do
+        check "examples: altered expected value exits 1: examples/$language exited 1" \
+            grep -qxF "FAILED: examples/$language exited 1" <<<"$out_examples"
+    done
+
+    if [ -n "${OXICRYPT_TEST_BUNDLE:-}" ] && [ -n "${OXICRYPT_TEST_FAULT_BUNDLE:-}" ] && [ -n "${OXICRYPT_TEST_SIGNER:-}" ]; then
+        built_library="run"
+        expect "examples: every example passes against the built library" 0 "ok: the examples for" \
+            env OXICRYPT_EXAMPLES_REQUIRED="$examples_ran" "$HERE/release-archive-check.sh" examples "$OXICRYPT_TEST_BUNDLE"
+
+        # The tamper fixture: a copy of the signed library with the byte
+        # release-load-check.sh flips flipped.
+        mkdir -p "$T/tamper"
+        tar -xzf "$OXICRYPT_TEST_BUNDLE" -C "$T/tamper"
+        tdir="$(find "$T/tamper" -mindepth 1 -maxdepth 1 -type d)"
+        tlib="$(find "$tdir" -maxdepth 1 -type f -name 'liboxicrypt_ffi.so.*')"
+        "$OXICRYPT_TEST_SIGNER" --show "$tlib" > "$T/tamper.show"
+        offset="$(python3 "$HERE/../.github/probes/extent-tamper-offset.py" "$T/tamper.show" "$tlib")"
+        python3 "$HERE/../.github/probes/flip-byte.py" "$tlib" "$offset"
+        check "examples: oxi_init failure exits 1: the tampered copy fails --verify" \
+            bash -c '! "$1" --verify "$2" >/dev/null 2>&1' _ "$OXICRYPT_TEST_SIGNER" "$tlib"
+        tar -czf "$T/tampered.tar.gz" -C "$T/tamper" "$(basename "$tdir")"
+        out_examples="$(archive_check examples "$T/tampered.tar.gz" 2>&1)" && status=0 || status=$?
+        check "examples: oxi_init failure exits 1" [ "$status" = 1 ]
+        each_prints "examples: oxi_init failure exits 1" "$out_examples" \
+            "oxi_init returned 2: the module refused to start" "integrity status 2"
+
+        expect "examples: drbg instantiate failure exits 1: control without OXI_FAULT passes" 0 "ok: the examples for" \
+            env OXICRYPT_EXAMPLES_REQUIRED="$examples_ran" "$HERE/release-archive-check.sh" examples "$OXICRYPT_TEST_FAULT_BUNDLE"
+        out_examples="$(OXI_FAULT=poison-entropy archive_check examples "$OXICRYPT_TEST_FAULT_BUNDLE" 2>&1)" \
+            && status=0 || status=$?
+        check "examples: drbg instantiate failure exits 1" [ "$status" = 1 ]
+        each_prints "examples: drbg instantiate failure exits 1" "$out_examples" "oxi_drbg_instantiate returned 33"
+    fi
 else
     echo "examples cases: toolchains not exercised (set OXICRYPT_TEST_EXAMPLES=1)"
 fi
+echo "examples cases against a built library: $built_library"
 expect "archive examples: a wrong argument count is a usage error" 1 "usage: release-archive-check.sh examples" \
     archive_check examples
 
@@ -1096,6 +1316,51 @@ check "caller-entropy sites: lists a production call and skips a cfg(test) block
     [ "$("$HERE/list-caller-entropy-sites.sh" "$SITES")" \
         = 'fixture/src/lib.rs:2: drbg.instantiate(&[0; 32], &[0; 16], b"outside");' ]
 
+# --- check-example-inputs.sh --------------------------------------------------
+# A copy of examples/ whose six how-tos are stand-ins holding the fixed-input
+# rows of examples/README.md, so the agreement logic is tested whether or not
+# the how-tos are written.
+
+ROWS="$(grep -E '^\| `(MESSAGE|SIG_FLIP_BYTE|CT_FLIP_BYTE)` \|' "$HERE/../examples/README.md")"
+check "example inputs: examples/README.md has the three rows" [ "$(grep -c '' <<<"$ROWS")" = 3 ]
+# inputs_tree <name>: the completed copy, at $T/inputs/<name>.
+inputs_tree() {
+    local language
+    mkdir -p "$T/inputs/$1"
+    cp -R "$HERE/../examples/." "$T/inputs/$1/"
+    for language in c python go node java csharp; do
+        printf '# How-to\n\n| Constant | Value |\n|---|---|\n%s\n' "$ROWS" > "$T/inputs/$1/$language/README.md"
+    done
+}
+inputs_tree agree
+expect "example inputs: thirteen agreeing files pass" 0 "ok: the message and both flipped bytes agree across 13 files" \
+    "$HERE/check-example-inputs.sh" "$T/inputs/agree"
+inputs_tree position
+sed -i.orig -E 's/^CT_FLIP_BYTE = 0$/CT_FLIP_BYTE = 1/' "$T/inputs/position/python/example.py"
+check "example inputs: the position edit took" grep -qxF "CT_FLIP_BYTE = 1" "$T/inputs/position/python/example.py"
+expect "example inputs: an edited position exits 1" 1 \
+    "FAILED: python/example.py states CT_FLIP_BYTE as \"1\", README.md as \"0\"" \
+    "$HERE/check-example-inputs.sh" "$T/inputs/position"
+inputs_tree howto-position
+sed -i.orig 's/^| `SIG_FLIP_BYTE` | 0:/| `SIG_FLIP_BYTE` | 7:/' "$T/inputs/howto-position/java/README.md"
+expect "example inputs: an edited position in a how-to exits 1" 1 \
+    "FAILED: java/README.md states SIG_FLIP_BYTE as \"7\", README.md as \"0\"" \
+    "$HERE/check-example-inputs.sh" "$T/inputs/howto-position"
+inputs_tree message
+sed -i.orig 's/lazy dog/lazy cat/' "$T/inputs/message/go/main.go"
+expect "example inputs: an edited message exits 1" 1 \
+    "FAILED: go/main.go states MESSAGE as \"The quick brown fox jumps over the lazy cat\"" \
+    "$HERE/check-example-inputs.sh" "$T/inputs/message"
+inputs_tree twice
+printf '\nconst SIG_FLIP_BYTE_TOO = 0;\nconst SIG_FLIP_BYTE = 3;\n' >> "$T/inputs/twice/node/example.js"
+expect "example inputs: a value stated twice differently exits 1" 1 \
+    "FAILED: node/example.js states SIG_FLIP_BYTE more than once, with different values" \
+    "$HERE/check-example-inputs.sh" "$T/inputs/twice"
+mkdir -p "$T/inputs/missing"
+cp -R "$HERE/../examples/." "$T/inputs/missing/"
+expect "example inputs: a missing how-to exits 1" 1 "FAILED: c/README.md is missing" \
+    "$HERE/check-example-inputs.sh" "$T/inputs/missing"
+
 # --- an inherited GIT_DIR ----------------------------------------------------
 # Runs this suite once more the way a git hook would start it, with GIT_DIR
 # naming a sentinel repository, and requires the sentinel's refs and
@@ -1114,5 +1379,5 @@ if [ -z "${RELEASE_SCRIPTS_INNER:-}" ]; then
     check "inherited GIT_DIR: the sentinel is unchanged" [ "$(sentinel)" = "$before" ]
 fi
 
-echo "release scripts: $pass passed, $failed failed; examples run with their toolchains:${examples_ran:- none}"
+echo "release scripts: $pass passed, $failed failed; examples run with their toolchains:${examples_ran:- none}; against a built library: ${built_library%% (*}"
 [ "$failed" -eq 0 ] && [ "$pass" -gt 0 ]

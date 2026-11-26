@@ -1,0 +1,7 @@
+# What the how-tos build and write when followed in place.
+/c/example
+/c/example.exe
+/go/example
+/go/example.exe
+/java/build/
+/*/out/
