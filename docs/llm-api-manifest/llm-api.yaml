@@ -20438,16 +20438,12 @@ functions:
 
 # Function-level error_variants carry a name and the exact condition that
 # triggers it, and deliberately do NOT repeat user_action. The recovery advice
-# for a variant does not vary by call site, so restating it on each of the 968
-# occurrences below would be 968 places for it to drift.
+# for a variant does not vary by call site, so restating it at every call site
+# would give it a place to drift at each one.
 #
 # The rule a consumer relies on: every name appearing in a function's
 # returns.error_variants also appears as a variant of an entry in this section,
 # and that entry carries recoverable and user_action. Resolution is by name.
-# This holds for all 968 occurrences as written, and it is the reason the four
-# error types below were added rather than left implicit — 23 occurrences
-# across IntegrityError, EntropyError, TimerError and CollectionError resolved
-# to nothing until they were.
 #
 # Names are unique across error types here, so resolution needs no
 # qualification by the function's return type.
@@ -22534,6 +22530,18 @@ constants:
     type: '&str'
     value: '"initialising thread id: none the module can record"'
     description: The test name in Error::SelfTestFailed when the platform gives the initialising thread no id the module can record.
+
+  - name: PCT_MESSAGE
+    module: oxicrypt-module
+    type: '[u8; 32]'
+    value: '*b"oxicrypt pairwise consistency\0\0\0"'
+    description: The fixed message the ML-DSA pairwise consistency test (FIPS 140-3 IG 10.3.A) signs and verifies after key generation; the 29 ASCII bytes of "oxicrypt pairwise consistency" followed by three zero bytes.
+
+  - name: PCT_M
+    module: oxicrypt-module
+    type: '[u8; 32]'
+    value: '19e517be7e1d427ad6e0ad26e315d8bfbd4aa7f4a040ec0cf32d45c7de81b46b (hex)'
+    description: The fixed m the ML-KEM pairwise consistency test (FIPS 140-3 IG 10.3.A) encapsulates with after key generation; the SHA-256 digest of the 31 ASCII bytes of "oxicrypt pairwise consistency m".
 
   - name: INTEGRITY_TEST_NAME
     module: oxicrypt-integrity

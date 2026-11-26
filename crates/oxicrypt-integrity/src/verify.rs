@@ -794,7 +794,7 @@ mod tests {
     fn sign(xi: &[u8; 32], message: &[u8]) -> [u8; slot::SIG_LEN] {
         crate::test_support::start_module();
         let (_, sk) = ml_dsa_87::keygen_internal(xi).unwrap();
-        ml_dsa_87::sign_internal(&sk, message).unwrap()
+        ml_dsa_87::sign_internal(&sk, message, &[0u8; 32]).unwrap()
     }
 
     #[allow(
@@ -1255,7 +1255,7 @@ mod tests {
     }
 
     /// The gated external `sign(sk, M, SIGNATURE_CONTEXT)` the signer uses
-    /// writes exactly the signature `sign_internal(sk, MESSAGE_PREFIX ‖ M)`
+    /// writes exactly the signature `sign_internal(sk, MESSAGE_PREFIX ‖ M, 0³²)`
     /// writes, and that signature is a fixed one, for a fixed seed and
     /// message.
     #[test]
@@ -1267,7 +1267,7 @@ mod tests {
         let external = ml_dsa_87::sign(&sk, message, SIGNATURE_CONTEXT).unwrap();
         let mut framed = MESSAGE_PREFIX.to_vec();
         framed.extend_from_slice(message);
-        let internal = ml_dsa_87::sign_internal(&sk, &framed).unwrap();
+        let internal = ml_dsa_87::sign_internal(&sk, &framed, &[0u8; 32]).unwrap();
         assert_eq!(external, internal, "the two signatures differ");
         // The fixed answer: SHA-256 of the signature, for this seed and
         // message, so a change to the framing or to signing that moves both
@@ -1278,7 +1278,7 @@ mod tests {
             "sha256:a777a3bcbb21a824810a11a91aeff6342cef8a7e2c88c9c86d11412aa7bb05f5"
         );
         // Control: the unframed message gives a different signature.
-        let unframed = ml_dsa_87::sign_internal(&sk, message).unwrap();
+        let unframed = ml_dsa_87::sign_internal(&sk, message, &[0u8; 32]).unwrap();
         assert_ne!(external, unframed);
     }
 

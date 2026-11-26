@@ -8,9 +8,9 @@
 //! # CNSA gating
 //!
 //! ML-DSA-87 is the CNSA 2.0 digital-signature mandate (CNSSP 15).
-//! The `Service::MlDsa87Sign` / `Verify` / `Keygen` variants are
-//! permitted under both [`oxicrypt_module::AlgorithmProfile::Unrestricted`]
-//! and `Cnsa2`.
+//! The `Service::MlDsa87Sign` / `Verify` / `Keygen` / `ExpandKey` variants
+//! are permitted under [`oxicrypt_module::AlgorithmProfile::Unrestricted`],
+//! `Cnsa2` and `Migration`, and refused under `Cnsa1`.
 
 #![allow(
     clippy::indexing_slicing,
@@ -78,7 +78,7 @@ mod tests {
         let xi = [0x42u8; 32];
         let (pk, sk) = keygen_internal(&xi).unwrap();
         let msg = b"hello, ML-DSA-87";
-        let sig = sign_internal(&sk, msg).unwrap();
+        let sig = sign_internal(&sk, msg, &[0u8; 32]).unwrap();
         assert!(verify_internal(&pk, msg, &sig).unwrap());
     }
 
@@ -87,7 +87,7 @@ mod tests {
         crate::test_support::start_module();
         let xi = [0x01u8; 32];
         let (pk, sk) = keygen_internal(&xi).unwrap();
-        let sig = sign_internal(&sk, b"original").unwrap();
+        let sig = sign_internal(&sk, b"original", &[0u8; 32]).unwrap();
         assert!(!verify_internal(&pk, b"tampered", &sig).unwrap());
     }
 
@@ -97,7 +97,7 @@ mod tests {
         let xi = [0x55u8; 32];
         let (pk, sk) = keygen_internal(&xi).unwrap();
         let msg = b"test message";
-        let mut sig = sign_internal(&sk, msg).unwrap();
+        let mut sig = sign_internal(&sk, msg, &[0u8; 32]).unwrap();
         sig[50] ^= 0xFF;
         assert!(!verify_internal(&pk, msg, &sig).unwrap());
     }
@@ -108,8 +108,8 @@ mod tests {
         let xi = [0xABu8; 32];
         let (_pk, sk) = keygen_internal(&xi).unwrap();
         let msg = b"deterministic test";
-        let s1 = sign_internal(&sk, msg).unwrap();
-        let s2 = sign_internal(&sk, msg).unwrap();
+        let s1 = sign_internal(&sk, msg, &[0u8; 32]).unwrap();
+        let s2 = sign_internal(&sk, msg, &[0u8; 32]).unwrap();
         assert_eq!(s1, s2);
     }
 
@@ -129,7 +129,7 @@ mod tests {
         let (pk1, _) = keygen_internal(&xi1).unwrap();
         let (_, sk2) = keygen_internal(&xi2).unwrap();
         let msg = b"cross-key test";
-        let sig = sign_internal(&sk2, msg).unwrap();
+        let sig = sign_internal(&sk2, msg, &[0u8; 32]).unwrap();
         assert!(!verify_internal(&pk1, msg, &sig).unwrap());
     }
 }

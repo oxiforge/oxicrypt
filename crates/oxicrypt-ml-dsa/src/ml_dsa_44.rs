@@ -9,7 +9,7 @@
 //!
 //! ML-DSA-44 is **not** part of CNSA 2.0 (which mandates ML-DSA-87)
 //! and is **not** in the CNSA 1.0 suite. The
-//! `Service::MlDsa44Sign` / `Verify` / `Keygen` variants are
+//! `Service::MlDsa44Sign` / `Verify` / `Keygen` / `ExpandKey` variants are
 //! permitted only under [`oxicrypt_module::AlgorithmProfile::Unrestricted`].
 //! See `crates/oxicrypt-module/src/lib.rs` `is_cnsa1_allowed` and
 //! `is_cnsa2_allowed` — neither extends to ML-DSA-44.
@@ -80,7 +80,7 @@ mod tests {
         let xi = [0x42u8; 32];
         let (pk, sk) = keygen_internal(&xi).unwrap();
         let msg = b"hello, ML-DSA-44";
-        let sig = sign_internal(&sk, msg).unwrap();
+        let sig = sign_internal(&sk, msg, &[0u8; 32]).unwrap();
         assert!(verify_internal(&pk, msg, &sig).unwrap());
     }
 
@@ -89,7 +89,7 @@ mod tests {
         crate::test_support::start_module();
         let xi = [0x01u8; 32];
         let (pk, sk) = keygen_internal(&xi).unwrap();
-        let sig = sign_internal(&sk, b"original").unwrap();
+        let sig = sign_internal(&sk, b"original", &[0u8; 32]).unwrap();
         assert!(!verify_internal(&pk, b"tampered", &sig).unwrap());
     }
 
@@ -99,7 +99,7 @@ mod tests {
         let xi = [0x55u8; 32];
         let (pk, sk) = keygen_internal(&xi).unwrap();
         let msg = b"test message";
-        let mut sig = sign_internal(&sk, msg).unwrap();
+        let mut sig = sign_internal(&sk, msg, &[0u8; 32]).unwrap();
         sig[50] ^= 0xFF;
         assert!(!verify_internal(&pk, msg, &sig).unwrap());
     }

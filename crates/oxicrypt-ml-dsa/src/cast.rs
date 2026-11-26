@@ -61,7 +61,7 @@ type KeygenFn<const PK: usize, const SK: usize> =
 
 /// A signing primitive the CASTs run, for one parameter set.
 type SignFn<const SK: usize, const SIG: usize> =
-    fn(&[u8; SK], &[u8]) -> Result<[u8; SIG], oxicrypt_module::Error>;
+    fn(&[u8; SK], &[u8], &[u8; 32]) -> Result<[u8; SIG], oxicrypt_module::Error>;
 
 /// Key generation from a fixed ξ; the private key must match.
 fn keygen() -> Result<(), SelfTestFailure> {
@@ -82,7 +82,7 @@ fn sign() -> Result<(), SelfTestFailure> {
 
 /// The signature-generation CAST, run on `sign`.
 fn sign_with(sign: SignFn<{ p::SK_LEN }, { p::SIG_LEN }>) -> Result<(), SelfTestFailure> {
-    let sig = sign(&v::SIGN_SK, &v::SIGN_MSG).map_err(|_| SelfTestFailure)?;
+    let sig = sign(&v::SIGN_SK, &v::SIGN_MSG, &[0u8; 32]).map_err(|_| SelfTestFailure)?;
     verdict(sig == v::SIGN_SIG)
 }
 
@@ -112,7 +112,7 @@ macro_rules! sign_cast {
             if sha256(&[&pk, &sk])? != v::REJ_KEY_HASH {
                 return Err(SelfTestFailure);
             }
-            let sig = sign(&sk, &v::REJ_MSG).map_err(|_| SelfTestFailure)?;
+            let sig = sign(&sk, &v::REJ_MSG, &[0u8; 32]).map_err(|_| SelfTestFailure)?;
             verdict(sha256(&[&sig])? == v::REJ_SIG_HASH)
         }
     };
@@ -262,8 +262,8 @@ mod tests {
         crate::test_support::start_module();
         assert!(sign_with(p::sign_internal).is_ok());
         assert!(
-            sign_with(|sk, msg| {
-                let mut sig = p::sign_internal(sk, msg)?;
+            sign_with(|sk, msg, rnd| {
+                let mut sig = p::sign_internal(sk, msg, rnd)?;
                 if let Some(b) = sig.first_mut() {
                     *b ^= 1;
                 }
@@ -298,8 +298,8 @@ mod tests {
                 "ML-DSA-87: a wrong key pair passed"
             );
             assert!(
-                sign_rejections_with(p::keygen_internal, |sk, msg| {
-                    let mut sig = p::sign_internal(sk, msg)?;
+                sign_rejections_with(p::keygen_internal, |sk, msg, rnd| {
+                    let mut sig = p::sign_internal(sk, msg, rnd)?;
                     if let Some(b) = sig.first_mut() {
                         *b ^= 1;
                     }
@@ -327,8 +327,8 @@ mod tests {
                 "ML-DSA-44: a wrong key pair passed"
             );
             assert!(
-                sign_rejections_ml_dsa_44_with(p::keygen_internal, |sk, msg| {
-                    let mut sig = p::sign_internal(sk, msg)?;
+                sign_rejections_ml_dsa_44_with(p::keygen_internal, |sk, msg, rnd| {
+                    let mut sig = p::sign_internal(sk, msg, rnd)?;
                     if let Some(b) = sig.first_mut() {
                         *b ^= 1;
                     }
@@ -349,18 +349,19 @@ mod tests {
         crate::test_support::start_module();
 
         let _ = rejection_counts::take();
-        let sig = crate::ml_dsa_87::sign_internal(&ml_dsa_87::SIGN_SK, &ml_dsa_87::SIGN_MSG);
+        let sig =
+            crate::ml_dsa_87::sign_internal(&ml_dsa_87::SIGN_SK, &ml_dsa_87::SIGN_MSG, &[0u8; 32]);
         assert!(sig.is_ok_and(|s| s == ml_dsa_87::SIGN_SIG));
         let tc177 = rejection_counts::take();
 
         let (_, sk) = crate::ml_dsa_87::keygen_internal(&ml_dsa_87::REJ_SEED).unwrap();
         let _ = rejection_counts::take();
-        assert!(crate::ml_dsa_87::sign_internal(&sk, &ml_dsa_87::REJ_MSG).is_ok());
+        assert!(crate::ml_dsa_87::sign_internal(&sk, &ml_dsa_87::REJ_MSG, &[0u8; 32]).is_ok());
         let row13 = rejection_counts::take();
 
         let (_, sk) = crate::ml_dsa_44::keygen_internal(&ml_dsa_44::REJ_SEED).unwrap();
         let _ = rejection_counts::take();
-        assert!(crate::ml_dsa_44::sign_internal(&sk, &ml_dsa_44::REJ_MSG).is_ok());
+        assert!(crate::ml_dsa_44::sign_internal(&sk, &ml_dsa_44::REJ_MSG, &[0u8; 32]).is_ok());
         let row1 = rejection_counts::take();
 
         let at_least = |got: [u32; 4], min: [u32; 4], case: &str| {

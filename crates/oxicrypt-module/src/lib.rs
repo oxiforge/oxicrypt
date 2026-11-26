@@ -466,8 +466,8 @@ pub enum Error {
     /// the platform gave the initialising thread no id the module can
     /// record.
     SelfTestFailed {
-        /// Name of the failing test, supplied by its
-        /// [`SelfTest`] implementation.
+        /// Name of the failing test: its [`KatEntry::name`], or
+        /// [`THREAD_ID_CHECK`].
         test: &'static str,
     },
     /// A conditional self-test (e.g. DRBG CRNGT, pairwise consistency)
@@ -651,14 +651,15 @@ impl fmt::Display for RbgError {
     }
 }
 
-/// Marker returned by a failing [`SelfTest::run`].
+/// Marker returned by a failing self-test routine.
 ///
 /// Self-tests are allowed to describe *what* failed, but they are not
 /// allowed to exfiltrate the intermediate values that triggered the
 /// failure — including them in an error payload would potentially leak
 /// information about internal state. The runner treats the mere
 /// presence of this value as "test failed" and converts it into
-/// [`Error::SelfTestFailed`] using the test's own [`SelfTest::NAME`].
+/// [`Error::SelfTestFailed`] carrying the failing entry's
+/// [`KatEntry::name`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SelfTestFailure;
 
@@ -668,25 +669,22 @@ impl fmt::Display for SelfTestFailure {
     }
 }
 
-/// A single power-up self-test.
+/// A single power-up self-test, expressed as a type.
 ///
-/// Each approved algorithm crate will implement this trait for at least
-/// one test vector, per SP 800-140B. The [`initialize_with_tests`] routine
-/// runs every registered test sequentially before the module can leave the
-/// `SelfTest` state.
+/// [`initialize_with_tests`] runs [`KatEntry`] values, so a test written
+/// as an implementation of this trait is registered as the entry
+/// `KatEntry { name: T::NAME, run: T::run }`.
 ///
 /// Implementations **must** be deterministic, **must not** allocate,
 /// and **must not** read from any input the caller controls: the
 /// whole point of a KAT is that its inputs and expected outputs are
 /// baked into the module binary.
 pub trait SelfTest {
-    /// Stable, human-readable identifier for this test. Appears in
-    /// [`Error::SelfTestFailed`] and in audit logs.
+    /// Stable, human-readable identifier for this test.
     const NAME: &'static str;
 
     /// Runs the test. Returns `Ok(())` on success, `Err(SelfTestFailure)`
-    /// on any mismatch. The runner converts the `Err` into
-    /// [`Error::SelfTestFailed`] using [`Self::NAME`].
+    /// on any mismatch.
     fn run() -> Result<(), SelfTestFailure>;
 }
 
@@ -705,8 +703,7 @@ pub trait SelfTest {
 #[derive(Debug, Clone, Copy)]
 pub struct KatEntry {
     /// Stable identifier for the test. Surfaces in
-    /// [`Error::SelfTestFailed`] and audit logs. Must match the
-    /// [`SelfTest::NAME`] used for the underlying vector.
+    /// [`Error::SelfTestFailed`] when the test fails.
     pub name: &'static str,
     /// The test routine itself.
     pub run: fn() -> Result<(), SelfTestFailure>,
@@ -908,9 +905,22 @@ pub fn enter_error_state(_reason: &'static str) {
     STATE.store(ERROR, Ordering::Release);
 }
 
-// =========================================================================
-// Algorithm profile gating (CNSA 2.0 / CNSA 1.0)
-// =========================================================================
+/// The fixed message the ML-DSA pairwise consistency test signs and
+/// verifies after key generation (FIPS 140-3 IG 10.3.A).
+///
+/// 32 bytes: the 29 ASCII bytes of `oxicrypt pairwise consistency`
+/// followed by three zero bytes.
+pub const PCT_MESSAGE: [u8; 32] = *b"oxicrypt pairwise consistency\0\0\0";
+
+/// The fixed `m` the ML-KEM pairwise consistency test encapsulates with
+/// after key generation (FIPS 140-3 IG 10.3.A).
+///
+/// 32 bytes: the SHA-256 digest of the 31 ASCII bytes of
+/// `oxicrypt pairwise consistency m`.
+pub const PCT_M: [u8; 32] = [
+    0x19, 0xe5, 0x17, 0xbe, 0x7e, 0x1d, 0x42, 0x7a, 0xd6, 0xe0, 0xad, 0x26, 0xe3, 0x15, 0xd8, 0xbf,
+    0xbd, 0x4a, 0xa7, 0xf4, 0xa0, 0x40, 0xec, 0x0c, 0xf3, 0x2d, 0x45, 0xc7, 0xde, 0x81, 0xb4, 0x6b,
+];
 
 /// Algorithm restriction profile selected at module initialization.
 ///
@@ -961,8 +971,9 @@ impl AlgorithmProfile {
             0 => Self::Unrestricted,
             2 => Self::Cnsa1,
             3 => Self::Migration,
-            // Unknown discriminant (including 1 = Cnsa2) defaults to
-            // the most restrictive profile as defence-in-depth.
+            // 1 is `Cnsa2`. An unknown discriminant maps to it too, so a
+            // corrupted byte selects a restricted profile, never
+            // `Unrestricted`.
             _ => Self::Cnsa2,
         }
     }
@@ -980,8 +991,10 @@ impl fmt::Display for AlgorithmProfile {
     }
 }
 
-/// Global algorithm profile. Written once by [`initialize_with_profile`];
-/// read by [`require_allowed`] and [`active_profile`].
+/// Global algorithm profile. Written by the initialising call that wins the
+/// `PowerOff -> SelfTest` transition, once its self-tests pass, and reset to
+/// the default if that call then fails to reach `Operational`; read by
+/// [`require_allowed`] and [`active_profile`].
 static PROFILE: AtomicU8 = AtomicU8::new(AlgorithmProfile::Unrestricted as u8);
 
 /// Returns the active algorithm profile.
@@ -1205,6 +1218,11 @@ pub enum Service {
     MlKem768Encaps = 306,
     MlKem768Decaps = 307,
     MlKem768Keygen = 308,
+    // 660..=665: the first free values after the highest existing
+    // discriminant (659), as `prd/oxi-pq-and-how-tos.md` assigns them.
+    MlKem512ExpandKey = 660,
+    MlKem768ExpandKey = 661,
+    MlKem1024ExpandKey = 662,
 
     // ----- oxicrypt-ml-dsa: FIPS 204 -----
     MlDsa87Sign = 310,
@@ -1216,6 +1234,9 @@ pub enum Service {
     MlDsa65Sign = 316,
     MlDsa65Verify = 317,
     MlDsa65Keygen = 318,
+    MlDsa44ExpandKey = 663,
+    MlDsa65ExpandKey = 664,
+    MlDsa87ExpandKey = 665,
 
     // ----- oxicrypt-slh-dsa: FIPS 205 (12 parameter sets × 3 ops = 36 variants) -----
     // SHA-2 256s holds 320-322, then the rest of the
@@ -1502,6 +1523,9 @@ impl fmt::Display for Service {
             Self::MlKem768Encaps => "ML-KEM-768 encaps",
             Self::MlKem768Decaps => "ML-KEM-768 decaps",
             Self::MlKem768Keygen => "ML-KEM-768 keygen",
+            Self::MlKem512ExpandKey => "ML-KEM-512 key expansion",
+            Self::MlKem768ExpandKey => "ML-KEM-768 key expansion",
+            Self::MlKem1024ExpandKey => "ML-KEM-1024 key expansion",
             Self::MlDsa87Sign => "ML-DSA-87 sign",
             Self::MlDsa87Verify => "ML-DSA-87 verify",
             Self::MlDsa87Keygen => "ML-DSA-87 keygen",
@@ -1511,6 +1535,9 @@ impl fmt::Display for Service {
             Self::MlDsa65Sign => "ML-DSA-65 sign",
             Self::MlDsa65Verify => "ML-DSA-65 verify",
             Self::MlDsa65Keygen => "ML-DSA-65 keygen",
+            Self::MlDsa44ExpandKey => "ML-DSA-44 key expansion",
+            Self::MlDsa65ExpandKey => "ML-DSA-65 key expansion",
+            Self::MlDsa87ExpandKey => "ML-DSA-87 key expansion",
             Self::SlhDsaSha2256sKeygen => "SLH-DSA-SHA2-256s keygen",
             Self::SlhDsaSha2256sSign => "SLH-DSA-SHA2-256s sign",
             Self::SlhDsaSha2256sVerify => "SLH-DSA-SHA2-256s verify",
@@ -1690,10 +1717,10 @@ const fn is_lms_service(service: Service) -> bool {
 /// The arithmetic behind [`is_lms_service`], over a raw discriminant: an odd
 /// value in `501..=659`.
 ///
-/// Split out so the boundaries can be tested at all. `is_lms_service` takes a
-/// `Service`, and the LMS block sits at the very top of the enum — there is no
-/// variant above 659 — so a widened *upper* bound admits no variant and no
-/// `Service`-typed probe can detect it. Over a raw `u16`, both edges and the
+/// Split out so the boundaries can be tested directly. `is_lms_service` takes
+/// a `Service`, so a probe through it sees only discriminants some variant
+/// holds, and a bound moved into a gap no variant occupies passes it. Over a
+/// raw `u16`, both edges and the
 /// parity are reachable: `lms_block_boundaries_are_exact` pins
 /// 499/500/501/502/658/659/660/661, which fails if either bound moves in
 /// either direction or the parity test is dropped.
@@ -1870,9 +1897,11 @@ const fn is_cnsa2_allowed(service: Service) -> bool {
             | Service::MlKem1024Encaps
             | Service::MlKem1024Decaps
             | Service::MlKem1024Keygen
+            | Service::MlKem1024ExpandKey
             | Service::MlDsa87Sign
             | Service::MlDsa87Verify
             | Service::MlDsa87Keygen
+            | Service::MlDsa87ExpandKey
             // XMSS — SP 800-208 verification. §8.1 confines key generation and
             // signing to hardware modules, so the module offers neither.
             | Service::XmssVerify
@@ -1962,10 +1991,6 @@ const fn is_cnsa1_allowed(service: Service) -> bool {
     )
 }
 
-// -------------------------------------------------------------------------
-// Test-only utilities
-// -------------------------------------------------------------------------
-//
 // The global `STATE` makes the lifecycle run-once per process. The unit
 // tests in this crate exercise several transitions through a reset helper
 // that exists only under `cfg(test)`.
@@ -2052,10 +2077,10 @@ extern crate std;
 mod tests {
     use super::state_lock::reset_for_test;
     use super::{
-        AlgorithmProfile, Error, KatEntry, LMS_SERVICES, RbgError, SelfTest, SelfTestFailure,
-        Service, State, active_profile, enter_error_state, initialize_with_profile,
-        initialize_with_tests, is_allowed, is_lms_service, is_operational, lms_block_contains,
-        require_allowed, require_operational, require_operational_for_output,
+        AlgorithmProfile, Error, KatEntry, LMS_SERVICES, PCT_M, PCT_MESSAGE, RbgError, SelfTest,
+        SelfTestFailure, Service, State, active_profile, enter_error_state,
+        initialize_with_profile, initialize_with_tests, is_allowed, is_lms_service, is_operational,
+        lms_block_contains, require_allowed, require_operational, require_operational_for_output,
         require_self_test_started, state,
     };
     use alloc::string::ToString;
@@ -2462,11 +2487,13 @@ mod tests {
     fn dummy_self_test_trait_is_usable() {
         assert_eq!(DummyTest::NAME, "dummy-trait-vector");
         DummyTest::run().unwrap();
+        let entry = KatEntry {
+            name: DummyTest::NAME,
+            run: DummyTest::run,
+        };
+        assert_eq!(entry.name, "dummy-trait-vector");
+        (entry.run)().unwrap();
     }
-
-    // =====================================================================
-    // Algorithm profile gating tests
-    // =====================================================================
 
     #[test]
     fn default_profile_is_unrestricted() {
@@ -2722,7 +2749,7 @@ mod tests {
     /// of the wrong length. A variant added to `Service` but not listed here
     /// is not caught by this list; the exhaustive `Display` match is where the
     /// compiler forces every variant to be named.
-    const ALL_SERVICES: [Service; 256] = [
+    const ALL_SERVICES: [Service; 262] = [
         Service::Sha1,
         Service::Sha224,
         Service::Sha256,
@@ -2861,6 +2888,12 @@ mod tests {
         Service::MlDsa65Sign,
         Service::MlDsa65Verify,
         Service::MlDsa65Keygen,
+        Service::MlKem512ExpandKey,
+        Service::MlKem768ExpandKey,
+        Service::MlKem1024ExpandKey,
+        Service::MlDsa44ExpandKey,
+        Service::MlDsa65ExpandKey,
+        Service::MlDsa87ExpandKey,
         Service::SlhDsaSha2256sKeygen,
         Service::SlhDsaSha2256sSign,
         Service::SlhDsaSha2256sVerify,
@@ -3022,7 +3055,7 @@ mod tests {
 
     /// CNSA 2.0's non-LMS membership. The 80 LMS services are asserted by
     /// count rather than listed, because `LMS_SERVICES` already enumerates them.
-    const EXPECTED_CNSA2_NON_LMS: [Service; 30] = [
+    const EXPECTED_CNSA2_NON_LMS: [Service; 32] = [
         Service::Sha384,
         Service::Sha512,
         Service::HmacSha384,
@@ -3049,9 +3082,11 @@ mod tests {
         Service::MlKem1024Encaps,
         Service::MlKem1024Decaps,
         Service::MlKem1024Keygen,
+        Service::MlKem1024ExpandKey,
         Service::MlDsa87Sign,
         Service::MlDsa87Verify,
         Service::MlDsa87Keygen,
+        Service::MlDsa87ExpandKey,
         Service::XmssVerify,
     ];
 
@@ -3395,6 +3430,8 @@ mod tests {
             Service::SlhDsaShake256fVerify,
             Service::XmssVerify,
             Service::Dh3072,
+            Service::MlKem512ExpandKey,
+            Service::MlKem768ExpandKey,
         ] {
             assert!(!is_lms_service(svc), "{svc} must be outside the LMS block");
         }
@@ -3557,10 +3594,10 @@ mod tests {
 
     /// Both edges of the LMS discriminant block, over raw values.
     ///
-    /// The block sits at the very top of the enum, so a widened *upper* bound
-    /// admits no variant and no `Service`-typed probe can see it — moving
-    /// the bound to 709 leaves the whole suite green. Testing the arithmetic
-    /// directly is what makes the upper edge checkable at all.
+    /// A `Service`-typed probe sees only discriminants some variant holds, so
+    /// a bound moved into a gap no variant occupies passes every such probe.
+    /// Testing the arithmetic directly checks each edge whatever the enum's
+    /// neighbouring values are.
     #[test]
     fn lms_block_boundaries_are_exact() {
         assert!(!lms_block_contains(499), "499 is below the LMS block");
@@ -3686,5 +3723,98 @@ mod tests {
         assert_eq!(Service::Aes256Gcm.to_string(), "AES-256-GCM");
         assert_eq!(Service::MlKem1024Encaps.to_string(), "ML-KEM-1024 encaps");
         assert_eq!(Service::Ed25519Sign.to_string(), "Ed25519 sign");
+    }
+
+    #[test]
+    fn pct_constants_pinned() {
+        let expected_message: [u8; 32] = [
+            0x6f, 0x78, 0x69, 0x63, 0x72, 0x79, 0x70, 0x74, 0x20, 0x70, 0x61, 0x69, 0x72, 0x77,
+            0x69, 0x73, 0x65, 0x20, 0x63, 0x6f, 0x6e, 0x73, 0x69, 0x73, 0x74, 0x65, 0x6e, 0x63,
+            0x79, 0x00, 0x00, 0x00,
+        ];
+        let expected_m_hex = "19e517be7e1d427ad6e0ad26e315d8bfbd4aa7f4a040ec0cf32d45c7de81b46b";
+        assert_eq!(expected_m_hex.len(), 64);
+        let mut expected_m = [0u8; 32];
+        for (byte, pair) in expected_m
+            .iter_mut()
+            .zip(expected_m_hex.as_bytes().chunks(2))
+        {
+            *byte = u8::from_str_radix(core::str::from_utf8(pair).unwrap(), 16).unwrap();
+        }
+
+        assert_eq!(PCT_MESSAGE, expected_message, "PCT_MESSAGE");
+        assert_eq!(PCT_M, expected_m, "PCT_M");
+    }
+
+    #[test]
+    fn expand_key_services_follow_keygen_profiles() {
+        let pairs = [
+            (
+                Service::MlKem512ExpandKey,
+                Service::MlKem512Keygen,
+                660,
+                "ML-KEM-512 key expansion",
+            ),
+            (
+                Service::MlKem768ExpandKey,
+                Service::MlKem768Keygen,
+                661,
+                "ML-KEM-768 key expansion",
+            ),
+            (
+                Service::MlKem1024ExpandKey,
+                Service::MlKem1024Keygen,
+                662,
+                "ML-KEM-1024 key expansion",
+            ),
+            (
+                Service::MlDsa44ExpandKey,
+                Service::MlDsa44Keygen,
+                663,
+                "ML-DSA-44 key expansion",
+            ),
+            (
+                Service::MlDsa65ExpandKey,
+                Service::MlDsa65Keygen,
+                664,
+                "ML-DSA-65 key expansion",
+            ),
+            (
+                Service::MlDsa87ExpandKey,
+                Service::MlDsa87Keygen,
+                665,
+                "ML-DSA-87 key expansion",
+            ),
+        ];
+        let profiles = [
+            AlgorithmProfile::Unrestricted,
+            AlgorithmProfile::Cnsa2,
+            AlgorithmProfile::Cnsa1,
+            AlgorithmProfile::Migration,
+        ];
+        assert_eq!(pairs.len(), 6);
+
+        let mut admitted = 0usize;
+        let mut refused = 0usize;
+        for (expand, keygen, discriminant, display) in pairs {
+            assert_eq!(expand as u16, discriminant, "{expand} discriminant");
+            assert_eq!(expand.to_string(), display);
+            for profile in profiles {
+                let allowed = is_allowed(profile, expand);
+                assert_eq!(
+                    allowed,
+                    is_allowed(profile, keygen),
+                    "{expand} under {profile} must match {keygen}"
+                );
+                if allowed {
+                    admitted += 1;
+                } else {
+                    refused += 1;
+                }
+            }
+        }
+        // Unrestricted admits all six, CNSA 2.0 and Migration admit the 1024 and
+        // 87 sets, CNSA 1.0 admits none: 10 admissions of 24.
+        assert_eq!((admitted, refused), (10, 14));
     }
 }

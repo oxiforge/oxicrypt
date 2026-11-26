@@ -9,7 +9,8 @@
 //!   Per-group `parameterSet` field selects the variant.
 //! - **`MlDsaSigGenHandler`** — `ML-DSA` / `sigGen` / `FIPS204`,
 //!   advertising the same three parameter sets. Deterministic-mode
-//!   signing (`externalMu: false`; internal interface). Per-group
+//!   signing (32 zero bytes as `rnd`, FIPS 204 §3.4; `externalMu: false`;
+//!   internal interface). Per-group
 //!   `parameterSet` field selects the variant (which fixes SK_LEN).
 //! - **`MlDsaSigVerHandler`** — `ML-DSA` / `sigVer` / `FIPS204`,
 //!   advertising the same three parameter sets. Per-group
@@ -19,8 +20,8 @@
 //!
 //! All three FIPS 204 parameter sets are supported. The `algorithm()`
 //! value is the family name `"ML-DSA"`. A new parameter set needs a
-//! cap entry and a match arm in each group driver, but no new handler
-//! struct churn (same pattern as ML-KEM).
+//! cap entry and a match arm in each group driver, and no new handler
+//! struct.
 //!
 //! Per-test field placement (`sk` for sigGen, `pk` for sigVer)
 //! follows §8.2.2 Table 14 and §8.3.2 Table 16 of the draft.
@@ -28,8 +29,6 @@
 use crate::dispatch::{AlgorithmHandler, DispatchError, primitive_err};
 use crate::hex;
 use crate::json::JsonValue;
-
-// ── KeyGen handler ──────────────────────────────────────────────────
 
 /// ML-DSA keyGen dispatcher
 /// (`parameterSets: ["ML-DSA-44", "ML-DSA-65", "ML-DSA-87"]`).
@@ -53,8 +52,6 @@ impl AlgorithmHandler for MlDsaKeyGenHandler {
     }
 }
 
-// ── SigGen handler ──────────────────────────────────────────────────
-
 /// ML-DSA sigGen dispatcher
 /// (`parameterSets: ["ML-DSA-44", "ML-DSA-65", "ML-DSA-87"]`).
 pub struct MlDsaSigGenHandler;
@@ -76,8 +73,6 @@ impl AlgorithmHandler for MlDsaSigGenHandler {
         handle_siggen_group(group)
     }
 }
-
-// ── SigVer handler ──────────────────────────────────────────────────
 
 /// ML-DSA sigVer dispatcher
 /// (`parameterSets: ["ML-DSA-44", "ML-DSA-65", "ML-DSA-87"]`).
@@ -101,8 +96,6 @@ impl AlgorithmHandler for MlDsaSigVerHandler {
     }
 }
 
-// ── Helpers ─────────────────────────────────────────────────────────
-
 fn read_parameter_set(group: &JsonValue) -> Result<&str, DispatchError> {
     group
         .get("parameterSet")
@@ -115,8 +108,6 @@ fn unsupported_parameter_set(_other: &str) -> DispatchError {
         "ML-DSA: parameterSet must be `ML-DSA-44`, `ML-DSA-65`, or `ML-DSA-87`",
     )
 }
-
-// ── KeyGen group driver ─────────────────────────────────────────────
 
 fn handle_keygen_group(group: &JsonValue) -> Result<JsonValue, DispatchError> {
     let tg_id = group
@@ -147,8 +138,6 @@ fn handle_keygen_group(group: &JsonValue) -> Result<JsonValue, DispatchError> {
             .and_then(JsonValue::as_i64)
             .ok_or(DispatchError::MissingField("tcId"))?;
 
-        // ML-DSA keygen takes a single 32-byte seed (xi). Same shape
-        // across all three parameter sets per FIPS 204 §6.1.
         let seed_bytes = hex::decode(
             t.get("seed")
                 .and_then(JsonValue::as_str)
@@ -159,8 +148,6 @@ fn handle_keygen_group(group: &JsonValue) -> Result<JsonValue, DispatchError> {
             .try_into()
             .map_err(|_| DispatchError::Crypto("ML-DSA KeyGen: seed is not 32 bytes"))?;
 
-        // Per-variant dispatch: each variant emits PK/SK at the
-        // sizes given in FIPS 204 §4 Table 2.
         let (pk_hex, sk_hex) = match parameter_set {
             "ML-DSA-44" => {
                 let (pk, sk) = oxicrypt_ml_dsa::ml_dsa_44::keygen_internal(&seed)?;
@@ -189,8 +176,6 @@ fn handle_keygen_group(group: &JsonValue) -> Result<JsonValue, DispatchError> {
         ("tests".to_string(), JsonValue::Array(results)),
     ]))
 }
-
-// ── SigGen group driver ─────────────────────────────────────────────
 
 fn handle_siggen_group(group: &JsonValue) -> Result<JsonValue, DispatchError> {
     let tg_id = group
@@ -235,15 +220,13 @@ fn handle_siggen_group(group: &JsonValue) -> Result<JsonValue, DispatchError> {
                 .ok_or(DispatchError::MissingField("message"))?,
         )?;
 
-        // Per-variant dispatch: each variant has different SK_LEN
-        // and SIG_LEN per FIPS 204 §4 Table 2.
         let sig_hex = match parameter_set {
             "ML-DSA-44" => {
                 let sk: [u8; oxicrypt_ml_dsa::ml_dsa_44::SK_LEN] =
                     sk_bytes.as_slice().try_into().map_err(|_| {
                         DispatchError::Crypto("ML-DSA-44 SigGen: sk has wrong length")
                     })?;
-                let sig = oxicrypt_ml_dsa::ml_dsa_44::sign_internal(&sk, &message)
+                let sig = oxicrypt_ml_dsa::ml_dsa_44::sign_internal(&sk, &message, &[0u8; 32])
                     .map_err(primitive_err("ML-DSA-44 SigGen: signing failed"))?;
                 hex::encode_upper(&sig)
             }
@@ -252,7 +235,7 @@ fn handle_siggen_group(group: &JsonValue) -> Result<JsonValue, DispatchError> {
                     sk_bytes.as_slice().try_into().map_err(|_| {
                         DispatchError::Crypto("ML-DSA-65 SigGen: sk has wrong length")
                     })?;
-                let sig = oxicrypt_ml_dsa::ml_dsa_65::sign_internal(&sk, &message)
+                let sig = oxicrypt_ml_dsa::ml_dsa_65::sign_internal(&sk, &message, &[0u8; 32])
                     .map_err(primitive_err("ML-DSA-65 SigGen: signing failed"))?;
                 hex::encode_upper(&sig)
             }
@@ -261,7 +244,7 @@ fn handle_siggen_group(group: &JsonValue) -> Result<JsonValue, DispatchError> {
                     sk_bytes.as_slice().try_into().map_err(|_| {
                         DispatchError::Crypto("ML-DSA-87 SigGen: sk has wrong length")
                     })?;
-                let sig = oxicrypt_ml_dsa::ml_dsa_87::sign_internal(&sk, &message)
+                let sig = oxicrypt_ml_dsa::ml_dsa_87::sign_internal(&sk, &message, &[0u8; 32])
                     .map_err(primitive_err("ML-DSA-87 SigGen: signing failed"))?;
                 hex::encode_upper(&sig)
             }
@@ -279,8 +262,6 @@ fn handle_siggen_group(group: &JsonValue) -> Result<JsonValue, DispatchError> {
         ("tests".to_string(), JsonValue::Array(results)),
     ]))
 }
-
-// ── SigVer group driver ─────────────────────────────────────────────
 
 fn handle_sigver_group(group: &JsonValue) -> Result<JsonValue, DispatchError> {
     let tg_id = group

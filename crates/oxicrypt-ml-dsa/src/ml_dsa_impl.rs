@@ -4,11 +4,7 @@
 //! self-tests are in `cast`.
 //!
 //! This is the encoding/wiring single source of truth for ML-DSA-44,
-//! ML-DSA-65, and ML-DSA-87. It mirrors the
-//! [`ml_kem_impl!`](../../oxicrypt-ml-kem/src/ml_kem_impl.rs) macro
-//! which follows the
-//! [`define_rsa_wide!`](../../oxicrypt-rsa/src/rsa_wide_impl.rs)
-//! pattern used by RSA-3072 / RSA-4096.
+//! ML-DSA-65, and ML-DSA-87.
 //!
 //! # Macro inputs
 //!
@@ -1390,7 +1386,10 @@ macro_rules! ml_dsa_impl {
             Ok((pk, sk.0))
         }
 
-        /// ML-DSA.Sign (FIPS 204 §6.2 / Algorithm 7, deterministic).
+        /// ML-DSA.Sign_internal (FIPS 204 §6.2 Algorithm 7).
+        ///
+        /// `rnd` is Algorithm 7's 32-byte randomizer. 32 zero bytes select the
+        /// deterministic variant (FIPS 204 §3.4).
         ///
         /// Every intermediate this function owns is wiped when it is dropped,
         /// on every return path, with the limits `ml_dsa_keygen` states: the
@@ -1400,6 +1399,7 @@ macro_rules! ml_dsa_impl {
             sk: &[u8; SK_LEN],
             m_prefix: &[u8],
             message: &[u8],
+            rnd: &[u8; 32],
         ) -> Result<Option<[u8; SIG_LEN]>, Error> {
             let mut rho = $crate::Wiped([0u8; 32]);
             let mut key = $crate::Wiped([0u8; 32]);
@@ -1423,12 +1423,11 @@ macro_rules! ml_dsa_impl {
                 h.squeeze(&mut mu.0)?;
             }
 
-            let rnd = [0u8; 32];
             let mut rho_pp = $crate::Wiped([0u8; 64]);
             {
                 let mut h = Shake256::new_internal()?;
                 h.update(&key.0);
-                h.update(&rnd);
+                h.update(rnd);
                 h.update(&mu.0);
                 h.finalize();
                 h.squeeze(&mut rho_pp.0)?;
@@ -1678,7 +1677,7 @@ macro_rules! ml_dsa_impl {
             oxicrypt_module::require_operational()?;
             oxicrypt_module::require_allowed($svc_sign)?;
             let prefix_buf = $crate::build_external_prefix(ctx)?;
-            ml_dsa_sign(sk, prefix_buf.as_slice(), message)?.ok_or(Error::InvalidInput)
+            ml_dsa_sign(sk, prefix_buf.as_slice(), message, &[0u8; 32])?.ok_or(Error::InvalidInput)
         }
 
         /// Verify a signature (FIPS 204 §5.3 Algorithm 3).
@@ -1722,22 +1721,30 @@ macro_rules! ml_dsa_impl {
         /// Internal sign — no operational gate, no `ctx` framing
         /// (FIPS 204 §6.2 Algorithm 7).
         ///
+        /// `rnd` is Algorithm 7's 32-byte randomizer. 32 zero bytes select the
+        /// deterministic variant (FIPS 204 §3.4), which is what [`sign`] uses.
+        ///
         /// Returns [`Error::NotOperational`] unless
         /// [`oxicrypt_module::require_self_test_started`] admits the call: in
         /// `Operational`, or in `SelfTest` on the thread running the power-up
         /// self-tests.
         #[doc(hidden)]
-        pub fn sign_internal(sk: &[u8; SK_LEN], message: &[u8]) -> Result<[u8; SIG_LEN], Error> {
+        pub fn sign_internal(
+            sk: &[u8; SK_LEN],
+            message: &[u8],
+            rnd: &[u8; 32],
+        ) -> Result<[u8; SIG_LEN], Error> {
             oxicrypt_module::require_self_test_started()?;
-            sign_internal_unguarded(sk, message)?.ok_or(Error::InvalidInput)
+            sign_internal_unguarded(sk, message, rnd)?.ok_or(Error::InvalidInput)
         }
 
         /// Body of [`sign_internal`], run once its guard has passed.
         fn sign_internal_unguarded(
             sk: &[u8; SK_LEN],
             message: &[u8],
+            rnd: &[u8; 32],
         ) -> Result<Option<[u8; SIG_LEN]>, Error> {
-            ml_dsa_sign(sk, &[], message)
+            ml_dsa_sign(sk, &[], message, rnd)
         }
 
         /// Internal verify — no operational gate, no `ctx` framing

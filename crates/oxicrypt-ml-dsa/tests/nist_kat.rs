@@ -3,12 +3,14 @@
 //! Vectors sourced from the NIST ACVP Server repository:
 //!   usnistgov/ACVP-Server @ 112690e8484dba7077709a05b1f3af58ddefdd5d
 //!
-//! Context wrapping: FIPS 204 §3.3 defines ML-DSA.Sign(sk, M, ctx) as:
+//! Context wrapping: FIPS 204 §5.2 Algorithm 2 defines ML-DSA.Sign(sk, M, ctx) as:
 //!   M' = 0x00 ‖ IntegerToBytes(|ctx|, 1) ‖ ctx ‖ M
-//! followed by SignInternal(sk, M', rnd).  The ACVP sigGen vectors record
-//! the raw message M before context wrapping.  Our `sign_internal` /
-//! `verify_internal` implement SignInternal/VerifyInternal (take M'
-//! directly), so the tests prepend `[0x00, 0x00]` for empty context.
+//! followed by Sign_internal(sk, M', rnd).  The ACVP sigGen vectors record
+//! the raw message M before context wrapping.  `sign_internal` /
+//! `verify_internal` implement Sign_internal/Verify_internal (take M'
+//! directly), so the tests prepend `[0x00, 0x00]` for empty context. The
+//! vectors are deterministic, so every call passes 32 zero bytes as `rnd`
+//! (FIPS 204 §3.4).
 //!
 //! Test cases:
 //!   - keyGen  tgId=3, tcId=51: seed → (pk, sk)
@@ -34,8 +36,6 @@ fn start_module() {
     assert_eq!(oxicrypt_module::require_self_test_started(), Ok(()));
 }
 
-// ── Vector helpers ──────────────────────────────────────────────────────────
-
 fn load(name: &str) -> Vec<u8> {
     let path = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/data/");
     std::fs::read(format!("{path}{name}")).expect("test data not found")
@@ -47,12 +47,7 @@ fn load_arr<const N: usize>(name: &str) -> [u8; N] {
     v.try_into().unwrap()
 }
 
-// ── keyGen KAT ──────────────────────────────────────────────────────────────
-
 /// ACVP ML-DSA-87 keyGen: tgId=3, tcId=51.
-///
-/// Given 32-byte xi seed, keygen must reproduce the exact public key and
-/// secret key.
 #[test]
 fn nist_keygen_kat() {
     start_module();
@@ -72,13 +67,11 @@ fn nist_keygen_kat() {
     );
 }
 
-// ── sigGen KAT ──────────────────────────────────────────────────────────────
-
 /// ACVP ML-DSA-87 sigGen: tgId=5, tcId=73 (deterministic, empty context).
 ///
-/// The ACVP `message` field is the raw M.  FIPS 204 §3.3 wraps it as
-/// M' = 0x00 ‖ 0x00 ‖ M before calling SignInternal.  `sign_internal`
-/// is SignInternal and receives M' directly.
+/// The ACVP `message` field is the raw M.  FIPS 204 §5.2 Algorithm 2 wraps
+/// it as M' = 0x00 ‖ 0x00 ‖ M before calling Sign_internal.
+/// `sign_internal` is Sign_internal and receives M' directly.
 #[test]
 fn nist_siggen_kat() {
     start_module();
@@ -92,7 +85,7 @@ fn nist_siggen_kat() {
     m_prime.push(0x00); // |ctx| = 0
     m_prime.extend_from_slice(&raw_message);
 
-    let sig = sign_internal(&sk, &m_prime)
+    let sig = sign_internal(&sk, &m_prime, &[0u8; 32])
         .expect("sign_internal returned None for valid NIST secret key");
 
     assert_eq!(
@@ -101,11 +94,7 @@ fn nist_siggen_kat() {
     );
 }
 
-// ── Second keyGen KAT ──────────────────────────────────────────────────────
-
 /// ACVP ML-DSA-87 keyGen: tgId=3, tcId=52.
-///
-/// Second independent test case from the NIST ACVP Server projection.
 #[test]
 fn nist_keygen_kat_2() {
     start_module();
@@ -125,14 +114,10 @@ fn nist_keygen_kat_2() {
     );
 }
 
-// ── Second sigGen KAT ──────────────────────────────────────────────────────
-
 /// ACVP ML-DSA-87 sigGen: tgId=12, tcId=166 (deterministic, internal interface).
 ///
-/// Second independent sigGen vector using the "internal" signature
-/// interface — the message field is already M' (pre-wrapped), so no
-/// context prefix is added.  Different sk and message provide
-/// additional assurance that the signing path is fully correct.
+/// The "internal" signature interface: the message field is already M', so
+/// no context prefix is added.
 #[test]
 fn nist_siggen_kat_2() {
     start_module();
@@ -140,8 +125,7 @@ fn nist_siggen_kat_2() {
     let m_prime = load("mldsa87_nist_siggen2_message.bin");
     let expected_sig = load_arr::<SIG_LEN>("mldsa87_nist_siggen2_signature.bin");
 
-    // signatureInterface = "internal": the message IS M', no wrapping needed.
-    let sig = sign_internal(&sk, &m_prime)
+    let sig = sign_internal(&sk, &m_prime, &[0u8; 32])
         .expect("sign_internal returned None for valid NIST secret key");
 
     assert_eq!(
@@ -150,9 +134,6 @@ fn nist_siggen_kat_2() {
     );
 }
 
-/// Round-trip: use the NIST keyGen seed to produce (pk, sk), then sign a
-/// message and verify.  This exercises the full NIST-seeded key path
-/// through verify_internal.
 #[test]
 fn nist_keygen_roundtrip() {
     start_module();
@@ -167,7 +148,8 @@ fn nist_keygen_roundtrip() {
     m_prime.push(0x00);
     m_prime.extend_from_slice(raw_msg);
 
-    let sig = sign_internal(&sk, &m_prime).expect("sign_internal failed on NIST-keygen key");
+    let sig =
+        sign_internal(&sk, &m_prime, &[0u8; 32]).expect("sign_internal failed on NIST-keygen key");
 
     assert!(
         verify_internal(&pk, &m_prime, &sig).unwrap(),
