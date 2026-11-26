@@ -53,8 +53,8 @@ confidence interval, 10 samples each:
 
 `oxi_init` and the harness link every approved algorithm crate. `oxi` links
 only what its subcommands use: SHA, HMAC, AES, the DRBG, SHAKE, ML-DSA and
-ML-KEM. The `oxi` row above was measured before `oxi` ran the ML-KEM group;
-see the note under [Integrity group](#integrity-group).
+ML-KEM. The `oxi` row above excludes the ML-KEM group; add 0.43 ms for it,
+as the note under [Integrity group](#integrity-group) explains.
 
 Per crate, in the order the harness runs them:
 
@@ -102,10 +102,11 @@ running it again. The differences of the medians:
 - **Integrity group (the two CASTs and the image check): about 13.0 ms**, the
   total less the criterion figure for `oxi`'s algorithm self-tests (4.27 ms).
 
-**The `oxi` figures in this section and in the criterion table above predate
-the ML-KEM group** of four ML-KEM-1024 self-tests in `oxi`'s power-up. Adding
-that group moved the `power-up total/oxi CLI` criterion point estimate from
-6.0463 ms to 6.4790 ms, +0.43 ms, in two runs on the same machine; the
+**The `oxi` figures in this section and in the criterion table above exclude
+the ML-KEM group** of four ML-KEM-1024 self-tests in `oxi`'s power-up; add
+0.43 ms for it. Including that group moves the `power-up total/oxi CLI`
+criterion point estimate from 6.0463 ms to 6.4790 ms, +0.43 ms, in two runs
+on the same machine; the
 `ml-kem` group's own estimate in the first run was 414.85 µs. Those runs were
 made under different conditions from the table, so only their difference
 carries over. Re-measure with `cargo bench -p oxicrypt-bench --bench power_up`.

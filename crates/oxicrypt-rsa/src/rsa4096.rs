@@ -216,6 +216,7 @@ mod tests {
         init_module();
         let mut drbg = HmacDrbgSha256::instantiate_from_module(b"rsa4096-import-pct").unwrap();
         let key = RsaPrivateKey4096::generate(&mut drbg, 65537).unwrap();
+        assert!(RsaPrivateKey4096::from_components(&key.n_bytes, key.e, &key.d_bytes).is_ok());
         let mut bad_d = key.d_bytes;
         bad_d[MODULUS_BYTES - 1] ^= 0x01;
         let imported = RsaPrivateKey4096::from_components(&key.n_bytes, key.e, &bad_d);

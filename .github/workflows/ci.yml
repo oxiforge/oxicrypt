@@ -519,10 +519,28 @@ jobs:
         if: ${{ !cancelled() && steps.build.outcome == 'success' }}
         run: make -C crates/oxicrypt-ffi/tests/c-integration SIGNING_KEY="$INTEGRITY_SIGNING_KEY" test-fault
       # The Rust tests behind the same feature: the header-against-exports
-      # check, the DRBG handle wipe on free and the allocation-failure code.
+      # check, the DRBG handle wipe on free, the allocation-failure code and
+      # the pairwise consistency failure of each key-generating family.
+      # Fail closed on a run that passes no test, and on a run in which a
+      # named pairwise consistency test did not pass.
       - name: cargo nextest run -p oxicrypt-ffi --features fault-injection
         if: ${{ !cancelled() && steps.build.outcome == 'success' }}
-        run: cargo nextest run -p oxicrypt-ffi --features fault-injection
+        run: |
+          set -o pipefail
+          log="$RUNNER_TEMP/nextest-ffi-fault.log"
+          cargo nextest run -p oxicrypt-ffi --features fault-injection --color never 2>&1 | tee "$log"
+          grep -Eq "[1-9][0-9]* tests? run: [1-9][0-9]* passed" "$log" \
+            || { echo "the oxicrypt-ffi fault-injection run passed no tests" >&2; exit 1; }
+          for t in ml_dsa_pct_failure_returns_3_then_1 ml_dsa_pct_failure_under_the_all_families_arm \
+                   ml_dsa_expand_key_pct_failure_returns_3_then_1 \
+                   ml_kem_pct_failure_returns_3_then_1 ml_kem_pct_failure_under_the_all_families_arm \
+                   ml_kem_expand_key_pct_failure_returns_3_then_1 \
+                   ecdsa_pct_failure_returns_3_then_1 ecdsa_pct_failure_under_the_all_families_arm \
+                   ecdh_pct_failure_returns_3_then_1 ecdh_pct_failure_under_the_all_families_arm \
+                   rsa_pct_failure_returns_3_then_1 rsa_pct_failure_under_the_all_families_arm; do
+            grep -Eq "PASS \[.*\] .*oxicrypt-ffi.* pq_tests::${t}\$" "$log" \
+              || { echo "the oxicrypt-ffi fault-injection run did not pass $t" >&2; exit 1; }
+          done
       # The DRBG crate's seed-path tests, including the integration test
       # binaries that require the feature, built with it enabled on this
       # crate directly rather than through another crate's features.
@@ -985,8 +1003,7 @@ jobs:
           # process, so plain `cargo test` isolates them as nextest does.
           # `kat` rows must run a non-empty `tests/nist_kat.rs`, so a binary
           # left empty by its `#![cfg]` fails the row. One row per crate
-          # leaves `testing-interfaces` off, the shipped configuration, and
-          # runs the doctests on it.
+          # leaves `testing-interfaces` off and runs the doctests with it off.
           - crate: oxicrypt-ml-kem
             flags: --features parallel
           - crate: oxicrypt-ml-kem

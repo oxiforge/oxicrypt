@@ -637,7 +637,7 @@ types:
       - name: BufferTooSmall
         description: Caller-allocated output buffer is smaller than the documented minimum.
       - name: OutputTooLong
-        description: Requested output exceeds the family's bound (HKDF-Expand 255*HashLen per RFC 5869 section 2.3; HMAC_DRBG generate 2^19 bits per SP 800-90A Table 3).
+        description: Requested output exceeds the family's bound (HKDF-Expand 255*HashLen per RFC 5869 section 2.3; HMAC_DRBG generate 2^19 bits per SP 800-90A Table 2).
       - name: NotBlockAligned
         description: Input length is not aligned to the cipher block size.
       - name: InvalidIvLength
@@ -24316,7 +24316,7 @@ error_types:
         user_action: Allocate at least the size named in the function's parameter constraints and retry; nothing was written.
       - name: OutputTooLong
         value: 12
-        description: "The requested output length exceeds its family's bound: HKDF-Expand above 255*HashLen bytes (RFC 5869 section 2.3), or HMAC_DRBG generate above 2^19 bits per request (SP 800-90A Table 3)."
+        description: "The requested output length exceeds its family's bound: HKDF-Expand above 255*HashLen bytes (RFC 5869 section 2.3), or HMAC_DRBG generate above 2^19 bits per request (SP 800-90A Table 2)."
         recoverable: true
         user_action: Request fewer bytes in one call, and issue multiple calls if more output is needed.
       - name: NotBlockAligned

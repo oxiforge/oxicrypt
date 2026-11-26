@@ -1,8 +1,8 @@
 //! A failed pairwise consistency test of ML-KEM-1024 key generation, through
 //! each of `keygen`, `keygen_with_seed` and `expand_key`, returns
 //! `ConditionalTestFailed` and leaves the module in its error state
-//! (FIPS 140-3 IG 10.3.A), in which key generation, encapsulation and
-//! decapsulation return `NotOperational`.
+//! (FIPS 140-3 IG 10.3.A), in which key generation, encapsulation,
+//! decapsulation and both key checks return `NotOperational`.
 
 #![allow(clippy::unwrap_used, clippy::panic)]
 
@@ -10,7 +10,8 @@
 mod pct_fault;
 
 use oxicrypt_ml_kem::ml_kem_1024::{
-    CT_LEN, decapsulate, encapsulate, expand_key, keygen, keygen_with_seed,
+    CT_LEN, check_decapsulation_key, check_encapsulation_key, decapsulate, encapsulate, expand_key,
+    keygen, keygen_with_seed,
 };
 use oxicrypt_ml_kem::seam::{
     ML_KEM_1024_KEYGEN_D, ML_KEM_1024_KEYGEN_DK, ML_KEM_1024_KEYGEN_EK, ML_KEM_1024_KEYGEN_Z,
@@ -45,6 +46,12 @@ fn pct_fault_ml_kem_1024() {
             }),
             ("decapsulate", || {
                 decapsulate(ML_KEM_1024_KEYGEN_DK, &[0; CT_LEN]).map(drop)
+            }),
+            ("check_encapsulation_key", || {
+                check_encapsulation_key(ML_KEM_1024_KEYGEN_EK).map(|ok| assert!(ok))
+            }),
+            ("check_decapsulation_key", || {
+                check_decapsulation_key(ML_KEM_1024_KEYGEN_DK).map(|ok| assert!(ok))
             }),
         ],
     );

@@ -527,7 +527,7 @@ pub unsafe extern "C" fn oxi_hmac_drbg_sha256_reseed_from_module(
 /// process or `additional_input_len` exceeds the additional input the
 /// DRBG accepts from a module reseed. Returns
 /// `OxiResult::OutputTooLong = 12` if `out_len` exceeds the
-/// SP 800-90A Table 3 `max_number_of_bits_per_request` ceiling
+/// SP 800-90A Table 2 `max_number_of_bits_per_request` ceiling
 /// (`2^19` bits = 65 536 bytes). `out` is written only on success.
 ///
 /// # Safety

@@ -33,7 +33,7 @@
 
 - [ ] `cargo build --release --workspace` — clean
 - [ ] `cargo test --workspace --all-features --exclude oxicrypt-ml-dsa --exclude oxicrypt-ml-kem`, then `cargo test -p oxicrypt-ml-dsa -p oxicrypt-ml-kem` with and without `--features testing-interfaces --tests` — green (X/X passing). Cargo unifies a feature across a workspace build, so the post-quantum crates' `compile_fail` doctests pass only per package.
-- [ ] `cargo nextest run -p <package> --features fault-injection` for `oxicrypt-ml-dsa`, `oxicrypt-ml-kem`, `oxicrypt-drbg`, `oxicrypt-ffi` and `oxicrypt-cli` — green (X/X passing). A fault seam is process-wide, so these run under nextest.
+- [ ] `cargo nextest run -p <package> --features fault-injection` for `oxicrypt-aes`, `oxicrypt-cmac`, `oxicrypt-drbg`, `oxicrypt-ecdh`, `oxicrypt-ecdsa`, `oxicrypt-eddsa`, `oxicrypt-ml-dsa`, `oxicrypt-ml-kem`, `oxicrypt-rsa`, `oxicrypt-ffi` and `oxicrypt-cli` — green (X/X passing). A fault seam is process-wide, so these run under nextest.
 - [ ] `cargo clippy --all-targets --all-features --release -- -D warnings` — clean
 - [ ] `cargo doc --no-deps --workspace` — no warnings
 - [ ] LAMA manifest updated (or `--no-verify` documented in commit body)

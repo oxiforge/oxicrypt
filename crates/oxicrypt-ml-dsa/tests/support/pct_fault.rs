@@ -91,10 +91,12 @@ fn run_child(mut command: std::process::Command) -> (bool, String, String) {
     )
 }
 
-/// In the parent: runs `control`, checks that no entry point of `gated`
-/// reports `NotOperational`, then runs each of `entries` faulted in a child
-/// process, and checks each child's exit status and stderr. In a child:
-/// arms the fault, calls the entry point it was started for, and checks
+/// In both processes, first runs `control`, which checks a known-answer key
+/// pair and prepares any known-good input the entry points of `gated` read.
+/// In the parent: checks that every entry point of `gated` returns `Ok`,
+/// then runs each of `entries` faulted in a child process, and checks each
+/// child's exit status and stderr. In a child: arms the fault, calls the
+/// entry point it was started for, and checks
 /// that it returns `ConditionalTestFailed { reason }`, that the module is no
 /// longer operational, and that every entry point of `entries` and `gated`
 /// then returns `NotOperational`.
@@ -111,6 +113,7 @@ pub(crate) fn run(
 ) {
     let _ = initialize_with_tests(UNSIGNED_TEST_BINARY, &[]);
     assert!(is_operational());
+    control();
 
     if let Some(name) = child_entry() {
         let (_, call) = entries
@@ -133,13 +136,9 @@ pub(crate) fn run(
         return;
     }
 
-    control();
     assert!(!gated.is_empty());
     for (name, call) in gated {
-        assert!(
-            !matches!(call(), Err(Error::NotOperational { .. })),
-            "{name} while operational"
-        );
+        assert_eq!(call(), Ok(()), "{name} while operational");
     }
     assert_eq!(entries.len(), 3);
     let token = format!(

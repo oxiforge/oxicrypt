@@ -301,7 +301,7 @@ in a default build takes an entropy input.
 | `uninstantiate` | `(&mut self)` | Zeroize and reset |
 
 An instance seeded by the module reseeds itself from the module when its
-reseed counter reaches the SP 800-90A Table 3 interval. The forms that
+reseed counter reaches the SP 800-90A Tables 2 and 3 interval. The forms that
 take a caller's entropy input (`instantiate`, `reseed` and `generate_pr`
 for Hash_DRBG and HMAC_DRBG; `instantiate_df`, `instantiate_no_df`,
 `reseed_df`, `reseed_no_df`, `generate_df_pr` and `generate_no_df_pr`

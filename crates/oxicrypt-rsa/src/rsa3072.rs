@@ -228,6 +228,7 @@ mod tests {
         init_module();
         let mut drbg = HmacDrbgSha256::instantiate_from_module(b"rsa3072-import-pct").unwrap();
         let key = RsaPrivateKey3072::generate(&mut drbg, 65537).unwrap();
+        assert!(RsaPrivateKey3072::from_components(&key.n_bytes, key.e, &key.d_bytes).is_ok());
         let mut bad_d = key.d_bytes;
         bad_d[MODULUS_BYTES - 1] ^= 0x01;
         let imported = RsaPrivateKey3072::from_components(&key.n_bytes, key.e, &bad_d);
