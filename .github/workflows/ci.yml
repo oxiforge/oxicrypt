@@ -608,6 +608,66 @@ jobs:
       - name: cargo clippy -p oxicrypt-ml-kem --features fault-injection
         if: ${{ !cancelled() && steps.build.outcome == 'success' }}
         run: cargo clippy -p oxicrypt-ml-kem --features fault-injection --all-targets -- -D warnings
+      # The ECDH, ECDSA, Ed25519 and RSA pairwise consistency failure tests,
+      # which compile only with the feature.
+      - name: cargo nextest run -p oxicrypt-ecdh --features fault-injection
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        run: |
+          set -o pipefail
+          log="$RUNNER_TEMP/nextest-ecdh-fault.log"
+          cargo nextest run -p oxicrypt-ecdh --features fault-injection --color never 2>&1 | tee "$log"
+          grep -Eq "[1-9][0-9]* tests? run: [1-9][0-9]* passed" "$log" \
+            || { echo "the oxicrypt-ecdh fault-injection run passed no tests" >&2; exit 1; }
+          for t in pct_fault_p256 pct_fault_p384; do
+            grep -Eq "PASS \[.*\] .*oxicrypt-ecdh.* ${t}\$" "$log" \
+              || { echo "the oxicrypt-ecdh fault-injection run did not pass $t" >&2; exit 1; }
+          done
+      - name: cargo clippy -p oxicrypt-ecdh --features fault-injection
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        run: cargo clippy -p oxicrypt-ecdh --features fault-injection --all-targets -- -D warnings
+      - name: cargo nextest run -p oxicrypt-ecdsa --features fault-injection
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        run: |
+          set -o pipefail
+          log="$RUNNER_TEMP/nextest-ecdsa-fault.log"
+          cargo nextest run -p oxicrypt-ecdsa --features fault-injection --color never 2>&1 | tee "$log"
+          grep -Eq "[1-9][0-9]* tests? run: [1-9][0-9]* passed" "$log" \
+            || { echo "the oxicrypt-ecdsa fault-injection run passed no tests" >&2; exit 1; }
+          for t in pct_fault_p256 pct_fault_p384; do
+            grep -Eq "PASS \[.*\] .*oxicrypt-ecdsa.* ${t}\$" "$log" \
+              || { echo "the oxicrypt-ecdsa fault-injection run did not pass $t" >&2; exit 1; }
+          done
+      - name: cargo clippy -p oxicrypt-ecdsa --features fault-injection
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        run: cargo clippy -p oxicrypt-ecdsa --features fault-injection --all-targets -- -D warnings
+      - name: cargo nextest run -p oxicrypt-eddsa --features fault-injection
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        run: |
+          set -o pipefail
+          log="$RUNNER_TEMP/nextest-eddsa-fault.log"
+          cargo nextest run -p oxicrypt-eddsa --features fault-injection --color never 2>&1 | tee "$log"
+          grep -Eq "[1-9][0-9]* tests? run: [1-9][0-9]* passed" "$log" \
+            || { echo "the oxicrypt-eddsa fault-injection run passed no tests" >&2; exit 1; }
+          t=pct_fault_ed25519
+          grep -Eq "PASS \[.*\] .*oxicrypt-eddsa.* ${t}\$" "$log" \
+            || { echo "the oxicrypt-eddsa fault-injection run did not pass $t" >&2; exit 1; }
+      - name: cargo clippy -p oxicrypt-eddsa --features fault-injection
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        run: cargo clippy -p oxicrypt-eddsa --features fault-injection --all-targets -- -D warnings
+      - name: cargo nextest run -p oxicrypt-rsa --features fault-injection
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        run: |
+          set -o pipefail
+          log="$RUNNER_TEMP/nextest-rsa-fault.log"
+          cargo nextest run -p oxicrypt-rsa --features fault-injection --color never 2>&1 | tee "$log"
+          grep -Eq "[1-9][0-9]* tests? run: [1-9][0-9]* passed" "$log" \
+            || { echo "the oxicrypt-rsa fault-injection run passed no tests" >&2; exit 1; }
+          t=pct_fault_rsa
+          grep -Eq "PASS \[.*\] .*oxicrypt-rsa.* ${t}\$" "$log" \
+            || { echo "the oxicrypt-rsa fault-injection run did not pass $t" >&2; exit 1; }
+      - name: cargo clippy -p oxicrypt-rsa --features fault-injection
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        run: cargo clippy -p oxicrypt-rsa --features fault-injection --all-targets -- -D warnings
       # Requires the unsigned copy refused (integrity status 3), the signed copy operational (1), and a copy with one byte flipped inside the signed region refused (2).
       - name: Unsigned, signed and tampered library through oxi_init
         if: ${{ !cancelled() && steps.build.outcome == 'success' }}

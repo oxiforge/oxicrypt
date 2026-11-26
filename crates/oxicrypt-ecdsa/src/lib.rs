@@ -15,7 +15,7 @@
 //! | P-384 ECDSA keygen (DRBG-sampled `d`) | FIPS 186-5 §A.2.2 | [`p384_ecdsa::EcdsaP384PrivateKey::generate`] |
 //! | P-384 ECDSA verify | FIPS 186-5 §6.4.2 | [`p384_ecdsa::verify`] |
 //!
-//! P-521 is deferred to a future phase.
+//! P-521 is not implemented.
 //!
 //! # Layering
 //!
@@ -67,14 +67,23 @@
 //!   curve, not-identity, and order-n membership inside
 //!   [`p256_point`] / [`p384_point`] before verify proceeds.
 //!   Failures surface as a single generic error variant.
-//! - **Pairwise consistency test** (IG 10.3.A): every
-//!   `EcdsaP{256,384}PrivateKey` constructor (keygen or import)
-//!   runs a sign-and-verify PCT against a fixed probe message
-//!   using a freshly DRBG-sampled `k`; the derived public key
-//!   must accept the probe signature or construction returns an
-//!   error. This exercises the sampler, the sign primitive, and
-//!   `verify_internal` on the same code paths that production
-//!   calls will use.
+//! - **Pairwise consistency test** (ISO/IEC 19790 §7.10.3.3,
+//!   FIPS 140-3 IG 10.3.A): every `EcdsaP{256,384}PrivateKey`
+//!   constructor (keygen or import) signs a fixed probe message
+//!   with a freshly DRBG-sampled `k` and verifies it under the
+//!   derived public key. When `generate` fails the test it zeroizes
+//!   the pair (unproven: no test observes the cleared memory), puts
+//!   the module in its error state and returns
+//!   `Error::ConditionalTestFailed` with the reason
+//!   `ECDSA P-256 pairwise consistency` or
+//!   `ECDSA P-384 pairwise consistency`; every service then returns
+//!   `Error::NotOperational` until the process restarts.
+//!
+//! # The `fault-injection` feature (default OFF)
+//!
+//! Compiles the `seam` module, whose `corrupt_next_pk` makes the next key
+//! generation's pairwise consistency test fail, for the tests of that
+//! failure path. No shipped build enables it.
 //!
 //! # Sensitive security parameters
 //!
@@ -127,12 +136,26 @@ pub mod p384_point;
 #[doc(hidden)]
 pub mod p384_scalar;
 pub mod p384_stub;
+/// The test seam for key generation; available with the
+/// `fault-injection` feature or in the crate's own tests.
+#[cfg(any(test, feature = "fault-injection"))]
+pub mod seam;
+
+/// Whether the test seam armed this key generation, read and cleared at
+/// the entry of `generate` so that an early error cannot leave it armed;
+/// `false` in a build without the seam.
+pub(crate) fn take_corrupt_next_pk() -> bool {
+    #[cfg(any(test, feature = "fault-injection"))]
+    {
+        seam::take_corrupt_next_pk()
+    }
+    #[cfg(not(any(test, feature = "fault-injection")))]
+    {
+        false
+    }
+}
 
 // ── Crate-root re-exports ────────────────────────────────────────
-//
-// The P-256 ECDSA public API lives in `p256_ecdsa`; re-export the
-// items an agent or developer reaches for first so that
-// `use oxicrypt_ecdsa::{EcdsaP256PrivateKey, verify}` works.
 
 pub use p256_ecdsa::{
     EcdsaP256PrivateKey, PRIVATE_KEY_LEN, PUBLIC_KEY_LEN, SIGNATURE_LEN, derive_public_key,

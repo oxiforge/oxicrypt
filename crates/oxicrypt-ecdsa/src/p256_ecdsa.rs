@@ -129,10 +129,10 @@ fn sign_with_k_internal_unguarded(
         return Ok(None);
     }
 
-    // e = SHA-256(msg), truncated/reduced mod n.
+    // FIPS 186-5 §6.4.1: e from SHA-256(msg), r = x(k·G) mod n,
+    // s = k⁻¹(e + r·d) mod n.
     let e = hash_message_to_scalar(msg)?;
 
-    // (x1, y1) = k * G
     let big_r = Point::generator().mul(&k);
     let Some((x1, _y1)) = big_r.to_affine() else {
         return Ok(None);
@@ -143,7 +143,6 @@ fn sign_with_k_internal_unguarded(
         return Ok(None);
     }
 
-    // s = k^-1 * (e + r*d) mod n
     let k_inv = k.invert();
     let rd = r.mul(&d);
     let sum = e.add(&rd);
@@ -186,6 +185,7 @@ fn verify_internal_unguarded(
     // test observes the cleared memory).
     let mut t = VerifyTemporaries::new();
 
+    // The steps of FIPS 186-5 §6.4.2, in order.
     // 1. Decode public key.
     t.q = match decode_public_key(pk_bytes) {
         Some(q) => q,
@@ -412,26 +412,25 @@ fn point_add(p1: &Point, p2: &Point) -> Point {
 // ------------------------------------------------------------------
 
 /// Fixed probe message used by the IG 10.3.A pairwise consistency
-/// test. The exact bytes don't matter — the PCT only needs
-/// sign-then-verify to round-trip — but pinning them makes the
-/// PCT code path deterministic given a fixed DRBG seed.
+/// test.
 const PCT_PROBE_MSG: &[u8] = b"oxicrypt-ecdsa-p256-pct";
+
+/// The `reason` of a pairwise consistency failure in key generation.
+const PCT_REASON: &str = "ECDSA P-256 pairwise consistency";
 
 /// A P-256 ECDSA private key handle that has passed an IG 10.3.A
 /// pairwise consistency test at construction time.
 ///
 /// The handle carries both the private scalar `d` and its derived
-/// uncompressed SEC1 public key `Q`. Holding the public key avoids
-/// recomputing `d · G` on every sign, but — more importantly — the
-/// public key stored here is the one the PCT verified against, so
-/// any later call to `sign_sha256` is guaranteed to be consistent
-/// with `public_key()`.
+/// uncompressed SEC1 public key `Q`. The public key stored here is the
+/// one the test verified against, so a later call to `sign_sha256` is
+/// consistent with `public_key()`.
 ///
-/// All three constructors route through `run_pct`, which calls
-/// `sample_scalar_internal` for a fresh `k`, calls
-/// [`sign_with_k_internal`], and then calls [`verify_internal`] on
-/// the freshly derived public key; failure anywhere in that chain
-/// results in `Error::InvalidInput` and no handle is produced.
+/// Both constructors sign a fixed probe with a nonce drawn from the
+/// caller's random bit generator and verify it under the derived public
+/// key. A failure in [`Self::generate`] is a conditional self-test
+/// failure that puts the module in its error state and produces no
+/// handle.
 #[derive(Clone)]
 pub struct EcdsaP256PrivateKey {
     d: [u8; PRIVATE_KEY_LEN],
@@ -474,13 +473,18 @@ impl EcdsaP256PrivateKey {
     /// completed its power-up self-tests, [`Error::RbgTooWeak`] before
     /// any draw if the random bit generator reports less than
     /// [`crate::p256_keygen::RBG_STRENGTH_BITS`], [`Error::Rbg`] if the random
-    /// bit generator produces no output, or [`Error::InvalidInput`] if
-    /// the PCT fails (which would indicate a faulted sign or verify
-    /// primitive).
+    /// bit generator produces no output, [`Error::InvalidInput`] on
+    /// scalar-sampling exhaustion, or [`Error::ConditionalTestFailed`]
+    /// with the reason `ECDSA P-256 pairwise consistency` if the pairwise
+    /// consistency test fails (ISO/IEC 19790 §7.10.3.3, FIPS 140-3
+    /// IG 10.3.A). On that failure the pair is zeroized (unproven: no
+    /// test observes the cleared memory) and the module enters its error
+    /// state, after which every service returns [`Error::NotOperational`].
     pub fn generate<R: Rbg>(drbg: &mut R) -> Result<Self, Error> {
+        let corrupt = crate::take_corrupt_next_pk();
         require_operational()?;
         require_allowed(Service::EcdsaP256Keygen)?;
-        Self::generate_internal(drbg)
+        Self::generate_internal(drbg, corrupt)
     }
 
     /// Sign `msg` with SHA-256 under this private key, sampling a
@@ -489,6 +493,8 @@ impl EcdsaP256PrivateKey {
     /// rejection sampler. If the sampled `k` produces `r == 0` or
     /// `s == 0` (mathematically possible but astronomically
     /// unlikely), the call retries with a fresh draw up to a small cap.
+    /// Each `k` is zeroized after its use, on every exit (unproven: no
+    /// test observes the cleared memory).
     ///
     /// # Errors
     ///
@@ -545,48 +551,68 @@ impl EcdsaP256PrivateKey {
         drbg: &mut R,
         d_bytes: &[u8; PRIVATE_KEY_LEN],
     ) -> Result<Self, Error> {
-        // Reject obviously-invalid scalars before PCT: rejection
-        // happens inside `derive_public_key_internal` too, but
-        // surfacing it here is cheaper and keeps the error shape
-        // consistent.
         let pk = derive_public_key_internal(d_bytes)?;
         let handle = EcdsaP256PrivateKey { d: *d_bytes, q: pk };
-        handle.run_pct(drbg)?;
+        if !handle.pairwise_consistency(drbg)? {
+            return Err(Error::InvalidInput);
+        }
         Ok(handle)
     }
 
-    fn generate_internal<R: Rbg>(drbg: &mut R) -> Result<Self, Error> {
-        let (d, q) = generate_p256_internal(drbg)?;
-        let handle = EcdsaP256PrivateKey { d, q };
-        handle.run_pct(drbg)?;
+    /// Generates the pair and runs the pairwise consistency test. The
+    /// module state is checked again after the test, so a pair is not
+    /// returned once another thread has put the module in its error state.
+    fn generate_internal<R: Rbg>(
+        drbg: &mut R,
+        #[cfg_attr(not(any(test, feature = "fault-injection")), allow(unused_variables))]
+        corrupt: bool,
+    ) -> Result<Self, Error> {
+        let (mut d, q) = generate_p256_internal(drbg)?;
+        #[cfg_attr(not(any(test, feature = "fault-injection")), allow(unused_mut))]
+        let mut handle = EcdsaP256PrivateKey { d, q };
+        oxicrypt_zeroize::zeroize(&mut d);
+        #[cfg(any(test, feature = "fault-injection"))]
+        if corrupt {
+            handle.q[1] ^= 0xFF;
+        }
+        if !handle.pairwise_consistency(drbg)? {
+            return Err(handle.pairwise_consistency_failed());
+        }
+        require_operational()?;
         Ok(handle)
     }
 
-    /// Run the IG 10.3.A pairwise consistency test: sign a fixed
-    /// probe with a DRBG-sampled `k`, verify under our own public
-    /// key, reject the handle on any failure.
-    fn run_pct<R: Rbg>(&self, drbg: &mut R) -> Result<(), Error> {
-        // Cap the retry loop the same way `sign_sha256_internal`
-        // does — a fresh DRBG draw on a sign failure, not a loop
-        // that depends on secret data.
+    /// The pairwise consistency test (ISO/IEC 19790 §7.10.3.3, FIPS 140-3
+    /// IG 10.3.A): signs [`PCT_PROBE_MSG`] with a nonce drawn from `drbg`
+    /// and verifies the signature under the handle's public key. `false`
+    /// when the signature does not verify, or when no nonce within
+    /// [`MAX_SIGN_RETRIES`] draws yields a signature. Each nonce is
+    /// zeroized after its use (unproven: no test observes the cleared
+    /// memory).
+    fn pairwise_consistency<R: Rbg>(&self, drbg: &mut R) -> Result<bool, Error> {
         for _ in 0..MAX_SIGN_RETRIES {
-            let k = sample_scalar_internal(drbg)?;
-            match sign_with_k_internal(&self.d, PCT_PROBE_MSG, &k) {
-                Ok(sig) => {
-                    if verify_internal(&self.q, PCT_PROBE_MSG, &sig)? {
-                        return Ok(());
-                    }
-                    // Verify-fail on a freshly-signed probe is the PCT
-                    // failure signal (IG 10.3.A) and is not retriable.
-                    return Err(Error::InvalidInput);
-                }
-                // `InvalidInput` from the sign primitive means a zero `r`
-                // or `s`: retry with a fresh `k`.
+            let mut k = sample_scalar_internal(drbg)?;
+            let signed = sign_with_k_internal(&self.d, PCT_PROBE_MSG, &k);
+            oxicrypt_zeroize::zeroize(&mut k);
+            match signed {
+                Ok(sig) => return verify_internal(&self.q, PCT_PROBE_MSG, &sig),
+                // A zero `r` or `s`: FIPS 186-5 §6.4.1 draws a fresh `k`.
                 Err(Error::InvalidInput) => {}
                 Err(e) => return Err(e),
             }
         }
-        Err(Error::InvalidInput)
+        Ok(false)
+    }
+
+    /// Wipes both halves of a generated pair that failed the pairwise
+    /// consistency test (unproven: no test observes the cleared memory),
+    /// then puts the module in its error state (ISO/IEC 19790 §7.10.3.3,
+    /// FIPS 140-3 IG 10.3.A), and returns the error to report.
+    fn pairwise_consistency_failed(mut self) -> Error {
+        oxicrypt_zeroize::zeroize(&mut self.q);
+        drop(self);
+        oxicrypt_module::enter_error_state(PCT_REASON);
+        Error::ConditionalTestFailed { reason: PCT_REASON }
     }
 
     fn sign_sha256_internal<R: Rbg>(
@@ -595,12 +621,12 @@ impl EcdsaP256PrivateKey {
         msg: &[u8],
     ) -> Result<[u8; SIGNATURE_LEN], Error> {
         for _ in 0..MAX_SIGN_RETRIES {
-            let k = sample_scalar_internal(drbg)?;
-            match sign_with_k_internal(&self.d, msg, &k) {
+            let mut k = sample_scalar_internal(drbg)?;
+            let signed = sign_with_k_internal(&self.d, msg, &k);
+            oxicrypt_zeroize::zeroize(&mut k);
+            match signed {
                 Ok(sig) => return Ok(sig),
-                // `sign_with_k_internal` returns `InvalidInput` iff `k` or one
-                // of the derived scalars collides with zero — retry
-                // with a fresh `k`, matching FIPS 186-5 §6.4.1.
+                // A zero `r` or `s`: FIPS 186-5 §6.4.1 draws a fresh `k`.
                 Err(Error::InvalidInput) => {}
                 Err(e) => return Err(e),
             }
@@ -671,7 +697,6 @@ const KAT_SIGNATURE: [u8; 64] = [
 /// tampered signature is rejected. Wired into the module state
 /// machine via a [`oxicrypt_module::KatEntry`].
 pub fn self_test() -> Result<(), SelfTestFailure> {
-    // Positive: d → Q matches, sign(d, msg, k) matches, verify accepts.
     let pk = derive_public_key_internal(&KAT_D).map_err(|_| SelfTestFailure)?;
     if pk != KAT_PUBLIC_KEY {
         return Err(SelfTestFailure);
@@ -684,7 +709,6 @@ pub fn self_test() -> Result<(), SelfTestFailure> {
         return Err(SelfTestFailure);
     }
 
-    // Negative: a signature with a flipped byte must be rejected.
     let mut tampered = KAT_SIGNATURE;
     tampered[0] ^= 0x01;
     if verify_internal(&KAT_PUBLIC_KEY, KAT_MSG, &tampered).map_err(|_| SelfTestFailure)? {
@@ -797,8 +821,6 @@ mod tests {
     #[test]
     fn verify_rejects_r_equal_to_n() {
         start_module();
-        // n in big-endian as the `r` component — must be rejected
-        // because the canonical scalar parser rejects r >= n.
         let mut sig = KAT_SIGNATURE;
         let n_bytes: [u8; 32] = [
             0xff, 0xff, 0xff, 0xff, 0x00, 0x00, 0x00, 0x00, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
@@ -813,7 +835,7 @@ mod tests {
     fn verify_rejects_pk_with_wrong_header_byte() {
         start_module();
         let mut bad_pk = KAT_PUBLIC_KEY;
-        bad_pk[0] = 0x02; // compressed; only 0x04 is accepted
+        bad_pk[0] = 0x02;
         assert!(!verify_internal(&bad_pk, KAT_MSG, &KAT_SIGNATURE).unwrap());
     }
 
@@ -825,17 +847,10 @@ mod tests {
 
     #[test]
     fn public_api_gated_on_operational() {
-        // Wire up the ECDSA KAT as the only test in the module and
-        // run it to completion. The public entry points must then
-        // succeed; before initialization they would return
-        // `Error::NotOperational`.
         let _ = init_with_tests(&[KatEntry {
             name: "ecdsa-p256-sha256",
             run: self_test,
         }]);
-        // Regardless of whether some earlier test already initialized
-        // the module, after this call it is guaranteed operational
-        // (unless another test installed a failing KAT, which none do).
         let pk = derive_public_key(&KAT_D).expect("module operational");
         assert_eq!(pk, KAT_PUBLIC_KEY);
         let sig = sign_with_k(&KAT_D, KAT_MSG, &KAT_K).expect("sign ok");
@@ -927,7 +942,7 @@ mod tests {
     }
 
     #[test]
-    fn r7_keygen_pinned_regression() {
+    fn keygen_output_is_pinned_for_a_fixed_stream() {
         // Pin the random bit stream and assert that `generate` + PCT
         // produces a byte-stable `(d, Q)`. This guards against any
         // future refactor silently changing the order of random bit
@@ -961,19 +976,15 @@ mod tests {
         assert_eq!(*sk.private_scalar().unwrap(), EXPECTED_D, "keygen d drift");
         assert_eq!(sk.public_key().unwrap(), EXPECTED_Q, "keygen Q drift");
 
-        // Re-derive the public key from the private scalar and
-        // check the handle agrees — this is what the PCT also
-        // verified internally.
         let pk_rederived =
             derive_public_key_internal(sk.private_scalar().unwrap()).expect("rederive ok");
         assert_eq!(sk.public_key().unwrap(), pk_rederived);
-        // Sanity: the scalar is non-zero and decodable.
         let d = Scalar::from_bytes(sk.private_scalar().unwrap()).expect("scalar in range");
         assert_eq!(d.is_zero(), 0);
     }
 
     #[test]
-    fn r7_generate_then_sign_and_verify_roundtrips() {
+    fn generate_then_sign_and_verify_roundtrips() {
         let _ = init_with_tests(&[KatEntry {
             name: "ecdsa-p256-sha256",
             run: self_test,
@@ -986,10 +997,7 @@ mod tests {
     }
 
     #[test]
-    fn r7_sign_sha256_randomizes_across_calls() {
-        // Two DRBG-backed signatures over the same message must
-        // differ (fresh `k`), and both must verify under the same
-        // public key.
+    fn sign_sha256_randomizes_across_calls() {
         let _ = init_with_tests(&[KatEntry {
             name: "ecdsa-p256-sha256",
             run: self_test,
@@ -1005,11 +1013,7 @@ mod tests {
     }
 
     #[test]
-    fn r7_from_bytes_pinned_kat_d_runs_pct_and_signs() {
-        // Import the RFC 6979 §A.2.5 private scalar through the
-        // handle constructor. The PCT must pass (the key is
-        // internally consistent) and the resulting handle's
-        // `public_key()` must match the RFC 6979 `U` value.
+    fn from_bytes_of_the_kat_scalar_derives_its_public_key_and_signs() {
         let _ = init_with_tests(&[KatEntry {
             name: "ecdsa-p256-sha256",
             run: self_test,
@@ -1025,7 +1029,7 @@ mod tests {
     }
 
     #[test]
-    fn r7_from_bytes_rejects_zero_scalar() {
+    fn from_bytes_rejects_zero_scalar() {
         let _ = init_with_tests(&[KatEntry {
             name: "ecdsa-p256-sha256",
             run: self_test,
@@ -1040,7 +1044,7 @@ mod tests {
     }
 
     #[test]
-    fn r7_from_bytes_rejects_scalar_equal_to_n() {
+    fn from_bytes_rejects_scalar_equal_to_n() {
         let _ = init_with_tests(&[KatEntry {
             name: "ecdsa-p256-sha256",
             run: self_test,
@@ -1060,45 +1064,31 @@ mod tests {
     }
 
     #[test]
-    fn r7_pct_rejects_handle_with_tampered_public_key() {
-        // Construct a handle honestly, then hand-forge an
-        // inconsistent `(d, Q')` handle and run the PCT directly:
-        // the sign-then-verify round-trip must fail because the
-        // forged public key is not `d · G`. This is the IG 10.3.A
-        // fault-injection proof that the PCT tests what its
-        // documentation states.
+    fn pairwise_consistency_rejects_a_foreign_public_key() {
         let _ = init_with_tests(&[KatEntry {
             name: "ecdsa-p256-sha256",
             run: self_test,
         }]);
         let mut drbg = pct_drbg(b"pct-tampered");
         let honest = EcdsaP256PrivateKey::generate(&mut drbg).expect("honest generate ok");
-
-        // A second, independent key pair whose public part is
-        // grafted onto the first scalar.
         let decoy = EcdsaP256PrivateKey::generate(&mut drbg).expect("decoy generate ok");
 
-        // Forged handle: `honest`'s private scalar, `decoy`'s
-        // public key. Construction goes through the raw struct to
-        // bypass the constructor PCT; `run_pct` then runs explicitly
-        // and must fail.
+        // Built through the raw struct, which skips the constructors'
+        // test, so that the test itself is what rejects the pair.
         let forged = EcdsaP256PrivateKey {
             d: *honest.private_scalar().unwrap(),
             q: decoy.public_key().unwrap(),
         };
         assert_eq!(
-            forged.run_pct(&mut drbg),
-            Err(Error::InvalidInput),
+            forged.pairwise_consistency(&mut drbg),
+            Ok(false),
             "PCT must reject an inconsistent (d, Q) handle"
         );
+        assert_eq!(honest.pairwise_consistency(&mut drbg), Ok(true));
     }
 
     #[test]
-    fn r7_sample_scalar_produces_in_range_values() {
-        // Drain a few dozen draws from the sampler and assert each
-        // is a valid non-zero scalar. This is primarily a guard
-        // against silently regressing the rejection-sampling
-        // range check.
+    fn sample_scalar_produces_in_range_values() {
         let _ = init_with_tests(&[KatEntry {
             name: "ecdsa-p256-sha256",
             run: self_test,

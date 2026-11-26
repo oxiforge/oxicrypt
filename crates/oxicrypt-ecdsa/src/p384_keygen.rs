@@ -61,9 +61,6 @@ fn sample_scalar_internal_unguarded<R: Rbg>(
         if let Some(s) = Scalar384::from_bytes(&buf)
             && s.is_zero() == 0
         {
-            // See P-256 counterpart for the success-path
-            // copy-and-clear rationale; same pattern, 48-byte
-            // scalar instead of 32.
             let result = buf;
             oxicrypt_zeroize::zeroize(&mut buf);
             return Ok(Some(result));
@@ -80,7 +77,9 @@ fn sample_scalar_internal_unguarded<R: Rbg>(
 /// encoding of `d · G`. `drbg` is a random bit generator implementing
 /// [`Rbg`]. Returns [`Error::Rbg`] if it produces no output, and
 /// [`Error::InvalidInput`] if it fails to produce an in-range scalar
-/// within `MAX_SAMPLE_ATTEMPTS` attempts.
+/// within `MAX_SAMPLE_ATTEMPTS` attempts. When public-key derivation
+/// fails, `d` is zeroized before the error returns (unproven: no test
+/// observes the cleared memory).
 ///
 /// This primitive does not run the IG 10.3.A pairwise consistency
 /// test; callers run the PCT appropriate to their family (ECDSA
@@ -99,7 +98,12 @@ pub fn generate_p384_internal<R: Rbg>(
     drbg: &mut R,
 ) -> Result<([u8; PRIVATE_KEY_LEN], [u8; PUBLIC_KEY_LEN]), Error> {
     require_self_test_started()?;
-    let d = sample_scalar_internal(drbg)?;
-    let pk = derive_public_key_internal(&d)?;
-    Ok((d, pk))
+    let mut d = sample_scalar_internal(drbg)?;
+    match derive_public_key_internal(&d) {
+        Ok(pk) => Ok((d, pk)),
+        Err(e) => {
+            oxicrypt_zeroize::zeroize(&mut d);
+            Err(e)
+        }
+    }
 }

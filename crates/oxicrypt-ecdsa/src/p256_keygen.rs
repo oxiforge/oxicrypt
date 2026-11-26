@@ -69,8 +69,8 @@ pub const RBG_STRENGTH_BITS: u32 = 128;
 /// [`oxicrypt_module::require_self_test_started`] admits the call (in
 /// `Operational`, or in `SelfTest` on the thread running the power-up
 /// self-tests),
-/// and is safe to call from KATs, PCTs, and from the
-/// module-state-checked wrappers above.
+/// and is safe to call from KATs, PCTs, and the gated key-generation
+/// and signing services.
 ///
 /// Visibility is `pub` rather than `pub(crate)` because
 /// `oxicrypt-ecdh` reuses this primitive for ECDH P-256 keypair
@@ -109,14 +109,6 @@ fn sample_scalar_internal_unguarded<R: Rbg>(
         if let Some(s) = Scalar::from_bytes(&buf)
             && s.is_zero() == 0
         {
-            // Success path: copy the accepted bytes out, then
-            // clear the named local `buf` before returning.
-            // The returned `result` carries the bytes onward;
-            // the caller chain wraps it in `EcdsaP{256}PrivateKey`
-            // (or, for ECDH, the `oxicrypt-ecdh` keygen wrapper),
-            // both of which provide Drop-zeroize. The clear of
-            // `buf` is a volatile store, so it is not elided even
-            // though `buf` is dead afterwards.
             let result = buf;
             oxicrypt_zeroize::zeroize(&mut buf);
             return Ok(Some(result));
@@ -139,7 +131,8 @@ fn sample_scalar_internal_unguarded<R: Rbg>(
 /// [`Rbg`]. Returns [`Error::Rbg`] if it produces no output, and
 /// [`Error::InvalidInput`] if it fails to produce an in-range scalar
 /// within `MAX_SAMPLE_ATTEMPTS` attempts — in practice, only a broken
-/// generator.
+/// generator. When public-key derivation fails, `d` is zeroized before
+/// the error returns (unproven: no test observes the cleared memory).
 ///
 /// This primitive does not run the IG 10.3.A pairwise consistency
 /// test; the PCT is the job of the caller. For ECDSA the PCT lives
@@ -163,7 +156,12 @@ pub fn generate_p256_internal<R: Rbg>(
     drbg: &mut R,
 ) -> Result<([u8; PRIVATE_KEY_LEN], [u8; PUBLIC_KEY_LEN]), Error> {
     require_self_test_started()?;
-    let d = sample_scalar_internal(drbg)?;
-    let pk = derive_public_key_internal(&d)?;
-    Ok((d, pk))
+    let mut d = sample_scalar_internal(drbg)?;
+    match derive_public_key_internal(&d) {
+        Ok(pk) => Ok((d, pk)),
+        Err(e) => {
+            oxicrypt_zeroize::zeroize(&mut d);
+            Err(e)
+        }
+    }
 }

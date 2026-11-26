@@ -95,6 +95,7 @@ pub fn keygen_internal(seed: &[u8; SEED_LEN]) -> Result<[u8; PUBLIC_KEY_LEN], Er
 #[doc(hidden)]
 pub fn sign_internal(seed: &[u8; SEED_LEN], message: &[u8]) -> Result<[u8; SIGNATURE_LEN], Error> {
     require_self_test_started()?;
+    // The steps of RFC 8032 §5.1.6.
     // h = SHA512(seed); split into scalar half and prefix half.
     let h = sha512_cat(&[seed])?;
     let mut s_bytes = [0u8; 32];
@@ -215,29 +216,26 @@ pub fn verify(
 // ------------------------------------------------------------------
 
 /// Fixed probe message used by the IG 10.3.A pairwise consistency
-/// test. The exact bytes don't matter — the PCT only needs
-/// sign-then-verify to round-trip — but pinning them makes the PCT
-/// code path deterministic given a fixed seed.
+/// test.
 const PCT_PROBE_MSG: &[u8] = b"oxicrypt-ed25519-pct";
+
+/// The `reason` of a pairwise consistency failure in key generation.
+const PCT_REASON: &str = "Ed25519 pairwise consistency";
 
 /// An Ed25519 private key handle that has passed an IG 10.3.A
 /// pairwise consistency test at construction time.
 ///
 /// The handle carries both the 32-byte seed (RFC 8032's "secret
 /// key", before SHA-512 expansion and clamping) and its derived
-/// compressed public key `A`. Holding the public key avoids
-/// recomputing `[s]B` on every sign, but — more importantly — the
-/// public key stored here is the one the PCT verified against, so
-/// any later call to [`Ed25519PrivateKey::sign`] is guaranteed to
-/// be consistent with [`Ed25519PrivateKey::public_key`].
+/// compressed public key `A`. The public key stored here is the one
+/// the test verified against, so a later call to
+/// [`Ed25519PrivateKey::sign`] is consistent with
+/// [`Ed25519PrivateKey::public_key`].
 ///
-/// All three constructors ([`generate`], [`from_seed`], and the
-/// equivalent `*_internal` helpers used by the power-up KAT) route
-/// through `Ed25519PrivateKey::run_pct`, which calls
-/// [`sign_internal`] on a fixed probe message and then calls
-/// [`verify_internal`] on the freshly derived public key. Failure
-/// anywhere in that chain results in [`Error::InvalidInput`] and no
-/// handle is produced.
+/// Both constructors sign a fixed probe message under the seed and
+/// verify it under the derived public key. A failure in [`generate`]
+/// is a conditional self-test failure that puts the module in its error
+/// state and produces no handle.
 ///
 /// Unlike ECDSA, Ed25519 signing is deterministic (RFC 8032 §5.1.6
 /// derives the per-signature nonce `r` from the SHA-512-expanded
@@ -266,13 +264,17 @@ impl Ed25519PrivateKey {
     /// completed its power-up self-tests, [`Error::RbgTooWeak`] before
     /// any draw if the random bit generator reports less than
     /// [`RBG_STRENGTH_BITS`], [`Error::Rbg`] if the random bit generator
-    /// produces no output, or [`Error::InvalidInput`] if the PCT
-    /// sign-verify round-trip fails (which would indicate a faulted
-    /// sign or verify primitive).
+    /// produces no output, or [`Error::ConditionalTestFailed`] with the
+    /// reason `Ed25519 pairwise consistency` if the pairwise consistency
+    /// test fails (ISO/IEC 19790 §7.10.3.3, FIPS 140-3 IG 10.3.A). On
+    /// that failure the seed and public key are zeroized (unproven: no
+    /// test observes the cleared memory) and the module enters its error
+    /// state, after which every service returns [`Error::NotOperational`].
     pub fn generate<R: Rbg>(drbg: &mut R) -> Result<Self, Error> {
+        let corrupt = crate::take_corrupt_next_pk();
         require_operational()?;
         require_allowed(Service::Ed25519Keygen)?;
-        Self::generate_internal(drbg)
+        Self::generate_internal(drbg, corrupt)
     }
 
     /// Import an Ed25519 private key from its 32-byte seed, derive
@@ -335,43 +337,74 @@ impl Ed25519PrivateKey {
 
     // -- internal helpers, reached after a gate or guard has passed --
 
-    fn generate_internal<R: Rbg>(drbg: &mut R) -> Result<Self, Error> {
+    /// Draws the seed, derives the pair and runs the pairwise consistency
+    /// test. The module state is checked again after the test, so a pair
+    /// is not returned once another thread has put the module in its
+    /// error state.
+    fn generate_internal<R: Rbg>(
+        drbg: &mut R,
+        #[cfg_attr(not(any(test, feature = "fault-injection")), allow(unused_variables))]
+        corrupt: bool,
+    ) -> Result<Self, Error> {
         if drbg.strength_bits() < RBG_STRENGTH_BITS {
             return Err(Error::RbgTooWeak);
         }
         let mut seed = [0u8; SEED_LEN];
-        drbg.fill(&mut seed).map_err(Error::Rbg)?;
-        Self::from_seed_internal(&seed)
-    }
-
-    fn from_seed_internal(seed: &[u8; SEED_LEN]) -> Result<Self, Error> {
-        let public_key = keygen_internal(seed)?;
-        let handle = Ed25519PrivateKey {
-            seed: *seed,
-            public_key,
-        };
-        handle.run_pct()?;
+        if let Err(e) = drbg.fill(&mut seed) {
+            oxicrypt_zeroize::zeroize(&mut seed);
+            return Err(Error::Rbg(e));
+        }
+        let derived = Self::derive(&seed);
+        oxicrypt_zeroize::zeroize(&mut seed);
+        #[cfg_attr(not(any(test, feature = "fault-injection")), allow(unused_mut))]
+        let mut handle = derived?;
+        #[cfg(any(test, feature = "fault-injection"))]
+        if corrupt {
+            handle.public_key[1] ^= 0xFF;
+        }
+        if !handle.pairwise_consistency()? {
+            return Err(handle.pairwise_consistency_failed());
+        }
+        require_operational()?;
         Ok(handle)
     }
 
-    /// Run the IG 10.3.A pairwise consistency test: sign a fixed
-    /// probe under this seed and verify under our own public key,
-    /// rejecting the handle on any failure.
-    ///
-    /// Ed25519's deterministic nonce derivation means there is no
-    /// per-signature randomness to vary, so this is a single
-    /// sign-and-verify round trip rather than a retry loop.
-    fn run_pct(&self) -> Result<(), Error> {
-        let sig = sign_internal(&self.seed, PCT_PROBE_MSG)?;
-        if verify_internal(&self.public_key, PCT_PROBE_MSG, &sig)? {
-            Ok(())
-        } else {
-            // A sign-then-verify failure on a freshly generated key
-            // would indicate either a corrupted seed or a broken
-            // sign/verify primitive. Either way, refuse to hand
-            // back a handle.
-            Err(Error::InvalidInput)
+    fn from_seed_internal(seed: &[u8; SEED_LEN]) -> Result<Self, Error> {
+        let handle = Self::derive(seed)?;
+        if !handle.pairwise_consistency()? {
+            return Err(Error::InvalidInput);
         }
+        Ok(handle)
+    }
+
+    /// The handle holding `seed` and its public key, before the pairwise
+    /// consistency test.
+    fn derive(seed: &[u8; SEED_LEN]) -> Result<Self, Error> {
+        let public_key = keygen_internal(seed)?;
+        Ok(Ed25519PrivateKey {
+            seed: *seed,
+            public_key,
+        })
+    }
+
+    /// The pairwise consistency test (ISO/IEC 19790 §7.10.3.3, FIPS 140-3
+    /// IG 10.3.A): signs [`PCT_PROBE_MSG`] under the seed and verifies the
+    /// signature under the handle's public key. `false` when it does not
+    /// verify.
+    fn pairwise_consistency(&self) -> Result<bool, Error> {
+        let sig = sign_internal(&self.seed, PCT_PROBE_MSG)?;
+        verify_internal(&self.public_key, PCT_PROBE_MSG, &sig)
+    }
+
+    /// Wipes both halves of a generated pair that failed the pairwise
+    /// consistency test (unproven: no test observes the cleared memory),
+    /// then puts the module in its error state (ISO/IEC 19790 §7.10.3.3,
+    /// FIPS 140-3 IG 10.3.A), and returns the error to report.
+    fn pairwise_consistency_failed(mut self) -> Error {
+        oxicrypt_zeroize::zeroize(&mut self.public_key);
+        drop(self);
+        oxicrypt_module::enter_error_state(PCT_REASON);
+        Error::ConditionalTestFailed { reason: PCT_REASON }
     }
 }
 
@@ -398,8 +431,7 @@ const KAT_PUBLIC_KEY: [u8; 32] = [
     0x0e, 0xe1, 0x72, 0xf3, 0xda, 0xa6, 0x23, 0x25, 0xaf, 0x02, 0x1a, 0x68, 0xf7, 0x07, 0x51, 0x1a,
 ];
 
-/// Expected signature of the empty message from RFC 8032 §7.1 TEST 1,
-/// cross-checked against pyca/cryptography.
+/// Expected signature of the empty message from RFC 8032 §7.1 TEST 1.
 const KAT_SIGNATURE: [u8; 64] = [
     0xe5, 0x56, 0x43, 0x00, 0xc3, 0x60, 0xac, 0x72, 0x90, 0x86, 0xe2, 0xcc, 0x80, 0x6e, 0x82, 0x8a,
     0x84, 0x87, 0x7f, 0x1e, 0xb8, 0xe5, 0xd9, 0x74, 0xd8, 0x73, 0xe0, 0x65, 0x22, 0x49, 0x01, 0x55,
@@ -413,7 +445,6 @@ const KAT_SIGNATURE: [u8; 64] = [
 /// verification on a tampered signature so that a broken verifier
 /// that returned `true` unconditionally would also be caught.
 pub fn self_test() -> Result<(), SelfTestFailure> {
-    // Positive: keygen + sign + verify must all match the KAT.
     let pk = keygen_internal(&KAT_SEED).map_err(|_| SelfTestFailure)?;
     if pk != KAT_PUBLIC_KEY {
         return Err(SelfTestFailure);
@@ -426,20 +457,14 @@ pub fn self_test() -> Result<(), SelfTestFailure> {
         return Err(SelfTestFailure);
     }
 
-    // Negative: a signature with a flipped byte must be rejected.
-    // Catches a broken verifier that always returns `true`.
     let mut tampered = KAT_SIGNATURE;
     tampered[0] ^= 0x01;
     if verify_internal(&KAT_PUBLIC_KEY, &[], &tampered).map_err(|_| SelfTestFailure)? {
         return Err(SelfTestFailure);
     }
 
-    // Exercise the Ed25519PrivateKey handle construction path so
-    // that the power-up KAT also covers the IG 10.3.A pairwise
-    // consistency test wiring. `from_seed_internal` runs the full
-    // sign-then-verify probe through the internal helpers, so a
-    // faulted PCT would latch the module into Error state here
-    // rather than on first production use.
+    // The handle path, so that the power-up self-test also covers the
+    // pairwise consistency test.
     let handle = Ed25519PrivateKey::from_seed_internal(&KAT_SEED).map_err(|_| SelfTestFailure)?;
     if handle.public_key != KAT_PUBLIC_KEY {
         return Err(SelfTestFailure);
@@ -622,8 +647,7 @@ mod tests {
     #[test]
     fn verify_rejects_non_canonical_s() {
         start_module();
-        // Take a valid signature and replace S with L itself. L is
-        // not canonical (RFC 8032 §5.1.7 step 2 requires S < L).
+        // RFC 8032 §5.1.7 step 2 requires S < L, so S = L is refused.
         let l_bytes: [u8; 32] = [
             0xed, 0xd3, 0xf5, 0x5c, 0x1a, 0x63, 0x12, 0x58, 0xd6, 0x9c, 0xf7, 0xa2, 0xde, 0xf9,
             0xde, 0x14, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
@@ -643,11 +667,6 @@ mod tests {
 
     #[test]
     fn private_key_from_seed_matches_rfc_vectors() {
-        // Independently of keygen_internal, going through the
-        // public Ed25519PrivateKey handle must produce the same
-        // public key and the same signatures as the RFC 8032
-        // vectors — i.e. the PCT pass gate does not corrupt
-        // anything.
         let entries = &[KatEntry {
             name: "ed25519_power_up_kat",
             run: self_test,
@@ -666,8 +685,6 @@ mod tests {
 
     #[test]
     fn private_key_generate_produces_consistent_handle() {
-        // A DRBG-backed generate() must produce a handle whose
-        // public key verifies a signature made with its own seed.
         use oxicrypt_drbg::HmacDrbgSha256;
         let entries = &[KatEntry {
             name: "ed25519_power_up_kat",
@@ -681,9 +698,6 @@ mod tests {
 
         let sig = key.sign(b"ed25519 smoke").unwrap();
         assert!(verify_internal(&key.public_key().unwrap(), b"ed25519 smoke", &sig).unwrap());
-
-        // And the stored public key must match re-derivation from
-        // the stored seed via the primitive.
         assert_eq!(
             key.public_key().unwrap(),
             keygen_internal(key.seed().unwrap()).unwrap()
@@ -692,51 +706,40 @@ mod tests {
 
     #[test]
     fn private_key_pct_rejects_corrupted_handle() {
-        // Proves the PCT is load-bearing by constructing a handle
-        // whose stored public key does not match the one derived
-        // from its seed, and asserting that `run_pct()` refuses it.
-        // The public API cannot reach this state, so the handle is
-        // built directly and the internal gate called.
         let entries = &[KatEntry {
             name: "ed25519_power_up_kat",
             run: self_test,
         }];
         let _ = init_with_tests(entries);
 
+        // The public key of vector 1 with the seed of vector 0, built
+        // through the raw struct, which skips the constructors' test, so
+        // that the test itself is what rejects the pair.
         let v = &rfc8032_vectors()[0];
-        // Take the public key from vector 1 but the seed from
-        // vector 0 — mismatched pair.
         let other_pk = rfc8032_vectors()[1].pk;
         let bad_handle = Ed25519PrivateKey {
             seed: v.sk,
             public_key: other_pk,
         };
         assert_eq!(
-            bad_handle.run_pct(),
-            Err(Error::InvalidInput),
+            bad_handle.pairwise_consistency(),
+            Ok(false),
             "PCT should reject a handle whose stored public key does not match its seed"
         );
 
-        // Sanity: the *matching* handle is still accepted.
         let good_handle = Ed25519PrivateKey {
             seed: v.sk,
             public_key: v.pk,
         };
-        assert_eq!(good_handle.run_pct(), Ok(()));
+        assert_eq!(good_handle.pairwise_consistency(), Ok(true));
     }
 
     #[test]
     fn public_api_gated_on_operational() {
-        // Until the module is initialized, the public API returns
-        // NotOperational. After `initialize_with_tests` runs the
-        // Ed25519 KAT, the public API works.
         let entries = &[KatEntry {
             name: "ed25519_power_up_kat",
             run: self_test,
         }];
-        // If any other test in this process already initialized the
-        // module, `initialize_with_tests` returns AlreadyInitialized;
-        // that's also a state in which the public API must work.
         let _ = init_with_tests(entries);
 
         let pk = keygen(&KAT_SEED).unwrap();

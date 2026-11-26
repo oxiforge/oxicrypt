@@ -15,11 +15,28 @@ publish.workspace = true
 [lints]
 workspace = true
 
+[features]
+default = []
+# The test seam `oxicrypt_ecdh::seam`, which corrupts the next generated
+# public key before its pairwise consistency test. Default OFF, and enabled
+# by no shipped build.
+fault-injection = []
+
 [dependencies]
 oxicrypt-drbg = { workspace = true }
 oxicrypt-ecdsa = { workspace = true }
 oxicrypt-module = { workspace = true }
 oxicrypt-zeroize = { workspace = true }
+
+[[test]]
+name = "pct_fault_p256"
+path = "tests/pct_fault_p256.rs"
+required-features = ["fault-injection"]
+
+[[test]]
+name = "pct_fault_p384"
+path = "tests/pct_fault_p384.rs"
+required-features = ["fault-injection"]
 
 [package.metadata.lama]
 # Registry discovery (LAMA SPEC.md, "Package registry discovery"). Must be a

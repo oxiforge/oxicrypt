@@ -47,6 +47,24 @@
 //! a conditional test that runs on every ECDH call for both curves.
 //! Private-scalar canonicality (`1 ≤ d < n`) is checked alongside.
 //!
+//! Key generation on either curve runs the pairwise consistency test
+//! (ISO/IEC 19790 §7.10.3.3, FIPS 140-3 IG 10.3.A) before the pair is
+//! returned: ECDH from the new private key against the RFC 5903
+//! responder public key, and from the RFC 5903 responder private key
+//! against the new public key, must give the same `Z`. On a mismatch the
+//! function zeroizes the pair and both secrets (unproven: no test
+//! observes the cleared memory), puts the module in its
+//! error state, and returns [`Error::ConditionalTestFailed`] with the
+//! reason `ECDH P-256 pairwise consistency` or
+//! `ECDH P-384 pairwise consistency`; every service then returns
+//! [`Error::NotOperational`] until the process restarts.
+//!
+//! # The `fault-injection` feature (default OFF)
+//!
+//! Compiles the `seam` module, whose `corrupt_next_pk` makes the next key
+//! generation's pairwise consistency test fail, for the tests of that
+//! failure path. No shipped build enables it.
+//!
 //! # Sensitive security parameters
 //!
 //! - **Private key `d`** (`[u8; 32]` for P-256, `[u8; 48]` for
@@ -89,6 +107,11 @@ use oxicrypt_module::{
     Error, KatEntry, Rbg, SelfTestFailure, Service, require_allowed, require_operational,
     require_self_test_started,
 };
+
+/// The test seam for key generation; available with the
+/// `fault-injection` feature or in the crate's own tests.
+#[cfg(any(test, feature = "fault-injection"))]
+pub mod seam;
 
 /// Length of a P-256 private-key scalar in bytes.
 pub const PRIVATE_KEY_LEN: usize = 32;
@@ -145,7 +168,6 @@ fn compute_shared_secret_p256_internal_unguarded(
     // Peer public key: full SP 800-56Ar3 §5.6.2.3.3 validation.
     let q = Point::from_sec1_uncompressed_validated(peer_pk)?;
 
-    // Z_point = d * Q. The scalar-mul ladder is constant time in `d`.
     let z_point = q.mul(&d);
 
     // SP 800-56Ar3 §5.7.1.2 step 2: if the result is the identity,
@@ -350,42 +372,90 @@ const KAT_P384_Z: [u8; 48] = [
 ];
 
 // ------------------------------------------------------------------
-// DRBG-driven keypair generation
-//
-// Two `_internal` primitives + two gated public wrappers, one per
-// curve. The `_internal` primitives delegate scalar sampling and
-// public-key derivation to `oxicrypt_ecdsa::p{256,384}_keygen` —
-// the same FIPS 186-5 §A.2.2 rejection sampler that backs ECDSA
-// keygen on the matching curve, so a CST-lab reviewer audits one
-// sampler covering both families. Each `_internal`
-// then runs the IG 10.3.A pairwise consistency test as a
-// two-direction ECDH roundtrip against the RFC 5903 §8.1 / §8.2
-// responder keypair: a faulted scalar-mul during keygen produces
-// a `Q_new` that fails the equality `d_new · Q_KAT == d_KAT · Q_new`
-// and the function returns `Error::InvalidInput`. The gated public wrappers add
-// the FIPS-module operational-state gate and profile-allow-list
-// gate before delegating to the `_internal` primitive.
+// DRBG-driven key-pair generation
 // ------------------------------------------------------------------
 
+/// The `reason` of the P-256 pairwise consistency failure.
+const P256_PCT_REASON: &str = "ECDH P-256 pairwise consistency";
+
+/// The `reason` of the P-384 pairwise consistency failure.
+const P384_PCT_REASON: &str = "ECDH P-384 pairwise consistency";
+
+/// The pairwise consistency test of a new P-256 pair (ISO/IEC 19790
+/// §7.10.3.3, FIPS 140-3 IG 10.3.A): `true` iff `ECDH(d, Q_KAT_R)` and
+/// `ECDH(d_KAT_R, q)` give the same `Z`, against the RFC 5903 §8.1
+/// responder pair. A `q` that fails public-key validation is
+/// inconsistent. Both secrets are zeroized before it returns (unproven:
+/// no test observes the cleared memory).
+fn pairwise_consistency_p256(d: &[u8; PRIVATE_KEY_LEN], q: &[u8; PUBLIC_KEY_LEN]) -> bool {
+    let Some(mut z_a) = compute_shared_secret_p256_internal_unguarded(d, &KAT_Q_R) else {
+        return false;
+    };
+    let Some(mut z_b) = compute_shared_secret_p256_internal_unguarded(&KAT_D_R, q) else {
+        oxicrypt_zeroize::zeroize(&mut z_a);
+        return false;
+    };
+    // `==` is not constant time. The two secrets differ only when the
+    // test fails, so its timing reveals nothing beyond the outcome.
+    let consistent = z_a == z_b;
+    oxicrypt_zeroize::zeroize(&mut z_a);
+    oxicrypt_zeroize::zeroize(&mut z_b);
+    consistent
+}
+
+/// The pairwise consistency test of a new P-384 pair, as
+/// [`pairwise_consistency_p256`] against the RFC 5903 §8.2 responder
+/// pair.
+fn pairwise_consistency_p384(
+    d: &[u8; P384_PRIVATE_KEY_LEN],
+    q: &[u8; P384_PUBLIC_KEY_LEN],
+) -> bool {
+    let Some(mut z_a) = compute_shared_secret_p384_internal_unguarded(d, &KAT_P384_Q_R) else {
+        return false;
+    };
+    let Some(mut z_b) = compute_shared_secret_p384_internal_unguarded(&KAT_P384_D_R, q) else {
+        oxicrypt_zeroize::zeroize(&mut z_a);
+        return false;
+    };
+    let consistent = z_a == z_b;
+    oxicrypt_zeroize::zeroize(&mut z_a);
+    oxicrypt_zeroize::zeroize(&mut z_b);
+    consistent
+}
+
+/// Wipes both halves of a pair that failed the pairwise consistency
+/// test (unproven: no test observes the cleared memory), then puts the
+/// module in its error state (ISO/IEC 19790 §7.10.3.3, FIPS 140-3
+/// IG 10.3.A), and returns the error to report.
+fn pairwise_consistency_failed(d: &mut [u8], q: &mut [u8], reason: &'static str) -> Error {
+    oxicrypt_zeroize::zeroize(d);
+    oxicrypt_zeroize::zeroize(q);
+    oxicrypt_module::enter_error_state(reason);
+    Error::ConditionalTestFailed { reason }
+}
+
 /// Generate a fresh ECDH P-256 key pair `(d, Q)` and run the
-/// IG 10.3.A pairwise consistency test before returning.
+/// pairwise consistency test before returning it.
 ///
 /// `d` is sampled from `[1, n − 1]` via the FIPS 186-5 §A.2.2
 /// rejection sampler in
 /// [`oxicrypt_ecdsa::p256_keygen::generate_p256_internal`]. `Q` is
 /// the uncompressed SEC1 encoding `0x04 || X(32) || Y(32)` of
-/// `d · G`. The IG 10.3.A PCT runs as an ECDH roundtrip against
-/// the RFC 5903 §8.1 responder keypair (`KAT_D_R`, `KAT_Q_R`):
-/// `Z_a = ECDH(d_new, Q_KAT_R)` and `Z_b = ECDH(d_KAT_R, Q_new)`
-/// must agree, otherwise keygen aborts.
+/// `d · G`. The test is an ECDH round trip against the RFC 5903 §8.1
+/// responder pair: `ECDH(d, Q_KAT_R)` and `ECDH(d_KAT_R, Q)` must agree.
 ///
 /// `drbg` is a random bit generator implementing [`Rbg`].
 ///
 /// Returns [`Error::RbgTooWeak`] before any draw when the random bit
 /// generator reports less than [`RBG_STRENGTH_BITS`], [`Error::Rbg`]
 /// when it produces no output, and [`Error::InvalidInput`] on
-/// scalar-sampling exhaustion or PCT mismatch. Skips the operational and profile gates so power-up
-/// callers and the gated public wrapper can both reach it.
+/// scalar-sampling exhaustion. On a pairwise consistency mismatch it
+/// zeroizes the pair (unproven: no test observes the cleared memory),
+/// puts the module in its error state and returns
+/// [`Error::ConditionalTestFailed`] with the reason
+/// `ECDH P-256 pairwise consistency`. Skips the operational and profile
+/// gates so power-up callers and the gated public wrapper can both
+/// reach it.
 ///
 /// Returns [`Error::NotOperational`] when the module refuses the call,
 /// which it does in every state other than `SelfTest` and `Operational`.
@@ -394,30 +464,47 @@ pub fn generate_keypair_p256_internal<R: Rbg>(
     drbg: &mut R,
 ) -> Result<([u8; PRIVATE_KEY_LEN], [u8; PUBLIC_KEY_LEN]), Error> {
     require_self_test_started()?;
+    keygen_p256(drbg, take_corrupt_next_pk())
+}
+
+/// Whether the test seam armed this key generation, read and cleared
+/// before any check that can fail, so that an early error cannot leave it
+/// armed (the `_internal` forms read it after their state guard, which
+/// must come first); `false` in a build without the seam.
+fn take_corrupt_next_pk() -> bool {
+    #[cfg(any(test, feature = "fault-injection"))]
+    {
+        seam::take_corrupt_next_pk()
+    }
+    #[cfg(not(any(test, feature = "fault-injection")))]
+    {
+        false
+    }
+}
+
+/// The body of [`generate_keypair_p256_internal`]. The module state is
+/// checked again after the pairwise consistency test, so a pair is not
+/// returned once another thread has put the module in its error state.
+fn keygen_p256<R: Rbg>(
+    drbg: &mut R,
+    #[cfg_attr(not(any(test, feature = "fault-injection")), allow(unused_variables))] corrupt: bool,
+) -> Result<([u8; PRIVATE_KEY_LEN], [u8; PUBLIC_KEY_LEN]), Error> {
+    require_self_test_started()?;
     if drbg.strength_bits() < RBG_STRENGTH_BITS {
         return Err(Error::RbgTooWeak);
     }
-    let (d, q) = oxicrypt_ecdsa::p256_keygen::generate_p256_internal(drbg)?;
-    // IG 10.3.A pairwise consistency: a faulted scalar-mul during
-    // keygen produces `Q ≠ d · G` and the two-direction ECDH
-    // round-trip diverges. Variable-time equality on the 32-byte
-    // shared-secret outputs is acceptable here — both Z_a and Z_b are
-    // derived from public-key-validated inputs that already passed
-    // the SP 800-56Ar3 §5.6.2.3.3 checks inside
-    // `compute_shared_secret_p256_internal`.
-    let mut z_a = compute_shared_secret_p256_internal(&d, &KAT_Q_R)?;
-    let mut z_b = compute_shared_secret_p256_internal(&KAT_D_R, &q)?;
-    let consistent = z_a == z_b;
-    // CSP scrub: `z_a` and `z_b` are 32-byte ECDH shared secrets
-    // (CSP per SP 800-56Ar3 §5.7.1.2) used only for the equality
-    // check. They never escape the function, and are temporary SSP
-    // material within the meaning of FIPS 140-3 IG §7.9.7 AS09.32. The
-    // clears go through `oxicrypt-zeroize`'s volatile store, so they
-    // are not elided even though both locals are dead here.
-    oxicrypt_zeroize::zeroize(&mut z_a);
-    oxicrypt_zeroize::zeroize(&mut z_b);
-    if !consistent {
-        return Err(Error::InvalidInput);
+    let (mut d, mut q) = oxicrypt_ecdsa::p256_keygen::generate_p256_internal(drbg)?;
+    #[cfg(any(test, feature = "fault-injection"))]
+    if corrupt {
+        q[1] ^= 0xFF;
+    }
+    if !pairwise_consistency_p256(&d, &q) {
+        return Err(pairwise_consistency_failed(&mut d, &mut q, P256_PCT_REASON));
+    }
+    if let Err(e) = require_self_test_started() {
+        oxicrypt_zeroize::zeroize(&mut d);
+        oxicrypt_zeroize::zeroize(&mut q);
+        return Err(e);
     }
     Ok((d, q))
 }
@@ -433,24 +520,30 @@ pub fn generate_keypair_p256_internal<R: Rbg>(
 /// [`Error::AlgorithmRestricted`] if the active profile does not
 /// allow ECDH-P-256, [`Error::RbgTooWeak`] before any draw if the
 /// random bit generator reports less than [`RBG_STRENGTH_BITS`],
-/// [`Error::Rbg`] if the random bit generator produces no output, or
-/// [`Error::InvalidInput`] if keygen fails
-/// (sampling exhaustion or IG 10.3.A PCT mismatch).
+/// [`Error::Rbg`] if the random bit generator produces no output,
+/// [`Error::InvalidInput`] on sampling exhaustion, or
+/// [`Error::ConditionalTestFailed`] with the reason
+/// `ECDH P-256 pairwise consistency` if the pairwise consistency test
+/// fails (FIPS 140-3 IG 10.3.A), after which the module is in its error
+/// state.
 pub fn generate_keypair_p256<R: Rbg>(
     drbg: &mut R,
 ) -> Result<([u8; PRIVATE_KEY_LEN], [u8; PUBLIC_KEY_LEN]), Error> {
+    let corrupt = take_corrupt_next_pk();
     require_operational()?;
     require_allowed(Service::EcdhP256)?;
-    generate_keypair_p256_internal(drbg)
+    keygen_p256(drbg, corrupt)
 }
 
 /// Generate a fresh ECDH P-384 key pair `(d, Q)` and run the
-/// IG 10.3.A pairwise consistency test before returning.
+/// pairwise consistency test before returning it.
 ///
 /// Mirrors [`generate_keypair_p256_internal`] for the P-384 curve:
-/// 48-byte scalar, 97-byte uncompressed SEC1 public key, RFC 5903
-/// §8.2 responder keypair (`KAT_P384_D_R`, `KAT_P384_Q_R`) drives
-/// the PCT roundtrip.
+/// 48-byte scalar, 97-byte uncompressed SEC1 public key, and the
+/// RFC 5903 §8.2 responder pair for the test. A mismatch fails with
+/// [`Error::ConditionalTestFailed`] and the reason
+/// `ECDH P-384 pairwise consistency`, after which the module is in its
+/// error state.
 ///
 /// Returns [`Error::NotOperational`] unless
 /// [`oxicrypt_module::require_self_test_started`] admits the call: in
@@ -461,19 +554,32 @@ pub fn generate_keypair_p384_internal<R: Rbg>(
     drbg: &mut R,
 ) -> Result<([u8; P384_PRIVATE_KEY_LEN], [u8; P384_PUBLIC_KEY_LEN]), Error> {
     require_self_test_started()?;
+    keygen_p384(drbg, take_corrupt_next_pk())
+}
+
+/// The body of [`generate_keypair_p384_internal`]. The module state is
+/// checked again after the pairwise consistency test, so a pair is not
+/// returned once another thread has put the module in its error state.
+fn keygen_p384<R: Rbg>(
+    drbg: &mut R,
+    #[cfg_attr(not(any(test, feature = "fault-injection")), allow(unused_variables))] corrupt: bool,
+) -> Result<([u8; P384_PRIVATE_KEY_LEN], [u8; P384_PUBLIC_KEY_LEN]), Error> {
+    require_self_test_started()?;
     if drbg.strength_bits() < P384_RBG_STRENGTH_BITS {
         return Err(Error::RbgTooWeak);
     }
-    let (d, q) = oxicrypt_ecdsa::p384_keygen::generate_p384_internal(drbg)?;
-    // See P-256 counterpart for the IG 10.3.A PCT scratch-zeroize
-    // rationale; same pattern, 48-byte shared secrets.
-    let mut z_a = compute_shared_secret_p384_internal(&d, &KAT_P384_Q_R)?;
-    let mut z_b = compute_shared_secret_p384_internal(&KAT_P384_D_R, &q)?;
-    let consistent = z_a == z_b;
-    oxicrypt_zeroize::zeroize(&mut z_a);
-    oxicrypt_zeroize::zeroize(&mut z_b);
-    if !consistent {
-        return Err(Error::InvalidInput);
+    let (mut d, mut q) = oxicrypt_ecdsa::p384_keygen::generate_p384_internal(drbg)?;
+    #[cfg(any(test, feature = "fault-injection"))]
+    if corrupt {
+        q[1] ^= 0xFF;
+    }
+    if !pairwise_consistency_p384(&d, &q) {
+        return Err(pairwise_consistency_failed(&mut d, &mut q, P384_PCT_REASON));
+    }
+    if let Err(e) = require_self_test_started() {
+        oxicrypt_zeroize::zeroize(&mut d);
+        oxicrypt_zeroize::zeroize(&mut q);
+        return Err(e);
     }
     Ok((d, q))
 }
@@ -485,35 +591,33 @@ pub fn generate_keypair_p384_internal<R: Rbg>(
 ///
 /// Same shape as [`generate_keypair_p256`], with
 /// [`P384_RBG_STRENGTH_BITS`] as the strength the random bit generator
-/// must report.
+/// must report and `ECDH P-384 pairwise consistency` as the reason of a
+/// pairwise consistency failure.
 pub fn generate_keypair_p384<R: Rbg>(
     drbg: &mut R,
 ) -> Result<([u8; P384_PRIVATE_KEY_LEN], [u8; P384_PUBLIC_KEY_LEN]), Error> {
+    let corrupt = take_corrupt_next_pk();
     require_operational()?;
     require_allowed(Service::EcdhP384)?;
-    generate_keypair_p384_internal(drbg)
+    keygen_p384(drbg, corrupt)
 }
 
 /// Power-up known-answer test for ECDH P-384. Runs the RFC 5903
 /// §8.2 vector in both directions and checks that flipping a byte
 /// of the peer key causes rejection.
 pub fn self_test_p384() -> Result<(), SelfTestFailure> {
-    // Positive 1: d_i * Q_r == Z.
     let z1 = compute_shared_secret_p384_internal(&KAT_P384_D_I, &KAT_P384_Q_R)
         .map_err(|_| SelfTestFailure)?;
     if z1 != KAT_P384_Z {
         return Err(SelfTestFailure);
     }
 
-    // Positive 2: d_r * Q_i == Z (symmetry of ECDH).
     let z2 = compute_shared_secret_p384_internal(&KAT_P384_D_R, &KAT_P384_Q_I)
         .map_err(|_| SelfTestFailure)?;
     if z2 != KAT_P384_Z {
         return Err(SelfTestFailure);
     }
 
-    // Negative: a tampered peer key must be rejected by public-key
-    // validation before any scalar multiplication happens.
     let mut tampered = KAT_P384_Q_R;
     tampered[96] ^= 0x01;
     if !matches!(
@@ -534,22 +638,18 @@ pub fn self_test_p384() -> Result<(), SelfTestFailure> {
 /// §8.1 vector in both directions and checks that flipping a byte
 /// of the peer key causes rejection.
 pub fn self_test() -> Result<(), SelfTestFailure> {
-    // Positive 1: d_i * Q_r == Z.
     let z1 =
         compute_shared_secret_p256_internal(&KAT_D_I, &KAT_Q_R).map_err(|_| SelfTestFailure)?;
     if z1 != KAT_Z {
         return Err(SelfTestFailure);
     }
 
-    // Positive 2: d_r * Q_i == Z (symmetry of ECDH).
     let z2 =
         compute_shared_secret_p256_internal(&KAT_D_R, &KAT_Q_I).map_err(|_| SelfTestFailure)?;
     if z2 != KAT_Z {
         return Err(SelfTestFailure);
     }
 
-    // Negative: a tampered peer key must be rejected by public-key
-    // validation before any scalar multiplication happens.
     let mut tampered = KAT_Q_R;
     tampered[64] ^= 0x01;
     if !matches!(
@@ -658,7 +758,6 @@ mod tests {
     #[test]
     fn rejects_identity_peer_key_encoding() {
         start_module();
-        // 0x04 || 00..00 || 00..00. Rejected by the validated decoder.
         let mut encoding = [0u8; 65];
         encoding[0] = 0x04;
         assert_eq!(
@@ -680,7 +779,6 @@ mod tests {
     #[test]
     fn rejects_private_key_equal_to_n() {
         start_module();
-        // n in big-endian — not a canonical scalar (>= n).
         let n_bytes: [u8; 32] = [
             0xff, 0xff, 0xff, 0xff, 0x00, 0x00, 0x00, 0x00, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
             0xff, 0xff, 0xbc, 0xe6, 0xfa, 0xad, 0xa7, 0x17, 0x9e, 0x84, 0xf3, 0xb9, 0xca, 0xc2,
@@ -829,8 +927,6 @@ mod tests {
         let (d, q) = generate_keypair_p256_internal(&mut drbg).expect("keygen");
         assert_ne!(d, [0u8; PRIVATE_KEY_LEN], "private key is zero");
         assert_eq!(q[0], 0x04, "public key is not SEC1-uncompressed");
-        // Re-derive Q from d to confirm internal consistency: callers
-        // can always recompute the public key from a stored scalar.
         let scalar = Scalar::from_bytes(&d).expect("d is canonical");
         assert_eq!(scalar.is_zero(), 0, "scalar zero after canonicalization");
     }
@@ -838,11 +934,6 @@ mod tests {
     #[test]
     fn keygen_p256_pct_roundtrip_against_rfc5903_peer() {
         start_module();
-        // IG 10.3.A pairwise consistency: a freshly generated (d_new,
-        // Q_new) is consistent iff ECDH from both directions against
-        // a known peer keypair (RFC 5903 §8.1 responder) produces the
-        // same shared secret. This catches faults in the scalar→point
-        // multiplication that produced Q_new.
         let mut drbg = instantiated_drbg();
         let (d_new, q_new) = generate_keypair_p256_internal(&mut drbg).expect("keygen");
 
@@ -851,6 +942,22 @@ mod tests {
         let z_b = compute_shared_secret_p256_internal(&KAT_D_R, &q_new)
             .expect("ECDH RFC5903->new succeeds");
         assert_eq!(z_a, z_b, "PCT roundtrip mismatch");
+    }
+
+    #[test]
+    fn pairwise_consistency_rejects_a_mismatched_or_invalid_public_key() {
+        start_module();
+        assert!(pairwise_consistency_p256(&KAT_D_I, &KAT_Q_I));
+        assert!(!pairwise_consistency_p256(&KAT_D_I, &KAT_Q_R));
+        let mut off_curve = KAT_Q_I;
+        off_curve[1] ^= 0xFF;
+        assert!(!pairwise_consistency_p256(&KAT_D_I, &off_curve));
+
+        assert!(pairwise_consistency_p384(&KAT_P384_D_I, &KAT_P384_Q_I));
+        assert!(!pairwise_consistency_p384(&KAT_P384_D_I, &KAT_P384_Q_R));
+        let mut off_curve = KAT_P384_Q_I;
+        off_curve[1] ^= 0xFF;
+        assert!(!pairwise_consistency_p384(&KAT_P384_D_I, &off_curve));
     }
 
     #[test]

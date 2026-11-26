@@ -217,6 +217,35 @@ mod tests {
         let bad_n = [0xffu8; MODULUS_BYTES];
         let bad_d = [0x01u8; MODULUS_BYTES];
         assert!(RsaPrivateKey4096::from_components(&bad_n, 65537, &bad_d).is_err());
+        assert!(oxicrypt_module::is_operational());
+    }
+
+    #[test]
+    fn crt_pairwise_consistency_rejects_a_foreign_modulus() {
+        crate::test_support::start_module();
+        init_module();
+        let mut drbg = HmacDrbgSha256::instantiate_from_module(b"rsa4096-crt-pct").unwrap();
+        let key = RsaPrivateKey4096::generate(&mut drbg, 65537).unwrap();
+        assert_eq!(key.crt_pairwise_consistency(), Ok(true));
+
+        // Full-width and odd, so only the arithmetic of the test refuses it.
+        let mut foreign = key.clone();
+        foreign.n_bytes[0] ^= 0x01;
+        assert_eq!(foreign.crt_pairwise_consistency(), Ok(false));
+
+        let crt = key.crt.as_ref().unwrap();
+        let imported = RsaPrivateKey4096::from_components_crt(
+            &foreign.n_bytes,
+            key.e,
+            &key.d_bytes,
+            &crt.p_bytes,
+            &crt.q_bytes,
+            &crt.dp_bytes,
+            &crt.dq_bytes,
+            &crt.qinv_bytes,
+        );
+        assert_eq!(imported.err(), Some(oxicrypt_module::Error::InvalidInput));
+        assert!(oxicrypt_module::is_operational());
     }
 
     #[test]

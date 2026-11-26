@@ -13,9 +13,9 @@
 //! |------|-----------|---------|
 //! | `CrtComponents$NLEN` | `pub(crate)` | CRT material with zeroizing Drop (unproven: no test observes the cleared memory) |
 //! | `CrtComponentsRaw$NLEN` | `pub(crate)` | Borrowed CRT references |
-//! | `rsa_crt_${nlen}_private_exp_internal` | `pub(crate)` | CRT sign/decrypt + Bellcore |
-//! | `pairwise_consistency_test_${nlen}_internal` | `pub(crate)` | IG 10.3.A PCT |
-//! | `RsaPrivateKey$NLEN` | `pub` | Validated private-key handle |
+//! | `crt_private_exp_internal` | `pub(crate)` | CRT sign/decrypt + Bellcore |
+//! | `pairwise_consistency_test_internal` | `pub` (hidden) | IG 10.3.A PCT on `(n, e, d)` |
+//! | `RsaPrivateKey$NLEN` | `pub` | Validated private-key handle; `generate` latches the module error state on a PCT failure (ISO/IEC 19790 §7.10.3.3) |
 //! | Verify / sign / encrypt / decrypt internals | `#[doc(hidden)]` | Primitives without the operational gate |
 //! | Public gated wrappers | `pub` | Module-gated entry points |
 
@@ -320,11 +320,9 @@ macro_rules! define_rsa_wide {
                 return None;
             }
 
-            // Reduce x mod p and x mod q.
             let x_p = $half_reduce(&x, &p);
             let x_q = $half_reduce(&x, &q);
 
-            // Secret-exponent exponentiations mod p and mod q.
             let y_p = ctx_p.pow_secret(&x_p, &dp);
             let y_q = ctx_q.pow_secret(&x_q, &dq);
 
@@ -735,6 +733,14 @@ macro_rules! define_rsa_wide {
 
         impl $key_struct {
             /// Build from raw `(n, e, d)` components. Runs PCT.
+            ///
+            /// # Errors
+            ///
+            /// Returns [`Error::NotOperational`] or
+            /// [`Error::AlgorithmRestricted`] from the gates, or
+            /// [`Error::InvalidInput`] if the pairwise consistency test
+            /// fails; an imported key that fails it is rejected and the
+            /// module stays operational.
             pub fn from_components(
                 n_bytes: &[u8; MODULUS_BYTES],
                 e: u64,
@@ -754,6 +760,14 @@ macro_rules! define_rsa_wide {
             }
 
             /// Build from raw CRT components. PCT runs on the CRT path.
+            ///
+            /// # Errors
+            ///
+            /// Returns [`Error::NotOperational`] or
+            /// [`Error::AlgorithmRestricted`] from the gates, or
+            /// [`Error::InvalidInput`] if the pairwise consistency test
+            /// fails; an imported key that fails it is rejected and the
+            /// module stays operational.
             #[allow(clippy::too_many_arguments, clippy::similar_names)]
             pub fn from_components_crt(
                 n_bytes: &[u8; MODULUS_BYTES],
@@ -767,22 +781,7 @@ macro_rules! define_rsa_wide {
             ) -> Result<Self, Error> {
                 require_operational()?;
                 require_allowed($svc_keygen)?;
-                let probe: &[u8] = concat!(
-                    "fips-rsa CRT PCT probe / RSA-",
-                    stringify!($nlen),
-                    " / PKCS#1 v1.5 / SHA-256"
-                )
-                .as_bytes();
-                let Some(sig) = pkcs1_v15_sign_crt_internal_unguarded(
-                    n_bytes, e, p_bytes, q_bytes, dp_bytes, dq_bytes, qinv_bytes, probe,
-                )?
-                else {
-                    return Err(Error::InvalidInput);
-                };
-                if !pkcs1_v15_verify_internal_unguarded(n_bytes, e, probe, &sig)? {
-                    return Err(Error::InvalidInput);
-                }
-                Ok(Self {
+                let key = Self {
                     n_bytes: *n_bytes,
                     d_bytes: *d_bytes,
                     e,
@@ -793,7 +792,57 @@ macro_rules! define_rsa_wide {
                         dq_bytes: *dq_bytes,
                         qinv_bytes: *qinv_bytes,
                     }),
-                })
+                };
+                if !key.crt_pairwise_consistency()? {
+                    return Err(Error::InvalidInput);
+                }
+                Ok(key)
+            }
+
+            /// The pairwise consistency test of a CRT-form key (ISO/IEC
+            /// 19790 §7.10.3.3, FIPS 140-3 IG 10.3.A): signs a fixed probe
+            /// on the CRT path, whose Bellcore check also refuses CRT
+            /// components that do not match `n`, and verifies the signature
+            /// under `(n, e)`. `false` when either step fails, or when the
+            /// key holds no CRT components.
+            fn crt_pairwise_consistency(&self) -> Result<bool, Error> {
+                const PROBE: &[u8] = concat!(
+                    "fips-rsa CRT PCT probe / RSA-",
+                    stringify!($nlen),
+                    " / PKCS#1 v1.5 / SHA-256"
+                )
+                .as_bytes();
+                let Some(crt) = self.crt.as_ref() else {
+                    return Ok(false);
+                };
+                let Some(sig) = pkcs1_v15_sign_crt_internal_unguarded(
+                    &self.n_bytes,
+                    self.e,
+                    &crt.p_bytes,
+                    &crt.q_bytes,
+                    &crt.dp_bytes,
+                    &crt.dq_bytes,
+                    &crt.qinv_bytes,
+                    PROBE,
+                )?
+                else {
+                    return Ok(false);
+                };
+                pkcs1_v15_verify_internal_unguarded(&self.n_bytes, self.e, PROBE, &sig)
+            }
+
+            /// Wipes a generated key that failed the pairwise consistency
+            /// test (unproven: no test observes the cleared memory), then
+            /// puts the module in its error state (ISO/IEC 19790
+            /// §7.10.3.3, FIPS 140-3 IG 10.3.A), and returns the error to
+            /// report.
+            fn pairwise_consistency_failed(mut self) -> Error {
+                oxicrypt_zeroize::zeroize(&mut self.n_bytes);
+                drop(self);
+                oxicrypt_module::enter_error_state(crate::RSA_PCT_REASON);
+                Error::ConditionalTestFailed {
+                    reason: crate::RSA_PCT_REASON,
+                }
             }
 
             /// Public modulus, big-endian.
@@ -968,12 +1017,23 @@ macro_rules! define_rsa_wide {
             /// less than this modulus's requirement
             /// ([`crate::RSA_3072_RBG_STRENGTH_BITS`] or
             /// [`crate::RSA_4096_RBG_STRENGTH_BITS`]),
-            /// [`Error::Rbg`] if it produces no output, or
-            /// [`Error::InvalidInput`] if `e` is rejected, the
-            /// prime-candidate budget is exceeded or the pairwise
-            /// consistency test fails.
+            /// [`Error::Rbg`] if it produces no output,
+            /// [`Error::InvalidInput`] if `e` is rejected or the
+            /// prime-candidate budget is exceeded, or
+            /// [`Error::ConditionalTestFailed`] with the reason
+            /// `RSA pairwise consistency` if the generated key fails the
+            /// pairwise consistency test (ISO/IEC 19790 §7.10.3.3,
+            /// FIPS 140-3 IG 10.3.A). On that failure the key is zeroized
+            /// (unproven: no test observes the cleared memory) and the
+            /// module enters its error state, after which every service
+            /// returns [`Error::NotOperational`]. The module state is
+            /// checked again after a passing test, so a key is not
+            /// returned once another thread has put the module in its
+            /// error state.
             #[allow(clippy::similar_names)]
             pub fn generate<R: oxicrypt_module::Rbg>(drbg: &mut R, e: u64) -> Result<Self, Error> {
+                #[cfg_attr(not(any(test, feature = "fault-injection")), allow(unused_variables))]
+                let corrupt = crate::take_corrupt_next_pk();
                 require_operational()?;
                 require_allowed($svc_keygen)?;
                 if drbg.strength_bits() < $rbg_strength {
@@ -984,23 +1044,29 @@ macro_rules! define_rsa_wide {
                     crate::keygen::KeygenError::Module(e) => e,
                     _ => Error::InvalidInput,
                 })?;
-                let n_bytes = km.n.to_be_bytes();
-                let d_bytes = km.d.to_be_bytes();
-                let p_bytes = km.p.to_be_bytes();
-                let q_bytes = km.q.to_be_bytes();
-                let dp_bytes = km.dp.to_be_bytes();
-                let dq_bytes = km.dq.to_be_bytes();
-                let qinv_bytes = km.qinv.to_be_bytes();
-                Self::from_components_crt(
-                    &n_bytes,
+                #[cfg_attr(not(any(test, feature = "fault-injection")), allow(unused_mut))]
+                let mut key = Self {
+                    n_bytes: km.n.to_be_bytes(),
+                    d_bytes: km.d.to_be_bytes(),
                     e,
-                    &d_bytes,
-                    &p_bytes,
-                    &q_bytes,
-                    &dp_bytes,
-                    &dq_bytes,
-                    &qinv_bytes,
-                )
+                    crt: Some($crt_struct {
+                        p_bytes: km.p.to_be_bytes(),
+                        q_bytes: km.q.to_be_bytes(),
+                        dp_bytes: km.dp.to_be_bytes(),
+                        dq_bytes: km.dq.to_be_bytes(),
+                        qinv_bytes: km.qinv.to_be_bytes(),
+                    }),
+                };
+                drop(km);
+                #[cfg(any(test, feature = "fault-injection"))]
+                if corrupt {
+                    key.n_bytes[0] ^= 0x01;
+                }
+                if !key.crt_pairwise_consistency()? {
+                    return Err(key.pairwise_consistency_failed());
+                }
+                require_operational()?;
+                Ok(key)
             }
         }
     };

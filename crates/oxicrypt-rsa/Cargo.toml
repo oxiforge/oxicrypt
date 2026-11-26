@@ -15,6 +15,13 @@ publish.workspace = true
 [lints]
 workspace = true
 
+[features]
+default = []
+# The test seam `oxicrypt_rsa::seam`, which corrupts the next generated
+# modulus before its pairwise consistency test. Default OFF, and enabled by
+# no shipped build.
+fault-injection = []
+
 [dependencies]
 oxicrypt-drbg = { workspace = true }
 oxicrypt-module = { workspace = true }
@@ -26,6 +33,11 @@ oxicrypt-zeroize = { workspace = true }
 # compiles no shipped code.
 [dev-dependencies]
 oxicrypt-drbg = { path = "../oxicrypt-drbg", features = ["testing-interfaces"] }
+
+[[test]]
+name = "pct_fault_rsa"
+path = "tests/pct_fault_rsa.rs"
+required-features = ["fault-injection"]
 
 [package.metadata.lama]
 # Registry discovery (LAMA SPEC.md, "Package registry discovery"). Must be a

@@ -53,12 +53,22 @@
 //!
 //! Every [`ed25519::Ed25519PrivateKey`] — whether produced by
 //! [`ed25519::Ed25519PrivateKey::generate`] or
-//! [`ed25519::Ed25519PrivateKey::from_seed`] — runs an IG 10.3.A
-//! pairwise consistency test before it escapes construction: a fixed
-//! probe message is signed with the candidate seed and the resulting
-//! signature is verified against the derived public key. Any
-//! inconsistency causes construction to fail with
-//! `Error::InvalidInput` and no SSP material escapes.
+//! [`ed25519::Ed25519PrivateKey::from_seed`] — runs the pairwise
+//! consistency test (ISO/IEC 19790 §7.10.3.3, FIPS 140-3 IG 10.3.A)
+//! before it escapes construction: a fixed probe message is signed with
+//! the candidate seed and the resulting signature is verified against
+//! the derived public key. When `generate` fails the test it zeroizes the
+//! seed and public key (unproven: no test observes the cleared memory),
+//! puts the module in its error state and returns
+//! `Error::ConditionalTestFailed` with the reason
+//! `Ed25519 pairwise consistency`; every service then returns
+//! `Error::NotOperational` until the process restarts.
+//!
+//! # The `fault-injection` feature (default OFF)
+//!
+//! Compiles the `seam` module, whose `corrupt_next_pk` makes the next key
+//! generation's pairwise consistency test fail, for the tests of that
+//! failure path. No shipped build enables it.
 //!
 //! # Side-channel posture
 //!
@@ -66,7 +76,7 @@
 //! covered by the `eddsa_ed25519_scalar_mul` target in
 //! `tools/ct-validation`; that harness holds its own measurements.
 //!
-//! Ed448 is deferred.
+//! Ed448 is not implemented.
 #![no_std]
 #![forbid(unsafe_code)]
 
@@ -78,12 +88,26 @@ pub mod edwards;
 pub mod field;
 #[doc(hidden)]
 pub mod scalar;
+/// The test seam for key generation; available with the
+/// `fault-injection` feature or in the crate's own tests.
+#[cfg(any(test, feature = "fault-injection"))]
+pub mod seam;
+
+/// Whether the test seam armed this key generation, read and cleared at
+/// the entry of `generate` so that an early error cannot leave it armed;
+/// `false` in a build without the seam.
+pub(crate) fn take_corrupt_next_pk() -> bool {
+    #[cfg(any(test, feature = "fault-injection"))]
+    {
+        seam::take_corrupt_next_pk()
+    }
+    #[cfg(not(any(test, feature = "fault-injection")))]
+    {
+        false
+    }
+}
 
 // ── Crate-root re-exports ────────────────────────────────────────
-//
-// Re-export the Ed25519 public API at the crate root so agents
-// can write `use oxicrypt_eddsa::{Ed25519PrivateKey, verify}`
-// without navigating into the `ed25519` submodule.
 
 pub use ed25519::{
     Ed25519PrivateKey, PUBLIC_KEY_LEN, SEED_LEN, SIGNATURE_LEN, keygen, sign, verify,

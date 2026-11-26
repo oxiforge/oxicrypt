@@ -51,15 +51,31 @@
 //!
 //! # Conditional self-tests
 //!
-//! Every [`RsaPrivateKey2048`] — whether constructed from bytes
-//! via [`RsaPrivateKey2048::from_components`] or freshly
-//! generated via [`RsaPrivateKey2048::generate`] — goes through
-//! the FIPS 140-3 IG 10.3.A **pairwise consistency test** before
-//! the handle is returned: the constructor signs a fixed
-//! all-zeros message, verifies the signature back with the
-//! public key, and rejects the key on any mismatch. This
-//! catches both import-time corruption and any accidental
-//! divergence in a freshly-generated `(n, d)` pair.
+//! Every private-key handle of each width — whether constructed from
+//! components via `from_components` or `from_components_crt`, or
+//! freshly generated via `generate` — goes through the
+//! **pairwise consistency test** (ISO/IEC 19790 §7.10.3.3, FIPS 140-3
+//! IG 10.3.A) before the handle is returned: the constructor signs a
+//! fixed probe message with PKCS#1 v1.5 and SHA-256 and verifies the
+//! signature with the public key.
+//!
+//! - When `generate` fails the test, it zeroizes the key (unproven: no
+//!   test observes the cleared memory), puts the module in its error
+//!   state and returns
+//!   `Error::ConditionalTestFailed` with the reason
+//!   `RSA pairwise consistency`, for every modulus size; every service
+//!   then returns `Error::NotOperational` until the process restarts.
+//! - When an imported key fails it in `from_components` or
+//!   `from_components_crt`, the key is rejected with
+//!   `Error::InvalidInput` and the module stays operational: the
+//!   components came from the caller, so the mismatch is an input
+//!   error rather than a fault in the module.
+//!
+//! # The `fault-injection` feature (default OFF)
+//!
+//! Compiles the `seam` module, whose `corrupt_next_pk` makes the next key
+//! generation's pairwise consistency test fail, for the tests of that
+//! failure path. No shipped build enables it.
 //!
 //! # Sensitive security parameters (SSPs)
 //!
@@ -163,6 +179,24 @@ pub mod rsa3072;
 pub mod rsa4096;
 pub mod rsa_3072_4096_stub;
 mod rsa_wide_impl;
+/// The test seam for key generation; available with the
+/// `fault-injection` feature or in the crate's own tests.
+#[cfg(any(test, feature = "fault-injection"))]
+pub mod seam;
+
+/// Whether the test seam armed this key generation, read and cleared at
+/// the entry of `generate` so that an early error cannot leave it armed;
+/// `false` in a build without the seam.
+pub(crate) fn take_corrupt_next_pk() -> bool {
+    #[cfg(any(test, feature = "fault-injection"))]
+    {
+        seam::take_corrupt_next_pk()
+    }
+    #[cfg(not(any(test, feature = "fault-injection")))]
+    {
+        false
+    }
+}
 
 use bigint1024::{BYTES as U1024_BYTES, LIMBS as LIMBS1024, U1024};
 use bigint2048::{BYTES as U2048_BYTES, LIMBS as LIMBS2048, U2048};
@@ -203,6 +237,10 @@ pub const RSA_3072_RBG_STRENGTH_BITS: u32 = 128;
 /// 4096, so the requirement is the next tabulated row above the
 /// modulus, 192 bits.
 pub const RSA_4096_RBG_STRENGTH_BITS: u32 = 192;
+
+/// The `reason` of a pairwise consistency failure in key generation, for
+/// every modulus size.
+pub(crate) const RSA_PCT_REASON: &str = "RSA pairwise consistency";
 
 // ------------------------------------------------------------------
 // Core verify primitive (no operational gate)
@@ -1279,9 +1317,8 @@ fn pairwise_consistency_test_2048_internal_unguarded(
     e: u64,
     d_bytes: &[u8; RSA_2048_MODULUS_BYTES],
 ) -> Result<bool, Error> {
-    // The probe message is arbitrary but fixed; IG 10.3.A only
-    // requires that the PCT cover the sign→verify roundtrip. It is a
-    // short ASCII string that is obviously not a secret.
+    // IG 10.3.A requires the test to cover the sign and verify round
+    // trip, so any fixed message serves.
     const PROBE: &[u8] = b"fips-rsa PCT probe / RSA-2048 / PKCS#1 v1.5 / SHA-256";
     let Some(sig) = rsa_pkcs1_v15_sign_2048_sha256_internal_unguarded(n_bytes, d_bytes, PROBE)?
     else {
@@ -1344,8 +1381,6 @@ pub struct RsaPrivateKey2048 {
 impl Drop for RsaPrivateKey2048 {
     fn drop(&mut self) {
         oxicrypt_zeroize::zeroize(&mut self.d_bytes);
-        // CrtComponents has its own Drop; dropping Option<CrtComponents>
-        // invokes it when Some.
     }
 }
 
@@ -1389,19 +1424,16 @@ impl RsaPrivateKey2048 {
     ///
     /// The pairwise consistency test runs on the CRT sign path (with
     /// Bellcore verify-after-sign) so that a handle returned from
-    /// this constructor is guaranteed to produce signatures along
-    /// the same path that production calls will use.
+    /// this constructor produces signatures along the same path that
+    /// production calls use.
     ///
     /// # Errors
     ///
     /// Returns [`Error::NotOperational`] if the FIPS module has not
     /// completed power-up self-tests. Returns [`Error::InvalidInput`]
-    /// if the CRT PCT fails for any reason.
-    #[allow(
-        clippy::too_many_arguments,
-        clippy::similar_names,
-        clippy::items_after_statements
-    )]
+    /// if the CRT PCT fails for any reason; an imported key that fails
+    /// it is rejected and the module stays operational.
+    #[allow(clippy::too_many_arguments, clippy::similar_names)]
     pub fn from_components_crt(
         n_bytes: &[u8; RSA_2048_MODULUS_BYTES],
         e: u64,
@@ -1414,23 +1446,7 @@ impl RsaPrivateKey2048 {
     ) -> Result<Self, Error> {
         require_operational()?;
         require_allowed(Service::RsaKeygen2048)?;
-        // PCT on the CRT path: sign a fixed probe, verify with the
-        // public key. The Bellcore check inside the CRT primitive
-        // provides an additional structural guard at construction
-        // time — a CRT tuple that is inconsistent with `d` will
-        // fail the verify-after-sign step before the signature
-        // even reaches the outer verify.
-        const PROBE: &[u8] = b"fips-rsa CRT PCT probe / RSA-2048 / PKCS#1 v1.5 / SHA-256";
-        let Some(sig) = rsa_pkcs1_v15_sign_2048_sha256_crt_internal_unguarded(
-            n_bytes, e, p_bytes, q_bytes, dp_bytes, dq_bytes, qinv_bytes, PROBE,
-        )?
-        else {
-            return Err(Error::InvalidInput);
-        };
-        if !rsa_pkcs1_v15_verify_2048_sha256_internal_unguarded(n_bytes, e, PROBE, &sig)? {
-            return Err(Error::InvalidInput);
-        }
-        Ok(Self {
+        let key = Self {
             n_bytes: *n_bytes,
             d_bytes: *d_bytes,
             e,
@@ -1441,7 +1457,50 @@ impl RsaPrivateKey2048 {
                 dq_bytes: *dq_bytes,
                 qinv_bytes: *qinv_bytes,
             }),
-        })
+        };
+        if !key.crt_pairwise_consistency()? {
+            return Err(Error::InvalidInput);
+        }
+        Ok(key)
+    }
+
+    /// The pairwise consistency test of a CRT-form key (ISO/IEC 19790
+    /// §7.10.3.3, FIPS 140-3 IG 10.3.A): signs a fixed probe on the CRT
+    /// path, whose Bellcore check also refuses CRT components that do not
+    /// match `n`, and verifies the signature under `(n, e)`. `false` when
+    /// either step fails, or when the key holds no CRT components.
+    fn crt_pairwise_consistency(&self) -> Result<bool, Error> {
+        const PROBE: &[u8] = b"fips-rsa CRT PCT probe / RSA-2048 / PKCS#1 v1.5 / SHA-256";
+        let Some(crt) = self.crt.as_ref() else {
+            return Ok(false);
+        };
+        let Some(sig) = rsa_pkcs1_v15_sign_2048_sha256_crt_internal_unguarded(
+            &self.n_bytes,
+            self.e,
+            &crt.p_bytes,
+            &crt.q_bytes,
+            &crt.dp_bytes,
+            &crt.dq_bytes,
+            &crt.qinv_bytes,
+            PROBE,
+        )?
+        else {
+            return Ok(false);
+        };
+        rsa_pkcs1_v15_verify_2048_sha256_internal_unguarded(&self.n_bytes, self.e, PROBE, &sig)
+    }
+
+    /// Wipes a generated key that failed the pairwise consistency test
+    /// (unproven: no test observes the cleared memory), then puts the
+    /// module in its error state (ISO/IEC 19790 §7.10.3.3, FIPS 140-3
+    /// IG 10.3.A), and returns the error to report.
+    fn pairwise_consistency_failed(mut self) -> Error {
+        oxicrypt_zeroize::zeroize(&mut self.n_bytes);
+        drop(self);
+        oxicrypt_module::enter_error_state(RSA_PCT_REASON);
+        Error::ConditionalTestFailed {
+            reason: RSA_PCT_REASON,
+        }
     }
 
     /// Public modulus, big-endian, 256 bytes.
@@ -1657,10 +1716,9 @@ impl RsaPrivateKey2048 {
     /// §B.3.1. `e` must be an odd prime in `[65537, 2^64)` (in
     /// practice, pass `65537`).
     ///
-    /// The generated keypair is run through the IG 10.3.A pairwise
-    /// consistency test before the handle is returned — a `generate`
-    /// call that succeeds has already produced a sign/verify pair
-    /// that roundtrips a probe message.
+    /// The generated keypair is run through the pairwise consistency
+    /// test (ISO/IEC 19790 §7.10.3.3, FIPS 140-3 IG 10.3.A) on the CRT
+    /// sign path before the handle is returned.
     ///
     /// # Errors
     ///
@@ -1669,14 +1727,23 @@ impl RsaPrivateKey2048 {
     /// random bit generator reports less than
     /// [`RSA_2048_RBG_STRENGTH_BITS`], and [`Error::Rbg`] if the random
     /// bit generator produces no output. Returns [`Error::InvalidInput`]
-    /// on any of:
+    /// on either of:
     ///
     ///   * `e` fails the structural check (`e < 65537` or `e` even);
-    ///   * the prime-candidate retry budget is exceeded;
-    ///   * the resulting keypair fails the pairwise consistency
-    ///     test (which indicates internal corruption).
+    ///   * the prime-candidate retry budget is exceeded.
+    ///
+    /// Returns [`Error::ConditionalTestFailed`] with the reason
+    /// `RSA pairwise consistency` if the generated key fails the pairwise
+    /// consistency test. On that failure the key is zeroized (unproven:
+    /// no test observes the cleared memory) and the module enters its
+    /// error state, after which every service returns
+    /// [`Error::NotOperational`]. The module state is checked again after
+    /// a passing test, so a key is not returned once another thread has
+    /// put the module in its error state.
     #[allow(clippy::similar_names)]
     pub fn generate<R: Rbg>(drbg: &mut R, e: u64) -> Result<Self, Error> {
+        #[cfg_attr(not(any(test, feature = "fault-injection")), allow(unused_variables))]
+        let corrupt = take_corrupt_next_pk();
         require_operational()?;
         require_allowed(Service::RsaKeygen2048)?;
         if drbg.strength_bits() < RSA_2048_RBG_STRENGTH_BITS {
@@ -1687,23 +1754,29 @@ impl RsaPrivateKey2048 {
             keygen::KeygenError::Module(e) => e,
             _ => Error::InvalidInput,
         })?;
-        let n_bytes = km.n.to_be_bytes();
-        let d_bytes = km.d.to_be_bytes();
-        let p_bytes = km.p.to_be_bytes();
-        let q_bytes = km.q.to_be_bytes();
-        let dp_bytes = km.dp.to_be_bytes();
-        let dq_bytes = km.dq.to_be_bytes();
-        let qinv_bytes = km.qinv.to_be_bytes();
-        Self::from_components_crt(
-            &n_bytes,
+        #[cfg_attr(not(any(test, feature = "fault-injection")), allow(unused_mut))]
+        let mut key = Self {
+            n_bytes: km.n.to_be_bytes(),
+            d_bytes: km.d.to_be_bytes(),
             e,
-            &d_bytes,
-            &p_bytes,
-            &q_bytes,
-            &dp_bytes,
-            &dq_bytes,
-            &qinv_bytes,
-        )
+            crt: Some(CrtComponents {
+                p_bytes: km.p.to_be_bytes(),
+                q_bytes: km.q.to_be_bytes(),
+                dp_bytes: km.dp.to_be_bytes(),
+                dq_bytes: km.dq.to_be_bytes(),
+                qinv_bytes: km.qinv.to_be_bytes(),
+            }),
+        };
+        drop(km);
+        #[cfg(any(test, feature = "fault-injection"))]
+        if corrupt {
+            key.n_bytes[0] ^= 0x01;
+        }
+        if !key.crt_pairwise_consistency()? {
+            return Err(key.pairwise_consistency_failed());
+        }
+        require_operational()?;
+        Ok(key)
     }
 }
 
@@ -1840,13 +1913,11 @@ const KAT_PSS_SIG_BYTES: [u8; 256] = [
 ///    breakage in the MGF1 mask recovery path, which a tamper on the
 ///    trailing `0xbc` would not.
 pub fn self_test() -> Result<(), SelfTestFailure> {
-    // PKCS#1 v1.5 verify (positive).
     if !rsa_pkcs1_v15_verify_2048_sha256_internal(&KAT_N_BYTES, KAT_E, KAT_MSG, &KAT_SIG_BYTES)
         .map_err(|_| SelfTestFailure)?
     {
         return Err(SelfTestFailure);
     }
-    // PKCS#1 v1.5 verify (tamper).
     let mut tampered = KAT_SIG_BYTES;
     tampered[255] ^= 0x01;
     if rsa_pkcs1_v15_verify_2048_sha256_internal(&KAT_N_BYTES, KAT_E, KAT_MSG, &tampered)
@@ -1854,7 +1925,6 @@ pub fn self_test() -> Result<(), SelfTestFailure> {
     {
         return Err(SelfTestFailure);
     }
-    // PKCS#1 v1.5 sign (KAT reproduction).
     let Ok(produced) = rsa_pkcs1_v15_sign_2048_sha256_internal(&KAT_N_BYTES, &KAT_D_BYTES, KAT_MSG)
     else {
         return Err(SelfTestFailure);
@@ -1862,13 +1932,11 @@ pub fn self_test() -> Result<(), SelfTestFailure> {
     if produced != KAT_SIG_BYTES {
         return Err(SelfTestFailure);
     }
-    // PCT.
     if !pairwise_consistency_test_2048_internal(&KAT_N_BYTES, KAT_E, &KAT_D_BYTES)
         .map_err(|_| SelfTestFailure)?
     {
         return Err(SelfTestFailure);
     }
-    // PSS sign (KAT reproduction).
     let Ok(pss_produced) =
         rsa_pss_sign_2048_sha256_internal(&KAT_N_BYTES, &KAT_D_BYTES, KAT_PSS_MSG, &KAT_PSS_SALT)
     else {
@@ -1877,13 +1945,11 @@ pub fn self_test() -> Result<(), SelfTestFailure> {
     if pss_produced != KAT_PSS_SIG_BYTES {
         return Err(SelfTestFailure);
     }
-    // PSS verify (positive).
     if !rsa_pss_verify_2048_sha256_internal(&KAT_N_BYTES, KAT_E, KAT_PSS_MSG, &KAT_PSS_SIG_BYTES)
         .map_err(|_| SelfTestFailure)?
     {
         return Err(SelfTestFailure);
     }
-    // PSS verify (tamper inside maskedDB, not the trailer).
     let mut pss_tampered = KAT_PSS_SIG_BYTES;
     pss_tampered[10] ^= 0x01;
     if rsa_pss_verify_2048_sha256_internal(&KAT_N_BYTES, KAT_E, KAT_PSS_MSG, &pss_tampered)
@@ -2027,8 +2093,6 @@ mod tests {
     #[test]
     fn sign_rejects_d_equal_to_n() {
         start_module();
-        // d must be strictly less than n; using n-as-d should be
-        // rejected for the same reason signatures are.
         assert_eq!(
             rsa_pkcs1_v15_sign_2048_sha256_internal(&KAT_N_BYTES, &KAT_N_BYTES, KAT_MSG),
             Err(Error::InvalidInput)
@@ -2054,9 +2118,6 @@ mod tests {
     #[test]
     fn pct_fails_when_e_is_wrong() {
         start_module();
-        // Using e = 3 against a key that was generated with e = 65537
-        // must fail the PCT because 3 is coprime with phi and the
-        // wrong exponent will produce nonsense signatures.
         assert!(!pairwise_consistency_test_2048_internal(&KAT_N_BYTES, 3, &KAT_D_BYTES).unwrap());
     }
 
@@ -2122,9 +2183,6 @@ mod tests {
     #[test]
     fn pss_rejects_tamper_in_masked_db() {
         start_module();
-        // A flip inside the maskedDB half of the signature perturbs
-        // the recovered DB once MGF1 unmasks it, which should fail
-        // either the PS-zeroes check or the H' compare.
         let mut bad = KAT_PSS_SIG_BYTES;
         bad[0] ^= 0x40;
         assert!(
@@ -2166,8 +2224,6 @@ mod tests {
     #[test]
     fn pss_cross_scheme_signature_does_not_verify_as_pkcs1() {
         start_module();
-        // A PSS signature must not accidentally verify as a PKCS#1
-        // v1.5 signature over the same message, and vice-versa.
         assert!(
             !rsa_pkcs1_v15_verify_2048_sha256_internal(
                 &KAT_N_BYTES,
@@ -2212,6 +2268,38 @@ mod tests {
             Err(other) => panic!("unexpected error: {other:?}"),
             Ok(_) => panic!("PCT must reject a tampered d"),
         }
+        assert!(oxicrypt_module::is_operational());
+    }
+
+    #[test]
+    fn crt_pairwise_consistency_rejects_a_foreign_modulus() {
+        let _ = init_with_tests(&[KatEntry {
+            name: "rsa-2048-pkcs1v15-sha256",
+            run: self_test,
+        }]);
+        let mut drbg =
+            oxicrypt_drbg::HmacDrbgSha256::instantiate_from_module(b"rsa2048-crt-pct").unwrap();
+        let key = RsaPrivateKey2048::generate(&mut drbg, 65537).unwrap();
+        assert_eq!(key.crt_pairwise_consistency(), Ok(true));
+
+        // Full-width and odd, so only the arithmetic of the test refuses it.
+        let mut foreign = key.clone();
+        foreign.n_bytes[0] ^= 0x01;
+        assert_eq!(foreign.crt_pairwise_consistency(), Ok(false));
+
+        let crt = key.crt.as_ref().unwrap();
+        let imported = RsaPrivateKey2048::from_components_crt(
+            &foreign.n_bytes,
+            key.e,
+            &key.d_bytes,
+            &crt.p_bytes,
+            &crt.q_bytes,
+            &crt.dp_bytes,
+            &crt.dq_bytes,
+            &crt.qinv_bytes,
+        );
+        assert_eq!(imported.err(), Some(Error::InvalidInput));
+        assert!(oxicrypt_module::is_operational());
     }
 
     /// End-to-end smoke: generate a fresh keypair from a DRBG,
@@ -2348,8 +2436,6 @@ mod tests {
             .unwrap();
     }
 
-    /// Sanity check: the `RsaPrivateKey2048::generate` path rejects
-    /// an invalid public exponent (even) without touching the DRBG.
     #[test]
     fn generate_rejects_even_exponent() {
         let _ = init_with_tests(&[KatEntry {

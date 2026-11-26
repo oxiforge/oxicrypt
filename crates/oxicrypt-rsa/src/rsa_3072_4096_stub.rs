@@ -22,8 +22,11 @@ use oxicrypt_module::{Error, Rbg, Service};
 ///
 /// Returns [`Error::NotOperational`], [`Error::RbgTooWeak`] (before
 /// any draw, when `drbg` reports less than
-/// [`crate::RSA_3072_RBG_STRENGTH_BITS`]), [`Error::Rbg`] or
-/// [`Error::InvalidInput`].
+/// [`crate::RSA_3072_RBG_STRENGTH_BITS`]), [`Error::Rbg`],
+/// [`Error::InvalidInput`], or [`Error::ConditionalTestFailed`] with the
+/// reason `RSA pairwise consistency` when the pairwise consistency test
+/// fails, after which the module is in its error state and every service
+/// returns [`Error::NotOperational`].
 pub fn generate_3072<R: Rbg>(
     drbg: &mut R,
     e: u64,
@@ -122,8 +125,11 @@ pub fn oaep_encrypt_3072<R: Rbg>(
 ///
 /// Returns [`Error::NotOperational`], [`Error::RbgTooWeak`] (before
 /// any draw, when `drbg` reports less than
-/// [`crate::RSA_4096_RBG_STRENGTH_BITS`]), [`Error::Rbg`] or
-/// [`Error::InvalidInput`].
+/// [`crate::RSA_4096_RBG_STRENGTH_BITS`]), [`Error::Rbg`],
+/// [`Error::InvalidInput`], or [`Error::ConditionalTestFailed`] with the
+/// reason `RSA pairwise consistency` when the pairwise consistency test
+/// fails, after which the module is in its error state and every service
+/// returns [`Error::NotOperational`].
 pub fn generate_4096<R: Rbg>(
     drbg: &mut R,
     e: u64,

@@ -53,8 +53,11 @@ pub fn verify(
 ///
 /// Returns [`Error::RbgTooWeak`] before any draw when the random bit
 /// generator reports less than [`crate::p384_keygen::RBG_STRENGTH_BITS`],
-/// and an error when the random bit generator fails or the pairwise
-/// consistency test (IG 10.3.A) rejects the new key pair.
+/// [`Error::Rbg`] when the random bit generator fails, and
+/// [`Error::ConditionalTestFailed`] with the reason
+/// `ECDSA P-384 pairwise consistency` when the pairwise consistency test
+/// (IG 10.3.A) rejects the new key pair, after which the module is in its
+/// error state and every service returns [`Error::NotOperational`].
 pub fn keygen<R: Rbg>(drbg: &mut R) -> Result<p384_ecdsa::EcdsaP384PrivateKey, Error> {
     p384_ecdsa::EcdsaP384PrivateKey::generate(drbg)
 }

@@ -106,10 +106,10 @@ fn sign_with_k_internal_unguarded(
         return Ok(None);
     }
 
-    // e = SHA-384(msg), reduced mod n.
+    // FIPS 186-5 §6.4.1: e from SHA-384(msg), r = x(k·G) mod n,
+    // s = k⁻¹(e + r·d) mod n.
     let e = hash_message_to_scalar(msg)?;
 
-    // (x1, _) = k * G
     let big_r = Point384::generator().mul(&k);
     let Some((x1, _y1)) = big_r.to_affine() else {
         return Ok(None);
@@ -120,7 +120,6 @@ fn sign_with_k_internal_unguarded(
         return Ok(None);
     }
 
-    // s = k^-1 * (e + r*d) mod n
     let k_inv = k.invert();
     let rd = r.mul(&d);
     let sum = e.add(&rd);
@@ -274,8 +273,14 @@ fn point_add(p1: &Point384, p2: &Point384) -> Point384 {
 /// Fixed probe message for the IG 10.3.A pairwise consistency test.
 const PCT_PROBE_MSG: &[u8] = b"oxicrypt-ecdsa-p384-pct";
 
+/// The `reason` of a pairwise consistency failure in key generation.
+const PCT_REASON: &str = "ECDSA P-384 pairwise consistency";
+
 /// A P-384 ECDSA private key handle that has passed an IG 10.3.A
 /// pairwise consistency test at construction time.
+///
+/// A failure of the test in [`Self::generate`] puts the module in its
+/// error state and produces no handle.
 #[derive(Clone)]
 pub struct EcdsaP384PrivateKey {
     d: [u8; PRIVATE_KEY_LEN],
@@ -312,16 +317,24 @@ impl EcdsaP384PrivateKey {
     /// Returns [`Error::NotOperational`] if the module is not
     /// operational, [`Error::RbgTooWeak`] before any draw if `drbg`
     /// reports less than [`crate::p384_keygen::RBG_STRENGTH_BITS`],
-    /// [`Error::Rbg`] if it produces no output, or
-    /// [`Error::InvalidInput`] if the PCT fails.
+    /// [`Error::Rbg`] if it produces no output, [`Error::InvalidInput`]
+    /// on scalar-sampling exhaustion, or [`Error::ConditionalTestFailed`]
+    /// with the reason `ECDSA P-384 pairwise consistency` if the pairwise
+    /// consistency test fails (ISO/IEC 19790 §7.10.3.3, FIPS 140-3
+    /// IG 10.3.A). On that failure the pair is zeroized (unproven: no
+    /// test observes the cleared memory) and the module enters its error
+    /// state, after which every service returns [`Error::NotOperational`].
     pub fn generate<R: Rbg>(drbg: &mut R) -> Result<Self, Error> {
+        let corrupt = crate::take_corrupt_next_pk();
         require_operational()?;
         require_allowed(Service::EcdsaP384Keygen)?;
-        Self::generate_internal(drbg)
+        Self::generate_internal(drbg, corrupt)
     }
 
     /// Sign `msg` with SHA-384, sampling a fresh nonce from `drbg`, a
-    /// random bit generator implementing [`Rbg`].
+    /// random bit generator implementing [`Rbg`]. Each nonce is zeroized
+    /// after its use, on every exit (unproven: no test observes the
+    /// cleared memory).
     ///
     /// # Errors
     ///
@@ -375,34 +388,66 @@ impl EcdsaP384PrivateKey {
     ) -> Result<Self, Error> {
         let pk = derive_public_key_internal(d_bytes)?;
         let handle = EcdsaP384PrivateKey { d: *d_bytes, q: pk };
-        handle.run_pct(drbg)?;
+        if !handle.pairwise_consistency(drbg)? {
+            return Err(Error::InvalidInput);
+        }
         Ok(handle)
     }
 
-    fn generate_internal<R: Rbg>(drbg: &mut R) -> Result<Self, Error> {
-        let (d, q) = generate_p384_internal(drbg)?;
-        let handle = EcdsaP384PrivateKey { d, q };
-        handle.run_pct(drbg)?;
+    /// Generates the pair and runs the pairwise consistency test. The
+    /// module state is checked again after the test, so a pair is not
+    /// returned once another thread has put the module in its error state.
+    fn generate_internal<R: Rbg>(
+        drbg: &mut R,
+        #[cfg_attr(not(any(test, feature = "fault-injection")), allow(unused_variables))]
+        corrupt: bool,
+    ) -> Result<Self, Error> {
+        let (mut d, q) = generate_p384_internal(drbg)?;
+        #[cfg_attr(not(any(test, feature = "fault-injection")), allow(unused_mut))]
+        let mut handle = EcdsaP384PrivateKey { d, q };
+        oxicrypt_zeroize::zeroize(&mut d);
+        #[cfg(any(test, feature = "fault-injection"))]
+        if corrupt {
+            handle.q[1] ^= 0xFF;
+        }
+        if !handle.pairwise_consistency(drbg)? {
+            return Err(handle.pairwise_consistency_failed());
+        }
+        require_operational()?;
         Ok(handle)
     }
 
-    fn run_pct<R: Rbg>(&self, drbg: &mut R) -> Result<(), Error> {
+    /// The pairwise consistency test (ISO/IEC 19790 §7.10.3.3, FIPS 140-3
+    /// IG 10.3.A): signs [`PCT_PROBE_MSG`] with a nonce drawn from `drbg`
+    /// and verifies the signature under the handle's public key. `false`
+    /// when the signature does not verify, or when no nonce within
+    /// [`MAX_SIGN_RETRIES`] draws yields a signature. Each nonce is
+    /// zeroized after its use (unproven: no test observes the cleared
+    /// memory).
+    fn pairwise_consistency<R: Rbg>(&self, drbg: &mut R) -> Result<bool, Error> {
         for _ in 0..MAX_SIGN_RETRIES {
-            let k = sample_scalar_internal(drbg)?;
-            match sign_with_k_internal(&self.d, PCT_PROBE_MSG, &k) {
-                Ok(sig) => {
-                    if verify_internal(&self.q, PCT_PROBE_MSG, &sig)? {
-                        return Ok(());
-                    }
-                    return Err(Error::InvalidInput);
-                }
-                // `InvalidInput` from the sign primitive means a zero `r`
-                // or `s`: retry with a fresh `k`.
+            let mut k = sample_scalar_internal(drbg)?;
+            let signed = sign_with_k_internal(&self.d, PCT_PROBE_MSG, &k);
+            oxicrypt_zeroize::zeroize(&mut k);
+            match signed {
+                Ok(sig) => return verify_internal(&self.q, PCT_PROBE_MSG, &sig),
+                // A zero `r` or `s`: FIPS 186-5 §6.4.1 draws a fresh `k`.
                 Err(Error::InvalidInput) => {}
                 Err(e) => return Err(e),
             }
         }
-        Err(Error::InvalidInput)
+        Ok(false)
+    }
+
+    /// Wipes both halves of a generated pair that failed the pairwise
+    /// consistency test (unproven: no test observes the cleared memory),
+    /// then puts the module in its error state (ISO/IEC 19790 §7.10.3.3,
+    /// FIPS 140-3 IG 10.3.A), and returns the error to report.
+    fn pairwise_consistency_failed(mut self) -> Error {
+        oxicrypt_zeroize::zeroize(&mut self.q);
+        drop(self);
+        oxicrypt_module::enter_error_state(PCT_REASON);
+        Error::ConditionalTestFailed { reason: PCT_REASON }
     }
 
     fn sign_sha384_internal<R: Rbg>(
@@ -411,8 +456,10 @@ impl EcdsaP384PrivateKey {
         msg: &[u8],
     ) -> Result<[u8; SIGNATURE_LEN], Error> {
         for _ in 0..MAX_SIGN_RETRIES {
-            let k = sample_scalar_internal(drbg)?;
-            match sign_with_k_internal(&self.d, msg, &k) {
+            let mut k = sample_scalar_internal(drbg)?;
+            let signed = sign_with_k_internal(&self.d, msg, &k);
+            oxicrypt_zeroize::zeroize(&mut k);
+            match signed {
                 Ok(sig) => return Ok(sig),
                 Err(Error::InvalidInput) => {}
                 Err(e) => return Err(e),
@@ -615,6 +662,30 @@ mod tests {
         fn strength_bits(&self) -> u32 {
             self.0
         }
+    }
+
+    #[test]
+    fn pairwise_consistency_rejects_a_foreign_public_key() {
+        let _ = init_with_tests(&[KatEntry {
+            name: "ecdsa-p384-sha384",
+            run: self_test,
+        }]);
+        let mut drbg = pct_drbg(b"pct-tampered");
+        let honest = EcdsaP384PrivateKey::generate(&mut drbg).expect("honest generate ok");
+        let decoy = EcdsaP384PrivateKey::generate(&mut drbg).expect("decoy generate ok");
+
+        // Built through the raw struct, which skips the constructors'
+        // test, so that the test itself is what rejects the pair.
+        let forged = EcdsaP384PrivateKey {
+            d: *honest.private_scalar().unwrap(),
+            q: decoy.public_key().unwrap(),
+        };
+        assert_eq!(
+            forged.pairwise_consistency(&mut drbg),
+            Ok(false),
+            "PCT must reject an inconsistent (d, Q) handle"
+        );
+        assert_eq!(honest.pairwise_consistency(&mut drbg), Ok(true));
     }
 
     #[test]
