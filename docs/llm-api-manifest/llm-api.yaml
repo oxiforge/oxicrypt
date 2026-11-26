@@ -473,7 +473,7 @@ families:
     applies_to: functions
 
   - name: ml-kem-check-decapsulation-key
-    description: The FIPS 203 §7.3 decapsulation key check on its own, one per FIPS 203 parameter set.
+    description: The FIPS 203 §7.3 decapsulation key checks on their own, one per FIPS 203 parameter set.
     applies_to: functions
 
   - name: ml-dsa-keygen
@@ -859,7 +859,7 @@ types:
   - name: RsaPrivateKey2048
     module: oxicrypt-rsa
     kind: struct
-    description: RSA-2048 private key holding (n, e, d) and optional CRT components; runs a pairwise consistency test on construction.
+    description: RSA-2048 private key holding (n, e, d) and optional CRT components; runs a pairwise consistency test on construction, whose failure in generate returns ConditionalTestFailed with reason "RSA pairwise consistency" and puts the module in its error state, and whose failure on a key imported through from_components or from_components_crt returns InvalidInput and leaves the module operational.
     size_bytes: null
     security:
       contains_secret: true
@@ -869,7 +869,7 @@ types:
   - name: EcdsaP256PrivateKey
     module: oxicrypt-ecdsa
     kind: struct
-    description: ECDSA P-256 private key handle storing (d, Q); runs a sign-and-verify PCT on construction.
+    description: ECDSA P-256 private key handle storing (d, Q); runs a sign-and-verify PCT on construction, whose failure in generate returns ConditionalTestFailed with reason "ECDSA P-256 pairwise consistency" and puts the module in its error state, and whose failure in from_bytes returns InvalidInput and leaves the module operational.
     fields:
       - name: d
         type: "[u8; 32]"
@@ -886,7 +886,7 @@ types:
   - name: Ed25519PrivateKey
     module: oxicrypt-eddsa
     kind: struct
-    description: Ed25519 private key handle storing (seed, A); runs a sign-and-verify PCT on construction.
+    description: Ed25519 private key handle storing (seed, A); runs a sign-and-verify PCT on construction, whose failure in generate returns ConditionalTestFailed with reason "Ed25519 pairwise consistency" and puts the module in its error state, and whose failure in from_seed returns InvalidInput and leaves the module operational.
     security:
       contains_secret: true
       zeroize_on_drop: true
@@ -7687,7 +7687,7 @@ functions:
         - name: NotOperational
           condition: Module not initialized.
         - name: ConditionalTestFailed
-          condition: Pairwise consistency test (sign-then-verify) failed.
+          condition: 'The pairwise consistency test (sign-then-verify) failed, reason "ECDSA P-256 pairwise consistency"; the pair is wiped and the module has entered its error state.'
         - name: Rbg
           condition: The generator produced no output.
         - name: RbgTooWeak
@@ -7939,9 +7939,9 @@ functions:
         - name: AlgorithmRestricted
           condition: ECDH-P-256 blocked by active profile.
         - name: InvalidInput
-          condition: >-
-            DRBG fault, rejection-sampling exhaustion, or IG 10.3.A
-            PCT mismatch. In practice only a broken DRBG.
+          condition: Rejection-sampling exhaustion; in practice only a broken DRBG.
+        - name: ConditionalTestFailed
+          condition: 'The pairwise consistency test failed, reason "ECDH P-256 pairwise consistency"; the pair is wiped and the module has entered its error state.'
         - name: Rbg
           condition: The generator produced no output.
         - name: RbgTooWeak
@@ -7978,7 +7978,9 @@ functions:
         - name: AlgorithmRestricted
           condition: ECDH-P-384 blocked by active profile.
         - name: InvalidInput
-          condition: DRBG fault, sampling exhaustion, or PCT mismatch.
+          condition: Rejection-sampling exhaustion; in practice only a broken DRBG.
+        - name: ConditionalTestFailed
+          condition: 'The pairwise consistency test failed, reason "ECDH P-384 pairwise consistency"; the pair is wiped and the module has entered its error state.'
         - name: Rbg
           condition: The generator produced no output.
         - name: RbgTooWeak
@@ -7994,6 +7996,60 @@ functions:
       handles_secrets: true
       fips_approved: true
       fips_gate: Operational
+
+  # ── Classical key-generation fault seams ────────────────────────
+
+  - name: "seam::corrupt_next_pk"
+    module: oxicrypt-ecdh
+    description: "Arms the next ECDH key generation in the process, P-256 or P-384, through generate_keypair_p256 or generate_keypair_p384, to flip byte 1 of the encoded public key (the first x-coordinate byte) before its pairwise consistency test, which then fails and puts the module in its error state; available with the fault-injection feature or in the crate's own tests."
+    signature: "pub fn corrupt_next_pk()"
+    returns:
+      type: "()"
+      description: "Nothing."
+    thread_safety: thread-safe
+    security:
+      constant_time: false
+      handles_secrets: false
+      fips_approved: false
+
+  - name: "seam::corrupt_next_pk"
+    module: oxicrypt-ecdsa
+    description: "Arms the next ECDSA key generation in the process, P-256 or P-384, through EcdsaP256PrivateKey::generate or EcdsaP384PrivateKey::generate, to flip byte 1 of the encoded public key (the first x-coordinate byte) before its pairwise consistency test, which then fails and puts the module in its error state; available with the fault-injection feature or in the crate's own tests."
+    signature: "pub fn corrupt_next_pk()"
+    returns:
+      type: "()"
+      description: "Nothing."
+    thread_safety: thread-safe
+    security:
+      constant_time: false
+      handles_secrets: false
+      fips_approved: false
+
+  - name: "seam::corrupt_next_pk"
+    module: oxicrypt-eddsa
+    description: "Arms the next Ed25519 key generation in the process, through Ed25519PrivateKey::generate, to flip byte 1 of the encoded public key before its pairwise consistency test, which then fails and puts the module in its error state; available with the fault-injection feature or in the crate's own tests."
+    signature: "pub fn corrupt_next_pk()"
+    returns:
+      type: "()"
+      description: "Nothing."
+    thread_safety: thread-safe
+    security:
+      constant_time: false
+      handles_secrets: false
+      fips_approved: false
+
+  - name: "seam::corrupt_next_pk"
+    module: oxicrypt-rsa
+    description: "Arms the next RSA key generation in the process, of any modulus size, through the generate of RsaPrivateKey2048, RsaPrivateKey3072 or RsaPrivateKey4096, to flip byte 0 of the big-endian modulus n before its pairwise consistency test, which then fails and puts the module in its error state; available with the fault-injection feature or in the crate's own tests."
+    signature: "pub fn corrupt_next_pk()"
+    returns:
+      type: "()"
+      description: "Nothing."
+    thread_safety: thread-safe
+    security:
+      constant_time: false
+      handles_secrets: false
+      fips_approved: false
 
   # ── DH ──────────────────────────────────────────────────────────
 
@@ -8231,6 +8287,66 @@ functions:
       handles_secrets: false
       fips_approved: false
 
+  - name: "seam::ML_KEM_512_KEYGEN_D"
+    module: oxicrypt-ml-kem
+    type: "&[u8; 32]"
+    description: "The seed d of NIST ACVP-Server ML-KEM-keyGen-FIPS203 internalProjection tgId 1 tcId 1 (ML-KEM-512); available with the fault-injection feature or in the crate's own tests."
+
+  - name: "seam::ML_KEM_512_KEYGEN_Z"
+    module: oxicrypt-ml-kem
+    type: "&[u8; 32]"
+    description: "The seed z of the same ML-KEM-512 case; available with the fault-injection feature or in the crate's own tests."
+
+  - name: "seam::ML_KEM_512_KEYGEN_EK"
+    module: oxicrypt-ml-kem
+    type: "&[u8; 800]"
+    description: "The encapsulation key the same ML-KEM-512 case expects; available with the fault-injection feature or in the crate's own tests."
+
+  - name: "seam::ML_KEM_512_KEYGEN_DK"
+    module: oxicrypt-ml-kem
+    type: "&[u8; 1632]"
+    description: "The decapsulation key the same ML-KEM-512 case expects; available with the fault-injection feature or in the crate's own tests."
+
+  - name: "seam::ML_KEM_768_KEYGEN_D"
+    module: oxicrypt-ml-kem
+    type: "&[u8; 32]"
+    description: "The seed d of NIST ACVP-Server ML-KEM-keyGen-FIPS203 internalProjection tgId 2 tcId 26 (ML-KEM-768); available with the fault-injection feature or in the crate's own tests."
+
+  - name: "seam::ML_KEM_768_KEYGEN_Z"
+    module: oxicrypt-ml-kem
+    type: "&[u8; 32]"
+    description: "The seed z of the same ML-KEM-768 case; available with the fault-injection feature or in the crate's own tests."
+
+  - name: "seam::ML_KEM_768_KEYGEN_EK"
+    module: oxicrypt-ml-kem
+    type: "&[u8; 1184]"
+    description: "The encapsulation key the same ML-KEM-768 case expects; available with the fault-injection feature or in the crate's own tests."
+
+  - name: "seam::ML_KEM_768_KEYGEN_DK"
+    module: oxicrypt-ml-kem
+    type: "&[u8; 2400]"
+    description: "The decapsulation key the same ML-KEM-768 case expects; available with the fault-injection feature or in the crate's own tests."
+
+  - name: "seam::ML_KEM_1024_KEYGEN_D"
+    module: oxicrypt-ml-kem
+    type: "&[u8; 32]"
+    description: "The seed d of NIST ACVP-Server ML-KEM-keyGen-FIPS203 internalProjection tgId 3 tcId 51 (ML-KEM-1024); available with the fault-injection feature or in the crate's own tests."
+
+  - name: "seam::ML_KEM_1024_KEYGEN_Z"
+    module: oxicrypt-ml-kem
+    type: "&[u8; 32]"
+    description: "The seed z of the same ML-KEM-1024 case; available with the fault-injection feature or in the crate's own tests."
+
+  - name: "seam::ML_KEM_1024_KEYGEN_EK"
+    module: oxicrypt-ml-kem
+    type: "&[u8; 1568]"
+    description: "The encapsulation key the same ML-KEM-1024 case expects; available with the fault-injection feature or in the crate's own tests."
+
+  - name: "seam::ML_KEM_1024_KEYGEN_DK"
+    module: oxicrypt-ml-kem
+    type: "&[u8; 3168]"
+    description: "The decapsulation key the same ML-KEM-1024 case expects; available with the fault-injection feature or in the crate's own tests."
+
   - name: encapsulate
     module: oxicrypt-ml-kem
     family: ml-kem-encapsulate
@@ -8329,7 +8445,7 @@ functions:
     module: oxicrypt-ml-kem
     family: ml-kem-check-encapsulation-key
     signature: "pub fn check_encapsulation_key(ek: &[u8; 1568]) -> Result<bool, Error>"
-    description: The FIPS 203 §7.2 encapsulation key check that encapsulate runs, on its own, for ML-KEM-1024; for the ACVP encapsulation key check tests and for a caller that checks a key once before storing it.
+    description: The FIPS 203 §7.2 encapsulation key check that encapsulate runs, on its own, for ML-KEM-1024; for a caller that validates a key once before storing it.
     parameters:
       - name: ek
         type: "&[u8; 1568]"
@@ -8362,7 +8478,7 @@ functions:
     module: oxicrypt-ml-kem
     family: ml-kem-check-decapsulation-key
     signature: "pub fn check_decapsulation_key(dk: &[u8; 3168]) -> Result<bool, Error>"
-    description: The FIPS 203 §7.3 decapsulation key checks that decapsulate runs on dk, on its own, for ML-KEM-1024; for the ACVP decapsulation key check tests and for a caller that checks a key once before storing it.
+    description: The FIPS 203 §7.3 decapsulation key checks that decapsulate runs on dk, on their own, for ML-KEM-1024; for a caller that validates a key once before storing it.
     parameters:
       - name: dk
         type: "&[u8; 3168]"
@@ -8591,7 +8707,7 @@ functions:
     module: oxicrypt-ml-kem
     family: ml-kem-check-encapsulation-key
     signature: "pub fn check_encapsulation_key(ek: &[u8; 800]) -> Result<bool, Error>"
-    description: The FIPS 203 §7.2 encapsulation key check that ml_kem_512::encapsulate runs, on its own; for the ACVP encapsulation key check tests and for a caller that checks a key once before storing it.
+    description: The FIPS 203 §7.2 encapsulation key check that ml_kem_512::encapsulate runs, on its own; for a caller that validates a key once before storing it.
     parameters:
       - name: ek
         type: "&[u8; 800]"
@@ -8619,7 +8735,7 @@ functions:
     module: oxicrypt-ml-kem
     family: ml-kem-check-decapsulation-key
     signature: "pub fn check_decapsulation_key(dk: &[u8; 1632]) -> Result<bool, Error>"
-    description: The FIPS 203 §7.3 decapsulation key checks that ml_kem_512::decapsulate runs on dk, on its own; for the ACVP decapsulation key check tests and for a caller that checks a key once before storing it.
+    description: The FIPS 203 §7.3 decapsulation key checks that ml_kem_512::decapsulate runs on dk, on their own; for a caller that validates a key once before storing it.
     parameters:
       - name: dk
         type: "&[u8; 1632]"
@@ -8843,7 +8959,7 @@ functions:
     module: oxicrypt-ml-kem
     family: ml-kem-check-encapsulation-key
     signature: "pub fn check_encapsulation_key(ek: &[u8; 1184]) -> Result<bool, Error>"
-    description: The FIPS 203 §7.2 encapsulation key check that ml_kem_768::encapsulate runs, on its own; for the ACVP encapsulation key check tests and for a caller that checks a key once before storing it.
+    description: The FIPS 203 §7.2 encapsulation key check that ml_kem_768::encapsulate runs, on its own; for a caller that validates a key once before storing it.
     parameters:
       - name: ek
         type: "&[u8; 1184]"
@@ -8871,7 +8987,7 @@ functions:
     module: oxicrypt-ml-kem
     family: ml-kem-check-decapsulation-key
     signature: "pub fn check_decapsulation_key(dk: &[u8; 2400]) -> Result<bool, Error>"
-    description: The FIPS 203 §7.3 decapsulation key checks that ml_kem_768::decapsulate runs on dk, on its own; for the ACVP decapsulation key check tests and for a caller that checks a key once before storing it.
+    description: The FIPS 203 §7.3 decapsulation key checks that ml_kem_768::decapsulate runs on dk, on their own; for a caller that validates a key once before storing it.
     parameters:
       - name: dk
         type: "&[u8; 2400]"

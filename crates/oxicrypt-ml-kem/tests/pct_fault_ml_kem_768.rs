@@ -9,20 +9,16 @@
 mod pct_fault;
 
 use oxicrypt_ml_kem::ml_kem_768::{expand_key, keygen, keygen_with_seed};
-use pct_fault::{FixedRbg, hex};
+use oxicrypt_ml_kem::seam::{
+    ML_KEM_768_KEYGEN_D, ML_KEM_768_KEYGEN_DK, ML_KEM_768_KEYGEN_EK, ML_KEM_768_KEYGEN_Z,
+};
+use pct_fault::FixedRbg;
 
-/// The seeds d and z, and SHA2-256(ek ‖ dk) of the expected pair, of NIST
-/// ACVP-Server `ML-KEM-keyGen-FIPS203` internalProjection, tgId 2, tcId 26.
-const D: &str = "A2B4BCA315A6EA4600B4A316E09A2578AA1E8BCE919C8DF3A96C71C843F5B38B";
-const Z: &str = "D6BF055CB7B375E3271ED131F1BA31F83FEF533A239878A71074578B891265D1";
-const KEY_HASH: &str = "1BE936A1A16581DAE59D6FC5A43A2D75FB56A07FB1A47EAD34551340B6E5E905";
-
+/// The ACVP key-generation case `oxicrypt_ml_kem::seam` names.
 fn control() {
-    let (ek, dk) = expand_key(&hex(D), &hex(Z)).unwrap();
-    let mut h = oxicrypt_sha::sha256::Sha256::new().unwrap();
-    h.update(&ek);
-    h.update(&dk);
-    assert_eq!(h.finalize().unwrap(), hex::<32>(KEY_HASH));
+    let (ek, dk) = expand_key(ML_KEM_768_KEYGEN_D, ML_KEM_768_KEYGEN_Z).unwrap();
+    assert_eq!(&ek, ML_KEM_768_KEYGEN_EK);
+    assert_eq!(&dk, ML_KEM_768_KEYGEN_DK);
 }
 
 #[test]

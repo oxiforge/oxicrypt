@@ -49,7 +49,9 @@
 //! | `kpke_keygen`, `kpke_encrypt`, `kpke_decrypt` | private | FIPS 203 §5 |
 //! | `ml_kem_keygen`, `ml_kem_encaps`, `ml_kem_encaps_into`, `ml_kem_decaps`, `ml_kem_decaps_into` | private | FIPS 203 §6 |
 //! | `keygen`, `keygen_with_seed`, `expand_key` | `pub` | Module-gated key generation from an RBG (FIPS 203 Algorithm 19) and expansion of a stored seed, each with the pairwise consistency test |
-//! | `encapsulate`, `decapsulate` | `pub` | Module-gated encapsulation from an RBG (Algorithm 20) and decapsulation (Algorithm 21) |
+//! | `encapsulate`, `decapsulate` | `pub` | Module-gated encapsulation from an RBG (Algorithm 20) and decapsulation (Algorithm 21), each after its FIPS 203 §7.2 or §7.3 input check |
+//! | `check_encapsulation_key`, `check_decapsulation_key` | `pub` | Module-gated FIPS 203 §7.2 and §7.3 key checks on their own |
+//! | `ek_check`, `dk_hash_check` | private | The §7.2 modulus check and the §7.3 hash check |
 //! | `draw_d_z`, `draw_m`, `expand_checked`, `pairwise_consistency` | private | The strength checks and draws, and the expansion with the pairwise consistency test (FIPS 140-3 IG 10.3.A) |
 //! | `keygen_internal`, `encaps_internal`, `decaps_internal` | `pub` (hidden), `testing-interfaces` only | Mirrors without the operational gate (FIPS 203 §3.3: CAVP testing only) |
 //! | `keygen_internal_guarded`, `encaps_internal_guarded`, `decaps_internal_guarded` | `pub(crate)` | The same behind `require_self_test_started`, for the power-up self-tests, the unit tests and the `*_internal` wrappers |
@@ -78,7 +80,9 @@ macro_rules! ml_kem_impl {
         use oxicrypt_module::{Error, Service};
         use oxicrypt_sha::sha3::{SHA3_256_DIGEST_SIZE, SHA3_512_DIGEST_SIZE, Sha3_256, Sha3_512};
         use oxicrypt_xof::{Shake128, Shake256};
-        use $crate::encode::{byte_decode, byte_encode, compress_poly, decompress_poly};
+        use $crate::encode::{
+            byte_decode, byte_encode, coefficients_below_q, compress_poly, decompress_poly,
+        };
         use $crate::field::{ct_bytes_eq, ct_select_32};
         use $crate::params::POLY_ENCODED_12;
         use $crate::poly::Poly;
@@ -535,7 +539,6 @@ macro_rules! ml_kem_impl {
             Ok((k, ct))
         }
 
-        /// [`ml_kem_encaps`] writing K into `k_out` and c into `ct_out`.
         #[allow(
             clippy::indexing_slicing,
             clippy::arithmetic_side_effects,
@@ -582,7 +585,6 @@ macro_rules! ml_kem_impl {
             Ok(k)
         }
 
-        /// [`ml_kem_decaps`] writing the shared secret into `k_out`.
         #[allow(
             clippy::indexing_slicing,
             clippy::arithmetic_side_effects,
@@ -641,8 +643,6 @@ macro_rules! ml_kem_impl {
         /// require, in bits (FIPS 203 §3.3).
         const RBG_STRENGTH_BITS: u32 = $rbg_strength_bits;
 
-        /// The `reason` of the [`Error::ConditionalTestFailed`] a failed
-        /// pairwise consistency test returns.
         const PCT_REASON: &str = $pct_reason;
 
         /// ML-KEM.KeyGen (FIPS 203 Algorithm 19): checks the strength of
@@ -654,7 +654,10 @@ macro_rules! ml_kem_impl {
         ///
         /// # Errors
         ///
-        /// - [`Error::NotOperational`] unless the module is operational.
+        /// - [`Error::NotOperational`] unless the module is operational,
+        ///   checked again after the pairwise consistency test so that no
+        ///   pair is returned once another thread has put the module in its
+        ///   error state.
         /// - [`Error::AlgorithmRestricted`] when the active profile does not
         ///   admit this parameter set's key generation.
         /// - [`Error::RbgTooWeak`] when `rbg.strength_bits()` is below the
@@ -670,7 +673,8 @@ macro_rules! ml_kem_impl {
             oxicrypt_module::require_operational()?;
             oxicrypt_module::require_allowed($svc_keygen)?;
             let (d, z) = draw_d_z(rbg)?;
-            expand_checked(&d.bytes, &z.bytes)
+            let (_d, _z, ek, dk) = expand_checked(d, z)?;
+            Ok((ek, dk))
         }
 
         /// As [`keygen`], and also returns d ‖ z, d first, so that the
@@ -694,7 +698,7 @@ macro_rules! ml_kem_impl {
             oxicrypt_module::require_operational()?;
             oxicrypt_module::require_allowed($svc_keygen)?;
             let (d, z) = draw_d_z(rbg)?;
-            let (ek, dk) = expand_checked(&d.bytes, &z.bytes)?;
+            let (d, z, ek, dk) = expand_checked(d, z)?;
             let mut seed = oxicrypt_zeroize::Zeroizing::new([0u8; 2 * SEED_LEN]);
             seed[..SEED_LEN].copy_from_slice(&d.bytes);
             seed[SEED_LEN..].copy_from_slice(&z.bytes);
@@ -720,20 +724,36 @@ macro_rules! ml_kem_impl {
         ) -> Result<([u8; EK_LEN], [u8; DK_LEN]), Error> {
             oxicrypt_module::require_operational()?;
             oxicrypt_module::require_allowed($svc_expand_key)?;
-            expand_checked(d, z)
+            let mut d_copy = Tagged::new(WipedBuffer::D);
+            d_copy.bytes = *d;
+            let mut z_copy = Tagged::new(WipedBuffer::Z);
+            z_copy.bytes = *z;
+            let (_d, _z, ek, dk) = expand_checked(d_copy, z_copy)?;
+            Ok((ek, dk))
         }
 
-        /// ML-KEM.Encaps (FIPS 203 Algorithm 20): checks the strength of
+        /// ML-KEM.Encaps (FIPS 203 Algorithm 20): runs the FIPS 203 §7.2
+        /// encapsulation key check on `ek`, then checks the strength of
         /// `rbg`, draws m from it as one 32-byte request and encapsulates
         /// against `ek`. m is wiped before the function returns.
+        ///
+        /// The §7.2 type check is the type of `ek`, an array of exactly
+        /// 384 · k + 32 bytes. The modulus check requires every 12-bit
+        /// value in the first 384 · k bytes to be below q, so that
+        /// re-encoding the decoded key reproduces those bytes.
         ///
         /// Returns `(shared_secret, ciphertext)`.
         ///
         /// # Errors
         ///
-        /// - [`Error::NotOperational`] unless the module is operational.
+        /// - [`Error::NotOperational`] unless the module is operational,
+        ///   checked again before the output is returned so that none is
+        ///   returned once another thread has put the module in its error
+        ///   state.
         /// - [`Error::AlgorithmRestricted`] when the active profile does not
         ///   admit this parameter set's encapsulation.
+        /// - [`Error::InvalidInput`] when `ek` fails the modulus check, before
+        ///   the strength check and before any draw.
         /// - [`Error::RbgTooWeak`] when `rbg.strength_bits()` is below the
         ///   requirement [`keygen`] states, before any draw.
         /// - [`Error::Rbg`] when the draw fails.
@@ -743,11 +763,28 @@ macro_rules! ml_kem_impl {
         ) -> Result<([u8; SHARED_SECRET_LEN], [u8; CT_LEN]), Error> {
             oxicrypt_module::require_operational()?;
             oxicrypt_module::require_allowed($svc_encaps)?;
+            if !ek_check(ek) {
+                return Err(Error::InvalidInput);
+            }
             let m = draw_m(rbg)?;
-            ml_kem_encaps(ek, &m.bytes)
+            let mut k = Tagged::<SHARED_SECRET_LEN>::new(WipedBuffer::SharedSecret);
+            let mut ct = [0u8; CT_LEN];
+            ml_kem_encaps_into(ek, &m.bytes, &mut k.bytes, &mut ct)?;
+            // A module that another thread put in its error state during
+            // the computation returns no output (ISO/IEC 19790 §7.10.1).
+            oxicrypt_module::require_operational_for_output()?;
+            Ok((k.bytes, ct))
         }
 
-        /// ML-KEM.Decaps (FIPS 203 Algorithm 21) of `ct` under `dk`.
+        /// ML-KEM.Decaps (FIPS 203 Algorithm 21): runs the FIPS 203 §7.3
+        /// decapsulation input check on `dk` and `ct`, then decapsulates
+        /// `ct` under `dk`.
+        ///
+        /// The two §7.3 type checks are the types of `ct` and `dk`, arrays
+        /// of exactly 32 · (dᵤ · k + dᵥ) and 768 · k + 96 bytes, so the
+        /// lengths are checked on every call. The hash check recomputes
+        /// H over the encapsulation key stored at `dk[384k..768k + 32]` and
+        /// compares it with the hash stored at `dk[768k + 32..768k + 64]`.
         ///
         /// Uses implicit rejection: a ciphertext that does not re-encrypt
         /// to itself yields the pseudorandom J(z ‖ c) rather than an error.
@@ -758,13 +795,73 @@ macro_rules! ml_kem_impl {
         /// - [`Error::NotOperational`] unless the module is operational.
         /// - [`Error::AlgorithmRestricted`] when the active profile does not
         ///   admit this parameter set's decapsulation.
+        /// - [`Error::InvalidInput`] when `dk` fails the hash check, before
+        ///   any computation on `ct`. A ciphertext that does not match `dk`
+        ///   is never an error.
         pub fn decapsulate(
             dk: &[u8; DK_LEN],
             ct: &[u8; CT_LEN],
         ) -> Result<[u8; SHARED_SECRET_LEN], Error> {
             oxicrypt_module::require_operational()?;
             oxicrypt_module::require_allowed($svc_decaps)?;
+            if !dk_hash_check(dk)? {
+                return Err(Error::InvalidInput);
+            }
             decaps_internal_unguarded(dk, ct)
+        }
+
+        /// The FIPS 203 §7.2 encapsulation key check on its own, the check
+        /// [`encapsulate`] runs: `Ok(true)` when `ek` passes, `Ok(false)`
+        /// when it fails. For a caller that validates a key once before
+        /// storing it.
+        ///
+        /// # Errors
+        ///
+        /// - [`Error::NotOperational`] unless the module is operational.
+        /// - [`Error::AlgorithmRestricted`] when the active profile does not
+        ///   admit this parameter set's encapsulation.
+        ///
+        /// A failing key is `Ok(false)`, never an error.
+        pub fn check_encapsulation_key(ek: &[u8; EK_LEN]) -> Result<bool, Error> {
+            oxicrypt_module::require_operational()?;
+            oxicrypt_module::require_allowed($svc_encaps)?;
+            Ok(ek_check(ek))
+        }
+
+        /// The FIPS 203 §7.3 decapsulation key checks on their own, the
+        /// checks [`decapsulate`] runs on `dk`: `Ok(true)` when `dk`
+        /// passes, `Ok(false)` when it fails. For a caller that validates a
+        /// key once before storing it.
+        ///
+        /// # Errors
+        ///
+        /// - [`Error::NotOperational`] unless the module is operational,
+        ///   also when another thread puts the module in its error state
+        ///   between the gate and the hash, whose module guard then refuses.
+        /// - [`Error::AlgorithmRestricted`] when the active profile does not
+        ///   admit this parameter set's decapsulation.
+        ///
+        /// A failing key is `Ok(false)`, never an error.
+        pub fn check_decapsulation_key(dk: &[u8; DK_LEN]) -> Result<bool, Error> {
+            oxicrypt_module::require_operational()?;
+            oxicrypt_module::require_allowed($svc_decaps)?;
+            dk_hash_check(dk)
+        }
+
+        /// FIPS 203 §7.2 modulus check (equation 7.1) on `ek[0..384k]`.
+        fn ek_check(ek: &[u8; EK_LEN]) -> bool {
+            coefficients_below_q(&ek[..K * POLY_ENCODED_12])
+        }
+
+        /// FIPS 203 §7.3 hash check (equation 7.2):
+        /// `H(dk[384k..768k + 32]) == dk[768k + 32..768k + 64]`.
+        #[allow(clippy::indexing_slicing, clippy::arithmetic_side_effects)]
+        fn dk_hash_check(dk: &[u8; DK_LEN]) -> Result<bool, Error> {
+            let dk_pke_len = 384 * K;
+            let mut h = <Sha3_256>::new_internal()?;
+            h.update(&dk[dk_pke_len..dk_pke_len + EK_LEN]);
+            let test: [u8; SHA3_256_DIGEST_SIZE] = h.finalize()?;
+            Ok(ct_bytes_eq(&test, &dk[dk_pke_len + EK_LEN..dk_pke_len + EK_LEN + 32]) == 0)
         }
 
         /// Checks the strength of `rbg` against [`RBG_STRENGTH_BITS`], then
@@ -794,27 +891,52 @@ macro_rules! ml_kem_impl {
             Ok(m)
         }
 
-        /// Expands the pair from `(d, z)` and runs the pairwise consistency
-        /// test before either half is returned. On a failed test both halves
-        /// are wiped, then the module enters its error state.
+        /// Expands the pair from the module's copies of d and z and runs the
+        /// pairwise consistency test before either half is returned; returns
+        /// d and z with the pair. The module state is checked again after
+        /// the test, so a pair is not returned once another thread has put
+        /// the module in its error state.
         fn expand_checked(
-            d: &[u8; SEED_LEN],
-            z: &[u8; SEED_LEN],
-        ) -> Result<([u8; EK_LEN], [u8; DK_LEN]), Error> {
+            d: Tagged<SEED_LEN>,
+            z: Tagged<SEED_LEN>,
+        ) -> Result<
+            (
+                Tagged<SEED_LEN>,
+                Tagged<SEED_LEN>,
+                [u8; EK_LEN],
+                [u8; DK_LEN],
+            ),
+            Error,
+        > {
             let mut ek = Tagged::<EK_LEN>::new(WipedBuffer::PublicKey);
             let mut dk = Tagged::<DK_LEN>::new(WipedBuffer::SecretKey);
-            ml_kem_keygen(d, z, &mut ek.bytes, &mut dk.bytes)?;
+            ml_kem_keygen(&d.bytes, &z.bytes, &mut ek.bytes, &mut dk.bytes)?;
             #[cfg(any(test, feature = "fault-injection"))]
             if $crate::seam::take_corrupt_next_dk() {
                 dk.bytes[0] ^= 0xFF;
             }
             if !pairwise_consistency(&ek.bytes, &dk.bytes)? {
-                drop(ek);
-                drop(dk);
-                oxicrypt_module::enter_error_state(PCT_REASON);
-                return Err(Error::ConditionalTestFailed { reason: PCT_REASON });
+                return Err(pairwise_consistency_failed(d, z, ek, dk));
             }
-            Ok((ek.bytes, dk.bytes))
+            oxicrypt_module::require_operational_for_output()?;
+            Ok((d, z, ek.bytes, dk.bytes))
+        }
+
+        /// Wipes d, z and both halves of a pair that failed the pairwise
+        /// consistency test, puts the module in its error state (FIPS 140-3
+        /// IG 10.3.A), and returns the error to report.
+        fn pairwise_consistency_failed(
+            d: Tagged<SEED_LEN>,
+            z: Tagged<SEED_LEN>,
+            ek: Tagged<EK_LEN>,
+            dk: Tagged<DK_LEN>,
+        ) -> Error {
+            drop(d);
+            drop(z);
+            drop(ek);
+            drop(dk);
+            oxicrypt_module::enter_error_state(PCT_REASON);
+            Error::ConditionalTestFailed { reason: PCT_REASON }
         }
 
         /// The pairwise consistency test (FIPS 140-3 IG 10.3.A):
@@ -1045,15 +1167,23 @@ macro_rules! ml_kem_impl {
                 assert_eq!(decapsulate(&dk, &ct).unwrap(), k);
             }
 
-            /// An RBG below the set's strength is refused before any draw,
-            /// and an uninstantiated DRBG of sufficient strength is refused
-            /// by its draw.
-            #[test]
-            fn with_rbg_refuses_weak_or_uninstantiated() {
+            /// The body of each set's `with_rbg_refuses_weak_or_uninstantiated`,
+            /// which passes its strength floor and the outcomes it expects as
+            /// literals. An RBG of strength `floor - 1` is refused before any
+            /// draw by `keygen`, `keygen_with_seed` and `encapsulate`, one of
+            /// strength `floor` is drawn from, and uninstantiated DRBGs give
+            /// `aes128`, `aes192` and, for HMAC_DRBG-SHA-256,
+            /// `Rbg(Uninstantiated)`: an uninstantiated DRBG refuses any draw
+            /// with `Uninstantiated`, so `RbgTooWeak` shows no draw was made.
+            pub(super) fn refuses_weak_or_uninstantiated(
+                floor: u32,
+                aes128_outcome: Result<(), Error>,
+                aes192_outcome: Result<(), Error>,
+            ) {
                 crate::test_support::start_module();
                 let (ek, _) =
                     keygen_internal_guarded(&[0x11; SEED_LEN], &[0x22; SEED_LEN]).unwrap();
-                for strength in [128, 192, 256] {
+                for (strength, accepted) in [(floor - 1, false), (floor, true)] {
                     let mut keygen_rbg = CountingRbg::new(stream(), strength);
                     let mut seed_rbg = CountingRbg::new(stream(), strength);
                     let mut encaps_rbg = CountingRbg::new(stream(), strength);
@@ -1063,35 +1193,26 @@ macro_rules! ml_kem_impl {
                         encapsulate(&ek, &mut encaps_rbg).map(drop),
                     ];
                     let draws = [keygen_rbg.draws, seed_rbg.draws, encaps_rbg.draws];
-                    if strength < RBG_STRENGTH_BITS {
-                        for outcome in outcomes {
-                            assert_eq!(outcome, Err(Error::RbgTooWeak), "{strength}");
-                        }
-                        assert!(draws.iter().all(|d| d.is_empty()), "{strength}");
+                    let expected = if accepted {
+                        Ok(())
                     } else {
-                        for outcome in outcomes {
-                            assert_eq!(outcome, Ok(()), "{strength}");
-                        }
-                        assert_eq!(draws.map(|d| d.len()), [2, 2, 1], "{strength}");
+                        Err(Error::RbgTooWeak)
+                    };
+                    for outcome in outcomes {
+                        assert_eq!(outcome, expected, "{strength}");
                     }
+                    let lengths = if accepted { [2, 2, 1] } else { [0, 0, 0] };
+                    assert_eq!(draws.map(|d| d.len()), lengths, "{strength}");
                 }
 
-                // Uninstantiated, so any draw would fail with
-                // `Uninstantiated`: `RbgTooWeak` shows no draw was made.
-                let expected = |strength: u32| {
-                    if strength < RBG_STRENGTH_BITS {
-                        Error::RbgTooWeak
-                    } else {
-                        Error::Rbg(RbgError::Uninstantiated)
-                    }
-                };
                 let mut aes128 = oxicrypt_drbg::CtrDrbgAes128::new();
-                assert_eq!(keygen(&mut aes128).map(drop), Err(expected(128)));
-                assert_eq!(keygen_with_seed(&mut aes128).map(drop), Err(expected(128)));
-                assert_eq!(encapsulate(&ek, &mut aes128).map(drop), Err(expected(128)));
+                assert_eq!(keygen(&mut aes128).map(drop), aes128_outcome);
+                assert_eq!(keygen_with_seed(&mut aes128).map(drop), aes128_outcome);
+                assert_eq!(encapsulate(&ek, &mut aes128).map(drop), aes128_outcome);
                 let mut aes192 = oxicrypt_drbg::CtrDrbgAes192::new();
-                assert_eq!(keygen(&mut aes192).map(drop), Err(expected(192)));
-                assert_eq!(encapsulate(&ek, &mut aes192).map(drop), Err(expected(192)));
+                assert_eq!(keygen(&mut aes192).map(drop), aes192_outcome);
+                assert_eq!(keygen_with_seed(&mut aes192).map(drop), aes192_outcome);
+                assert_eq!(encapsulate(&ek, &mut aes192).map(drop), aes192_outcome);
 
                 let mut hmac = oxicrypt_drbg::HmacDrbgSha256::new();
                 let uninstantiated = Err(Error::Rbg(RbgError::Uninstantiated));
@@ -1106,21 +1227,171 @@ macro_rules! ml_kem_impl {
             #[test]
             fn keygen_with_seed_round_trips() {
                 crate::test_support::start_module();
-                let mut rbg = CountingRbg::new([0x96; 2 * SEED_LEN], RBG_STRENGTH_BITS);
+                let mut rbg = CountingRbg::new(stream(), RBG_STRENGTH_BITS);
                 let (seed, ek, dk) = keygen_with_seed(&mut rbg).unwrap();
+                assert_eq!(*seed, stream());
                 let (d, z) = halves(&seed);
                 assert_eq!(expand_key(&d, &z).unwrap(), (ek, dk));
-                assert_eq!(
-                    (d, z),
-                    ([0x96; SEED_LEN], [0x96; SEED_LEN]),
-                    "expand_key modified the caller's seed"
-                );
+                assert_ne!(expand_key(&z, &d).unwrap(), (ek, dk));
 
                 let mut mutated = d;
                 mutated[0] ^= 0x01;
                 let (other_ek, other_dk) = expand_key(&mutated, &z).unwrap();
                 assert_ne!(other_ek, ek);
                 assert_ne!(other_dk, dk);
+            }
+        }
+
+        /// The bodies of each parameter set's FIPS 203 §7.2 and §7.3 input
+        /// check tests, which pass in the set's known vectors.
+        #[cfg(test)]
+        mod input_checks {
+            use super::rbg_services::CountingRbg;
+            use super::*;
+
+            /// `ek` with its 12-bit value number `index` (counting from 0
+            /// across all k polynomials, LSB-first) set to `value`.
+            fn with_value(ek: &[u8; EK_LEN], index: usize, value: u16) -> [u8; EK_LEN] {
+                let mut out = *ek;
+                let at = (index >> 1) * 3;
+                if index & 1 == 0 {
+                    out[at] = value as u8;
+                    out[at + 1] = (out[at + 1] & 0xF0) | (value >> 8) as u8;
+                } else {
+                    out[at + 1] = (out[at + 1] & 0x0F) | ((value & 0x0F) << 4) as u8;
+                    out[at + 2] = (value >> 4) as u8;
+                }
+                out
+            }
+
+            /// `ek` with one 12-bit value set to q (3329) or to 4095, at
+            /// each of: the first value, the first value of polynomial 1,
+            /// an interior value of the last polynomial, and the last value.
+            pub(super) fn noncanonical(ek: &[u8; EK_LEN]) -> [[u8; EK_LEN]; 8] {
+                let n = $crate::params::N;
+                let positions = [0, n, (K - 1) * n + (n >> 1) + 1, K * n - 1];
+                core::array::from_fn(|i| {
+                    let value = if i & 1 == 0 { 3329 } else { 4095 };
+                    with_value(ek, positions[i >> 1], value)
+                })
+            }
+
+            /// `ek` with ρ, the 32 bytes after the encoded vector, set to
+            /// 0xFF, which the §7.2 modulus check does not read.
+            fn with_rho_ff(ek: &[u8; EK_LEN]) -> [u8; EK_LEN] {
+                let mut out = *ek;
+                out[K * POLY_ENCODED_12..].fill(0xFF);
+                out
+            }
+
+            /// `dk` with a byte of its stored H(ek) flipped (the first, then
+            /// the last), and with a byte of its stored ek flipped (the
+            /// first, then the last).
+            fn bad_hash(dk: &[u8; DK_LEN]) -> [[u8; DK_LEN]; 4] {
+                let ek_at = 384 * K;
+                let hash_at = ek_at + EK_LEN;
+                let mut out = [*dk; 4];
+                out[0][hash_at] ^= 0x01;
+                out[1][hash_at + 31] ^= 0x01;
+                out[2][ek_at] ^= 0x01;
+                out[3][hash_at - 1] ^= 0x80;
+                out
+            }
+
+            /// J(z ‖ c) with z read from `dk`: the implicit-rejection secret
+            /// of FIPS 203 Algorithm 18 step 7, computed here independently
+            /// of the decapsulation core.
+            fn j_z_c(dk: &[u8; DK_LEN], ct: &[u8; CT_LEN]) -> [u8; SHARED_SECRET_LEN] {
+                let z_at = 768 * K + 64;
+                let mut j = Shake256::new_internal().unwrap();
+                j.update(&dk[z_at..z_at + 32]);
+                j.update(ct);
+                j.finalize();
+                let mut out = [0u8; SHARED_SECRET_LEN];
+                j.squeeze(&mut out).unwrap();
+                out
+            }
+
+            /// A non-canonical `ek` is refused with `InvalidInput` before
+            /// any draw, also by an RBG too weak for the set; the canonical
+            /// `ek`, and `ek` with ρ set to 0xFF, encapsulate with one
+            /// 32-byte draw.
+            pub(super) fn encaps_refuses_noncanonical(ek: &[u8; EK_LEN]) {
+                crate::test_support::start_module();
+                for bad in noncanonical(ek) {
+                    let mut rbg = CountingRbg::new([0x11; 2 * SEED_LEN], RBG_STRENGTH_BITS);
+                    assert_eq!(
+                        encapsulate(&bad, &mut rbg).map(drop),
+                        Err(Error::InvalidInput)
+                    );
+                    assert!(rbg.draws.is_empty(), "drew {:?}", rbg.draws);
+                    let mut weak = CountingRbg::new([0x11; 2 * SEED_LEN], RBG_STRENGTH_BITS - 64);
+                    assert_eq!(
+                        encapsulate(&bad, &mut weak).map(drop),
+                        Err(Error::InvalidInput)
+                    );
+                    assert!(weak.draws.is_empty(), "drew {:?}", weak.draws);
+                }
+                for good in [*ek, with_rho_ff(ek)] {
+                    let mut rbg = CountingRbg::new([0x11; 2 * SEED_LEN], RBG_STRENGTH_BITS);
+                    assert_eq!(encapsulate(&good, &mut rbg).map(drop), Ok(()));
+                    assert_eq!(rbg.draws, [SEED_LEN]);
+                }
+            }
+
+            /// A `dk` whose stored H(ek) does not match its stored ek is
+            /// refused with `InvalidInput`. The unmodified `dk` decapsulates
+            /// `ct` to `k`, and a tampered `ct` to J(z ‖ c), not to an
+            /// error (implicit rejection, FIPS 203 Algorithm 18).
+            pub(super) fn decaps_refuses_bad_hash(
+                dk: &[u8; DK_LEN],
+                ct: &[u8; CT_LEN],
+                k: &[u8; SHARED_SECRET_LEN],
+            ) {
+                crate::test_support::start_module();
+                for bad in bad_hash(dk) {
+                    assert_eq!(decapsulate(&bad, ct), Err(Error::InvalidInput));
+                }
+                assert_eq!(decapsulate(dk, ct), Ok(*k));
+                let mut tampered = *ct;
+                tampered[CT_LEN - 1] ^= 0x01;
+                let k_bar = j_z_c(dk, &tampered);
+                assert_ne!(k_bar, *k);
+                assert_eq!(decapsulate(dk, &tampered), Ok(k_bar));
+            }
+
+            /// The public `decapsulate` of a known implicit-rejection
+            /// vector gives its expected shared secret.
+            pub(super) fn decaps_rejects_known_vector(
+                dk: &[u8; DK_LEN],
+                ct: &[u8; CT_LEN],
+                k: &[u8; SHARED_SECRET_LEN],
+            ) {
+                crate::test_support::start_module();
+                assert_eq!(decapsulate(dk, ct), Ok(*k));
+                assert_eq!(j_z_c(dk, ct), *k);
+            }
+
+            /// `check_encapsulation_key` is `Ok(true)` on `ek` and on `ek`
+            /// with ρ set to 0xFF, and `Ok(false)` on each non-canonical
+            /// variant of it.
+            pub(super) fn check_encapsulation_key_verdicts(ek: &[u8; EK_LEN]) {
+                crate::test_support::start_module();
+                assert_eq!(check_encapsulation_key(ek), Ok(true));
+                assert_eq!(check_encapsulation_key(&with_rho_ff(ek)), Ok(true));
+                for bad in noncanonical(ek) {
+                    assert_eq!(check_encapsulation_key(&bad), Ok(false));
+                }
+            }
+
+            /// `check_decapsulation_key` is `Ok(true)` on `dk` and
+            /// `Ok(false)` on each variant whose hash check fails.
+            pub(super) fn check_decapsulation_key_verdicts(dk: &[u8; DK_LEN]) {
+                crate::test_support::start_module();
+                assert_eq!(check_decapsulation_key(dk), Ok(true));
+                for bad in bad_hash(dk) {
+                    assert_eq!(check_decapsulation_key(&bad), Ok(false));
+                }
             }
         }
 
@@ -1137,6 +1408,7 @@ macro_rules! ml_kem_impl {
             /// Every buffer an encapsulation holds.
             const ENCAPSULATION: &[WipedBuffer] = &[
                 M,
+                SharedSecret,
                 NoisePrf,
                 EncryptRho,
                 EncapsG,
@@ -1195,8 +1467,67 @@ macro_rules! ml_kem_impl {
                 DecryptW,
             ];
 
-            /// Set in the child process this test runs its body in.
+            /// Set in a child process to `<entry point> <token>`.
             const CHILD: &str = "OXICRYPT_ML_KEM_WIPE_CHILD";
+
+            /// Printed by a child, as a line of its own, once every
+            /// assertion passed.
+            const DONE: &str = "wipe child done:";
+
+            /// The entry points whose pairwise consistency failure is faulted,
+            /// each in a child process of its own.
+            const FAULTED: [&str; 3] = ["keygen", "keygen_with_seed", "expand_key"];
+
+            /// The entry point this process faults, when it is a child its
+            /// parent started: [`CHILD`] holds the name and a token, and the
+            /// token is also one of the process's arguments, so an inherited
+            /// [`CHILD`] variable does not make a top-level run a child.
+            fn child_entry() -> Option<std::string::String> {
+                let value = std::env::var(CHILD).ok()?;
+                let (name, token) = value.split_once(' ')?;
+                std::env::args()
+                    .any(|arg| arg == token)
+                    .then(|| std::borrow::ToOwned::to_owned(name))
+            }
+
+            /// Runs `command` with both pipes drained, killing it after five
+            /// minutes. Returns its success, stdout and stderr.
+            fn run_child(
+                mut command: std::process::Command,
+            ) -> (bool, std::string::String, std::string::String) {
+                use std::io::Read;
+
+                let mut child = command
+                    .stdout(std::process::Stdio::piped())
+                    .stderr(std::process::Stdio::piped())
+                    .spawn()
+                    .unwrap();
+                let drain = |mut pipe: std::boxed::Box<dyn Read + Send>| {
+                    std::thread::spawn(move || {
+                        let mut bytes = std::vec::Vec::new();
+                        pipe.read_to_end(&mut bytes).unwrap();
+                        std::string::String::from_utf8_lossy(&bytes).into_owned()
+                    })
+                };
+                let stdout = drain(std::boxed::Box::new(child.stdout.take().unwrap()));
+                let stderr = drain(std::boxed::Box::new(child.stderr.take().unwrap()));
+                let start = std::time::Instant::now();
+                let status = loop {
+                    if let Some(status) = child.try_wait().unwrap() {
+                        break status;
+                    }
+                    if start.elapsed() > std::time::Duration::from_mins(5) {
+                        child.kill().unwrap();
+                        panic!("a child did not finish");
+                    }
+                    std::thread::sleep(std::time::Duration::from_millis(10));
+                };
+                (
+                    status.success(),
+                    stdout.join().unwrap(),
+                    stderr.join().unwrap(),
+                )
+            }
 
             /// An RBG whose draws fail from the `fail_at`-th on, counting
             /// from 0.
@@ -1240,37 +1571,41 @@ macro_rules! ml_kem_impl {
             }
 
             /// Every exit of the key-generation and encapsulation services
-            /// wipes every buffer it holds: a strength refusal (which holds
-            /// none), a failed first draw, a failed second draw, success
-            /// through each entry point, and a failed pairwise consistency
-            /// test. The last puts the module in its error state, so the
-            /// body runs in a child process of its own.
+            /// wipes every buffer it holds: a strength refusal and an
+            /// encapsulation key check refusal (which hold none), a failed
+            /// first draw, a failed second draw, success through each entry
+            /// point, and a failed pairwise consistency test through each
+            /// key-generation entry point, each in a child process of its
+            /// own because it puts the module in its error state.
             ///
-            /// Limit: the expansion core's error exit is not exercised,
-            /// because the core fails only on a module state that the
-            /// service's own gate refuses first.
+            /// Limit: not observed are the bitwise copies a by-value move
+            /// leaves and the wipe of the returned `Zeroizing` seed itself,
+            /// which `oxicrypt-zeroize` tests. Not exercised is the error
+            /// exit of the expansion core and of the pairwise consistency
+            /// test, reached when another thread puts the module in its error
+            /// state after the service's gate; the same drops wipe it.
             #[test]
             fn seeds_wiped_on_every_exit() {
-                let name = module_path!()
-                    .split_once("::")
-                    .map(|(_, path)| std::format!("{path}::seeds_wiped_on_every_exit"))
-                    .unwrap();
-                if std::env::var_os(CHILD).is_none() {
-                    let out = std::process::Command::new(std::env::current_exe().unwrap())
-                        .args([name.as_str(), "--exact", "--test-threads=1"])
-                        .env(CHILD, "1")
-                        .output()
-                        .unwrap();
-                    let stdout = std::string::String::from_utf8_lossy(&out.stdout);
-                    assert!(
-                        out.status.success() && stdout.contains("test result: ok. 1 passed"),
-                        "{name} did not pass in its own process:\n{stdout}{}",
-                        std::string::String::from_utf8_lossy(&out.stderr)
-                    );
+                let failed = Err(Error::ConditionalTestFailed { reason: PCT_REASON });
+
+                crate::test_support::start_module();
+                if let Some(entry) = child_entry() {
+                    seam::reset();
+                    seam::corrupt_next_dk();
+                    let mut rbg = CountingRbg::new([0x11; 2 * SEED_LEN], RBG_STRENGTH_BITS);
+                    let outcome = match entry.as_str() {
+                        "keygen" => keygen(&mut rbg).map(drop),
+                        "keygen_with_seed" => keygen_with_seed(&mut rbg).map(drop),
+                        "expand_key" => expand_key(&[0x22; SEED_LEN], &[0x23; SEED_LEN]).map(drop),
+                        other => panic!("no entry point named {other}"),
+                    };
+                    assert_eq!(outcome, failed);
+                    assert!(!oxicrypt_module::is_operational());
+                    assert_wiped(&entry, KEY_GENERATION);
+                    std::eprintln!("{DONE} {entry}");
                     return;
                 }
 
-                crate::test_support::start_module();
                 let (ek, _) =
                     keygen_internal_guarded(&[0x33; SEED_LEN], &[0x44; SEED_LEN]).unwrap();
                 seam::reset();
@@ -1282,6 +1617,15 @@ macro_rules! ml_kem_impl {
                     Err(Error::RbgTooWeak)
                 );
                 assert_wiped("strength refusal", &[]);
+
+                let [noncanonical, ..] = super::input_checks::noncanonical(&ek);
+                let mut rbg = CountingRbg::new([0x11; 2 * SEED_LEN], RBG_STRENGTH_BITS);
+                assert_eq!(
+                    encapsulate(&noncanonical, &mut rbg).map(drop),
+                    Err(Error::InvalidInput)
+                );
+                assert!(rbg.draws.is_empty(), "drew {:?}", rbg.draws);
+                assert_wiped("encapsulation key check refusal", &[]);
 
                 let mut first = FailingRbg {
                     fail_at: 0,
@@ -1324,34 +1668,59 @@ macro_rules! ml_kem_impl {
 
                 let mut rbg = CountingRbg::new([0x11; 2 * SEED_LEN], RBG_STRENGTH_BITS);
                 let (seed, _, _) = keygen_with_seed(&mut rbg).unwrap();
-                assert_wiped("keygen_with_seed", KEY_GENERATION);
                 drop(seed);
+                assert_wiped("keygen_with_seed", KEY_GENERATION);
 
-                let (d, z) = ([0x22; SEED_LEN], [0x23; SEED_LEN]);
-                expand_key(&d, &z).unwrap();
-                assert_eq!((d, z), ([0x22; SEED_LEN], [0x23; SEED_LEN]));
-                let without_seed: std::vec::Vec<WipedBuffer> = KEY_GENERATION
-                    .iter()
-                    .copied()
-                    .filter(|b| !matches!(b, D | Z))
-                    .collect();
-                assert_wiped("expand_key", &without_seed);
+                expand_key(&[0x22; SEED_LEN], &[0x23; SEED_LEN]).unwrap();
+                assert_wiped("expand_key", KEY_GENERATION);
 
-                seam::corrupt_next_dk();
-                let mut rbg = CountingRbg::new([0x11; 2 * SEED_LEN], RBG_STRENGTH_BITS);
-                assert_eq!(
-                    keygen(&mut rbg).map(drop),
-                    Err(Error::ConditionalTestFailed { reason: PCT_REASON })
+                fault_each_in_a_child();
+                assert!(oxicrypt_module::is_operational());
+            }
+
+            /// Runs this test once per entry point of [`FAULTED`], each in a
+            /// child process that the token makes a child, and checks that
+            /// each child passed and printed its [`DONE`] line.
+            fn fault_each_in_a_child() {
+                let name = module_path!()
+                    .split_once("::")
+                    .map(|(_, path)| std::format!("{path}::seeds_wiped_on_every_exit"))
+                    .unwrap();
+                let token = std::format!(
+                    "wipe-token-{:016x}",
+                    std::hash::BuildHasher::hash_one(
+                        &std::collections::hash_map::RandomState::new(),
+                        std::process::id()
+                    )
                 );
-                assert!(!oxicrypt_module::is_operational());
-                assert_wiped("pairwise consistency failure", KEY_GENERATION);
+                for entry in FAULTED {
+                    let mut command = std::process::Command::new(std::env::current_exe().unwrap());
+                    command
+                        .args([
+                            name.as_str(),
+                            token.as_str(),
+                            "--exact",
+                            "--nocapture",
+                            "--test-threads=1",
+                        ])
+                        .env(CHILD, std::format!("{entry} {token}"));
+                    let (success, stdout, stderr) = run_child(command);
+                    let done = std::format!("{DONE} {entry}");
+                    assert!(
+                        success
+                            && stdout
+                                .lines()
+                                .any(|line| line.starts_with("test result: ok. 1 passed;"))
+                            && stderr.lines().any(|line| line == done),
+                        "the {entry} child failed:\n{stdout}{stderr}"
+                    );
+                }
             }
         }
 
         // The feature-gated `expand_a` must equal an always-sequential
         // reference loop, which never touches the rayon path, cell for cell
-        // for a few fixed ρ. Key-generation known-answer tests cover only
-        // ML-KEM-1024, so this pins `expand_a` for every parameter set.
+        // for a few fixed ρ, for every parameter set.
         #[cfg(all(test, feature = "parallel"))]
         #[allow(clippy::cast_possible_truncation, clippy::needless_range_loop)]
         mod parallel_determinism {

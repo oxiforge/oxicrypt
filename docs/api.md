@@ -437,17 +437,28 @@ pub const CT_LEN: usize;   // 768  / 1088 / 1568
 ## ML-DSA — `oxicrypt_ml_dsa`
 
 Lattice-based digital signatures (FIPS 204). Modules `ml_dsa_44`,
-`ml_dsa_65`, `ml_dsa_87`; the crate root re-exports `ml_dsa_87`.
+`ml_dsa_65`, `ml_dsa_87`; the crate root re-exports `keygen`, `sign`,
+`verify`, `verify_internal` and the constants of `ml_dsa_87`.
 
 ### Free functions (per variant module)
 
 | Function | Signature |
 |----------|-----------|
-| `keygen` | `(xi: &[u8; SEED_LEN]) -> Result<([u8; PK_LEN], [u8; SK_LEN]), Error>` |
+| `keygen` | `<R: Rbg>(rbg: &mut R) -> Result<([u8; PK_LEN], [u8; SK_LEN]), Error>` |
+| `keygen_with_seed` | `<R: Rbg>(rbg: &mut R) -> Result<(Zeroizing<[u8; SEED_LEN]>, [u8; PK_LEN], [u8; SK_LEN]), Error>` |
+| `expand_key` | `(xi: &[u8; SEED_LEN]) -> Result<([u8; PK_LEN], [u8; SK_LEN]), Error>` |
 | `sign` | `(sk: &[u8; SK_LEN], message: &[u8], ctx: &[u8]) -> Result<[u8; SIG_LEN], Error>` |
 | `verify` | `(pk: &[u8; PK_LEN], message: &[u8], ctx: &[u8], sig: &[u8; SIG_LEN]) -> Result<(), Error>` |
 
-`keygen` returns `(pk, sk)` — public key first. `sign` / `verify`
+`Rbg` is `oxicrypt_module::Rbg` and `Zeroizing` is
+`oxicrypt_zeroize::Zeroizing`. `keygen` draws the 32-byte seed ξ from
+`rbg` inside the module and refuses an RBG below the parameter set's
+strength (192 bits for ML-DSA-44 and ML-DSA-65, 256 for ML-DSA-87) with
+`RbgTooWeak` before any draw. `keygen_with_seed` also returns ξ, and
+`expand_key` rebuilds the pair from it. The three key-generation
+functions run a pairwise consistency test on the pair and return
+`ConditionalTestFailed`, with the module in its error state, if it fails.
+Key pairs are `(pk, sk)`, the public key first. `sign` / `verify`
 implement the external FIPS 204 §5.2 API and frame the message as
 `M' = 0x00 || |ctx| || ctx || M`; pass `ctx = b""` for the spec-default
 (X.509 / CMS / OpenSSL 3.5) shape.

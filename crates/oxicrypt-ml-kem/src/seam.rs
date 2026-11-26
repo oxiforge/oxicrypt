@@ -3,10 +3,17 @@
 //! own tests with the feature, it also counts the constructions and wipes of
 //! the buffers of `crate::wipe` per thread.
 //!
-//! [`corrupt_next_dk`](crate::seam::corrupt_next_dk) is process-global: one flag, shared by the three
-//! parameter sets, consumed by the next key generation in the process
-//! whichever set it is. With the flag clear, key generation takes its
-//! production path unchanged.
+//! [`corrupt_next_dk`](crate::seam::corrupt_next_dk) is process-global:
+//! one flag, shared by the three parameter sets, consumed by the next key
+//! generation in the process whichever set it is. With the flag clear, key
+//! generation takes its production path unchanged.
+//!
+//! The `ML_KEM_*_KEYGEN_*` constants are the NIST ACVP-Server
+//! `gen-val/json-files/ML-KEM-keyGen-FIPS203/internalProjection.json`
+//! cases, at commit 112690e8484dba7077709a05b1f3af58ddefdd5d, that the
+//! key-expansion tests reproduce: tgId 1 tcId 1 (ML-KEM-512), tgId 2
+//! tcId 26 (ML-KEM-768) and tgId 3 tcId 51 (ML-KEM-1024). Each is the hex
+//! field of the same name decoded to bytes, in `tests/data/`.
 
 #[cfg(all(test, feature = "fault-injection"))]
 extern crate std;
@@ -23,6 +30,45 @@ static CORRUPT_NEXT_DK: AtomicBool = AtomicBool::new(false);
 pub fn corrupt_next_dk() {
     CORRUPT_NEXT_DK.store(true, Ordering::SeqCst);
 }
+
+/// The seed d of the ML-KEM-512 key-generation case.
+pub const ML_KEM_512_KEYGEN_D: &[u8; 32] =
+    include_bytes!("../tests/data/mlkem512_nist_keygen_tg1_tc1_d.bin");
+/// The seed z of the ML-KEM-512 key-generation case.
+pub const ML_KEM_512_KEYGEN_Z: &[u8; 32] =
+    include_bytes!("../tests/data/mlkem512_nist_keygen_tg1_tc1_z.bin");
+/// The encapsulation key of the ML-KEM-512 key-generation case.
+pub const ML_KEM_512_KEYGEN_EK: &[u8; 800] =
+    include_bytes!("../tests/data/mlkem512_nist_keygen_tg1_tc1_ek.bin");
+/// The decapsulation key of the ML-KEM-512 key-generation case.
+pub const ML_KEM_512_KEYGEN_DK: &[u8; 1632] =
+    include_bytes!("../tests/data/mlkem512_nist_keygen_tg1_tc1_dk.bin");
+
+/// The seed d of the ML-KEM-768 key-generation case.
+pub const ML_KEM_768_KEYGEN_D: &[u8; 32] =
+    include_bytes!("../tests/data/mlkem768_nist_keygen_tg2_tc26_d.bin");
+/// The seed z of the ML-KEM-768 key-generation case.
+pub const ML_KEM_768_KEYGEN_Z: &[u8; 32] =
+    include_bytes!("../tests/data/mlkem768_nist_keygen_tg2_tc26_z.bin");
+/// The encapsulation key of the ML-KEM-768 key-generation case.
+pub const ML_KEM_768_KEYGEN_EK: &[u8; 1184] =
+    include_bytes!("../tests/data/mlkem768_nist_keygen_tg2_tc26_ek.bin");
+/// The decapsulation key of the ML-KEM-768 key-generation case.
+pub const ML_KEM_768_KEYGEN_DK: &[u8; 2400] =
+    include_bytes!("../tests/data/mlkem768_nist_keygen_tg2_tc26_dk.bin");
+
+/// The seed d of the ML-KEM-1024 key-generation case.
+pub const ML_KEM_1024_KEYGEN_D: &[u8; 32] =
+    include_bytes!("../tests/data/mlkem1024_nist_keygen_d.bin");
+/// The seed z of the ML-KEM-1024 key-generation case.
+pub const ML_KEM_1024_KEYGEN_Z: &[u8; 32] =
+    include_bytes!("../tests/data/mlkem1024_nist_keygen_z.bin");
+/// The encapsulation key of the ML-KEM-1024 key-generation case.
+pub const ML_KEM_1024_KEYGEN_EK: &[u8; 1568] =
+    include_bytes!("../tests/data/mlkem1024_nist_keygen_ek.bin");
+/// The decapsulation key of the ML-KEM-1024 key-generation case.
+pub const ML_KEM_1024_KEYGEN_DK: &[u8; 3168] =
+    include_bytes!("../tests/data/mlkem1024_nist_keygen_dk.bin");
 
 /// Whether [`corrupt_next_dk`] armed this call; clears the flag.
 pub(crate) fn take_corrupt_next_dk() -> bool {

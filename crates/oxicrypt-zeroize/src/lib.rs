@@ -2,8 +2,8 @@
 //!
 //! This is one of the in-boundary crates in the oxicrypt workspace that
 //! use `unsafe`. It provides five functions — [`zeroize`],
-//! [`zeroize_u32`], [`zeroize_i16`], [`zeroize_i32`] and [`zeroize_u64`] — that write zeroes
-//! through volatile stores, and one type, the wrapper [`Zeroizing`], whose
+//! [`zeroize_u32`], [`zeroize_i16`], [`zeroize_i32`] and [`zeroize_u64`] —
+//! that write zeroes through volatile stores, and one type, the wrapper [`Zeroizing`], whose
 //! `Drop` calls [`zeroize`] on the byte buffer it holds.
 //! The workspace's `AGENTS.md` names the in-boundary crates that use
 //! `unsafe`, and `tools/doc-guard` checks that list against the crates.

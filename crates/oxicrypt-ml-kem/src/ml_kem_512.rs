@@ -11,8 +11,6 @@
 //! and is **not** in the CNSA 1.0 suite either. The
 //! `Service::MlKem512Keygen` / `ExpandKey` / `Encaps` / `Decaps` variants are
 //! permitted only under [`oxicrypt_module::AlgorithmProfile::Unrestricted`].
-//! See `crates/oxicrypt-module/src/lib.rs` `is_cnsa1_allowed` and
-//! `is_cnsa2_allowed`.
 
 #![allow(
     clippy::indexing_slicing,
@@ -46,32 +44,56 @@ crate::ml_kem_impl::ml_kem_impl! {
 mod tests {
     use super::*;
 
-    /// NIST ACVP-Server `ML-KEM-keyGen-FIPS203` internalProjection,
-    /// tgId 1, tcId 1: the seeds d and z, and SHA2-256(ek ‖ dk) of the
-    /// expected pair.
+    use crate::seam::{
+        ML_KEM_512_KEYGEN_D, ML_KEM_512_KEYGEN_DK, ML_KEM_512_KEYGEN_EK, ML_KEM_512_KEYGEN_Z,
+    };
+
+    /// The ACVP key pair (`crate::seam` names the case), expanded from its
+    /// seeds and compared byte for byte with the expected pair.
+    fn acvp_pair() -> ([u8; EK_LEN], [u8; DK_LEN]) {
+        crate::test_support::start_module();
+        let (ek, dk) = expand_key(ML_KEM_512_KEYGEN_D, ML_KEM_512_KEYGEN_Z).unwrap();
+        assert_eq!(&ek, ML_KEM_512_KEYGEN_EK);
+        assert_eq!(&dk, ML_KEM_512_KEYGEN_DK);
+        (ek, dk)
+    }
+
     #[test]
     fn expand_key_reproduces_acvp_vector() {
-        const D: [u8; 32] = [
-            0xbb, 0xa3, 0xc0, 0xf5, 0xdf, 0x04, 0x4c, 0xdf, 0x4d, 0x9c, 0xaa, 0x53, 0xca, 0x15,
-            0xfd, 0xe2, 0x6f, 0x34, 0xeb, 0x35, 0x41, 0x55, 0x5c, 0xfc, 0x54, 0xca, 0x9c, 0x31,
-            0xb9, 0x64, 0xd0, 0xc8,
-        ];
-        const Z: [u8; 32] = [
-            0x0a, 0x64, 0xfd, 0xd5, 0x1a, 0x8d, 0x91, 0xb3, 0x16, 0x6c, 0x49, 0x58, 0xa9, 0x4e,
-            0xfc, 0x31, 0x66, 0xa4, 0xf5, 0xdf, 0x68, 0x09, 0x80, 0xb8, 0x78, 0xdb, 0x83, 0x71,
-            0xb7, 0x62, 0x4c, 0x96,
-        ];
-        const KEY_HASH: [u8; 32] = [
-            0x1c, 0x21, 0x19, 0xf3, 0xb2, 0x6a, 0x37, 0x38, 0xe6, 0x99, 0x85, 0x7b, 0xf4, 0xf9,
-            0xd8, 0x97, 0x11, 0x26, 0x64, 0x10, 0xcb, 0x5a, 0x4c, 0x89, 0x72, 0x8f, 0xb9, 0xc4,
-            0x1c, 0x38, 0xe3, 0x77,
-        ];
-        crate::test_support::start_module();
-        let (ek, dk) = expand_key(&D, &Z).unwrap();
-        let mut h = oxicrypt_sha::sha256::Sha256::new().unwrap();
-        h.update(&ek);
-        h.update(&dk);
-        assert_eq!(h.finalize().unwrap(), KEY_HASH);
+        acvp_pair();
+    }
+
+    /// FIPS 203 §3.3: 128 bits. CTR_DRBG with AES-128 and AES-192 are
+    /// strong enough, so being uninstantiated is what refuses them.
+    #[test]
+    fn with_rbg_refuses_weak_or_uninstantiated() {
+        let uninstantiated = Err(Error::Rbg(oxicrypt_module::RbgError::Uninstantiated));
+        rbg_services::refuses_weak_or_uninstantiated(128, uninstantiated, uninstantiated);
+    }
+
+    #[test]
+    fn encaps_refuses_noncanonical_ek() {
+        input_checks::encaps_refuses_noncanonical(&acvp_pair().0);
+    }
+
+    /// The crate carries no ACVP decapsulation vector for this set, so
+    /// the expected shared secret is the one the internal encapsulation
+    /// core gives against the ACVP key pair.
+    #[test]
+    fn decaps_refuses_bad_ek_hash() {
+        let (ek, dk) = acvp_pair();
+        let (k, ct) = encaps_internal_guarded(&ek, &[0x3c; SEED_LEN]).unwrap();
+        input_checks::decaps_refuses_bad_hash(&dk, &ct, &k);
+    }
+
+    #[test]
+    fn check_encapsulation_key_verdicts() {
+        input_checks::check_encapsulation_key_verdicts(&acvp_pair().0);
+    }
+
+    #[test]
+    fn check_decapsulation_key_verdicts() {
+        input_checks::check_decapsulation_key_verdicts(&acvp_pair().1);
     }
 
     #[test]
@@ -131,7 +153,7 @@ mod tests {
     #[test]
     fn key_sizes_match_spec() {
         crate::test_support::start_module();
-        // FIPS 203 Table 2: ML-KEM-512
+        // FIPS 203 Table 3: ML-KEM-512
         assert_eq!(EK_LEN, 800);
         assert_eq!(DK_LEN, 1632);
         assert_eq!(CT_LEN, 768);

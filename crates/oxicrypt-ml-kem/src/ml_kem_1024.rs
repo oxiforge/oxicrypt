@@ -36,6 +36,7 @@ crate::ml_kem_impl::ml_kem_impl! {
 )]
 mod tests {
     use super::*;
+    use crate::seam::ML_KEM_1024_KEYGEN_EK;
     use oxicrypt_module::{KatEntry, initialize_with_tests};
 
     /// Stands in for the pre-operational integrity test.
@@ -148,8 +149,18 @@ mod tests {
         ensure_initialized();
         let d = [0u8; 32];
         let z = [0u8; 32];
-        let result = expand_key(&d, &z);
-        assert!(result.is_ok());
+        assert_eq!(expand_key(&d, &z), keygen_internal_guarded(&d, &z));
+    }
+
+    /// FIPS 203 §3.3: 256 bits. CTR_DRBG with AES-128 and with AES-192 are
+    /// both too weak.
+    #[test]
+    fn with_rbg_refuses_weak_or_uninstantiated() {
+        rbg_services::refuses_weak_or_uninstantiated(
+            256,
+            Err(Error::RbgTooWeak),
+            Err(Error::RbgTooWeak),
+        );
     }
 
     /// ACVP ML-KEM-1024 keyGen, tgId 3, tcId 51, the key-generation
@@ -159,11 +170,41 @@ mod tests {
         use crate::cast_vectors::ml_kem_1024 as v;
         crate::test_support::start_module();
         let (ek, dk) = expand_key(&v::KEYGEN_D, &v::KEYGEN_Z).unwrap();
-        assert_eq!(
-            &ek[..],
-            include_bytes!("../tests/data/mlkem1024_nist_keygen_ek.bin")
-        );
+        assert_eq!(&ek, ML_KEM_1024_KEYGEN_EK);
         assert_eq!(dk, v::KEYGEN_DK);
+    }
+
+    #[test]
+    fn encaps_refuses_noncanonical_ek() {
+        input_checks::encaps_refuses_noncanonical(ML_KEM_1024_KEYGEN_EK);
+    }
+
+    /// ACVP ML-KEM-1024 encapDecap, tgId 6, tcId 96, the valid-ciphertext
+    /// decapsulation self-test's vector.
+    #[test]
+    fn decaps_refuses_bad_ek_hash() {
+        use crate::cast_vectors::ml_kem_1024 as v;
+        input_checks::decaps_refuses_bad_hash(&v::DECAPS_DK, &v::DECAPS_C, &v::DECAPS_K);
+    }
+
+    /// ACVP ML-KEM-1024 encapDecap, tgId 6, tcId 97, the implicit-rejection
+    /// decapsulation self-test's vector, through the public `decapsulate`.
+    #[test]
+    fn decaps_implicit_rejection_known_answer() {
+        use crate::cast_vectors::ml_kem_1024 as v;
+        input_checks::decaps_rejects_known_vector(&v::REJECT_DK, &v::REJECT_C, &v::REJECT_K);
+    }
+
+    #[test]
+    fn check_encapsulation_key_verdicts() {
+        input_checks::check_encapsulation_key_verdicts(ML_KEM_1024_KEYGEN_EK);
+    }
+
+    #[test]
+    fn check_decapsulation_key_verdicts() {
+        input_checks::check_decapsulation_key_verdicts(
+            &crate::cast_vectors::ml_kem_1024::DECAPS_DK,
+        );
     }
 
     #[test]

@@ -8,26 +8,17 @@
 #[path = "support/pct_fault.rs"]
 mod pct_fault;
 
-use oxicrypt_ml_kem::ml_kem_1024::{DK_LEN, EK_LEN, expand_key, keygen, keygen_with_seed};
+use oxicrypt_ml_kem::ml_kem_1024::{expand_key, keygen, keygen_with_seed};
+use oxicrypt_ml_kem::seam::{
+    ML_KEM_1024_KEYGEN_D, ML_KEM_1024_KEYGEN_DK, ML_KEM_1024_KEYGEN_EK, ML_KEM_1024_KEYGEN_Z,
+};
 use pct_fault::FixedRbg;
 
-fn load<const N: usize>(name: &str) -> [u8; N] {
-    let path = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/data/");
-    std::fs::read(format!("{path}{name}"))
-        .unwrap()
-        .try_into()
-        .unwrap()
-}
-
-/// ACVP ML-KEM-1024 keyGen, tgId 3, tcId 51.
+/// The ACVP key-generation case `oxicrypt_ml_kem::seam` names.
 fn control() {
-    let (ek, dk) = expand_key(
-        &load::<32>("mlkem1024_nist_keygen_d.bin"),
-        &load::<32>("mlkem1024_nist_keygen_z.bin"),
-    )
-    .unwrap();
-    assert_eq!(ek, load::<EK_LEN>("mlkem1024_nist_keygen_ek.bin"));
-    assert_eq!(dk, load::<DK_LEN>("mlkem1024_nist_keygen_dk.bin"));
+    let (ek, dk) = expand_key(ML_KEM_1024_KEYGEN_D, ML_KEM_1024_KEYGEN_Z).unwrap();
+    assert_eq!(&ek, ML_KEM_1024_KEYGEN_EK);
+    assert_eq!(&dk, ML_KEM_1024_KEYGEN_DK);
 }
 
 #[test]

@@ -28,14 +28,27 @@
 //! from an RBG the caller passes (FIPS 203 Algorithm 19); `ExpandKey`
 //! covers `expand_key`, which expands a stored `(d, z)`; `Encaps` covers
 //! `encapsulate`, which draws m from an RBG the caller passes (FIPS 203
-//! Algorithm 20). `keygen`, `keygen_with_seed` and `encapsulate` refuse an
-//! RBG below the parameter set's strength before any draw: 128 bits for
-//! ML-KEM-512, 192 for ML-KEM-768, 256 for ML-KEM-1024 (FIPS 203 §3.3).
+//! Algorithm 20), and `check_encapsulation_key`; `Decaps` covers
+//! `decapsulate` and `check_decapsulation_key`. `keygen`,
+//! `keygen_with_seed` and `encapsulate` refuse an RBG below the parameter
+//! set's strength before any draw: 128 bits for ML-KEM-512, 192 for
+//! ML-KEM-768, 256 for ML-KEM-1024 (FIPS 203 §3.3).
 //! The three key-generation functions run a pairwise consistency test on
 //! the pair before returning it (FIPS 140-3 IG 10.3.A); a failure wipes the
 //! pair, returns `Error::ConditionalTestFailed` with the reason
 //! `"ML-KEM-NNN pairwise consistency"`, and puts the module in its error
 //! state.
+//!
+//! `encapsulate` runs the FIPS 203 §7.2 encapsulation key check (the length
+//! by the argument's type, and every 12-bit value of the encoded vector
+//! below q) before the strength check and before any draw; `decapsulate`
+//! runs the FIPS 203 §7.3 decapsulation input check (the key and ciphertext
+//! lengths by the arguments' types, and the stored H(ek) equal to H of the
+//! stored ek) before any computation on the ciphertext. A key that fails
+//! is refused with `Error::InvalidInput`; a ciphertext that does not match
+//! the key is never an error. `check_encapsulation_key` and
+//! `check_decapsulation_key` run the same checks on their own under the
+//! `Encaps` and `Decaps` services and return `Ok(false)` for a failing key.
 //!
 //! ML-KEM-512 and ML-KEM-768 are permitted only under the
 //! [`AlgorithmProfile::Unrestricted`](oxicrypt_module::AlgorithmProfile)
@@ -65,18 +78,19 @@
 //! modified ciphertext compared to the expected shared secret, which
 //! covers the implicit-rejection path. They run on ML-KEM-1024, approved
 //! under the CNSA 2.0, Migration and Unrestricted profiles, so the
-//! self-tested set is one that CNSA 2.0 uses; all three parameter sets share one implementation through the `ml_kem_impl!` macro.
+//! self-tested set is one that CNSA 2.0 uses; all three parameter sets
+//! share one implementation through the `ml_kem_impl!` macro.
 //!
 //! # Crate-root re-exports
 //!
 //! The crate root re-exports the ML-KEM-1024 surface
-//! ([`keygen`], [`encapsulate`], [`decapsulate`], [`EK_LEN`],
-//! [`DK_LEN`], [`CT_LEN`], [`SEED_LEN`], [`SHARED_SECRET_LEN`], and with
-//! the `testing-interfaces` feature `keygen_internal`, `encaps_internal`
-//! and `decaps_internal`), so `oxicrypt_ml_kem::keygen` and the rest
-//! resolve to ML-KEM-1024. `keygen_with_seed` and `expand_key` are reached
-//! through [`ml_kem_1024`]. Callers that need another set name
-//! [`ml_kem_512`], [`ml_kem_768`] or [`ml_kem_1024`].
+//! ([`keygen`], [`keygen_with_seed`], [`expand_key`], [`encapsulate`],
+//! [`decapsulate`], [`check_encapsulation_key`],
+//! [`check_decapsulation_key`], [`EK_LEN`], [`DK_LEN`], [`CT_LEN`],
+//! [`SEED_LEN`], [`SHARED_SECRET_LEN`], and with the `testing-interfaces`
+//! feature `keygen_internal`, `encaps_internal` and `decaps_internal`), so
+//! `oxicrypt_ml_kem::keygen` and the rest resolve to ML-KEM-1024. Callers
+//! that need another set name [`ml_kem_512`] or [`ml_kem_768`].
 //!
 //! # The `testing-interfaces` feature (default OFF)
 //!
@@ -154,7 +168,9 @@
 //! # FIPS module gating
 //!
 //! Public entry points (`keygen`, `keygen_with_seed`, `expand_key`,
-//! `encapsulate`, `decapsulate` per variant) gate on [`oxicrypt_module::require_operational`] and
+//! `encapsulate`, `decapsulate`, `check_encapsulation_key`,
+//! `check_decapsulation_key` per variant) gate on
+//! [`oxicrypt_module::require_operational`] and
 //! [`oxicrypt_module::require_allowed`]. The `*_internal` surface
 //! (hidden, `testing-interfaces` only) runs without the operational gate:
 //! it calls [`oxicrypt_module::require_self_test_started`] instead, so it
@@ -168,6 +184,11 @@
 //! are branchless masked operations, so the running time and memory
 //! access pattern do not depend on the compared values.
 //! NTT operations have data-independent control flow.
+//!
+//! The FIPS 203 §7.2 modulus check reads every 12-bit value of the
+//! encoded vector and accumulates its verdict with masks, with no branch
+//! or early exit on any value. The §7.3 hash check compares the recomputed
+//! and the stored H(ek) with `ct_bytes_eq` over all 32 bytes.
 //!
 //! # Data-parallel matrix expansion (`parallel` feature, default OFF)
 //!
@@ -217,7 +238,8 @@ pub mod ml_kem_768;
 pub mod ml_kem_1024;
 
 pub use ml_kem_1024::{
-    CT_LEN, DK_LEN, EK_LEN, SEED_LEN, SHARED_SECRET_LEN, decapsulate, encapsulate, keygen,
+    CT_LEN, DK_LEN, EK_LEN, SEED_LEN, SHARED_SECRET_LEN, check_decapsulation_key,
+    check_encapsulation_key, decapsulate, encapsulate, expand_key, keygen, keygen_with_seed,
 };
 #[cfg(feature = "testing-interfaces")]
 pub use ml_kem_1024::{decaps_internal, encaps_internal, keygen_internal};

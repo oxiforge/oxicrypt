@@ -5,10 +5,10 @@
 //! Every byte buffer listed in [`WipedBuffer`] is held in a [`Tagged`],
 //! which zeroizes it when it is dropped, and every polynomial temporary in
 //! an [`Observed`], whose value `Poly`'s `Drop` zeroizes. In this crate's
-//! own tests with the
-//! `fault-injection` feature each construction and each wipe is also
-//! counted per identity, on the calling thread, so a test can observe that a
-//! buffer was wiped on a given exit. Otherwise nothing is recorded.
+//! own tests with the `fault-injection` feature each construction and each
+//! wipe is also counted per identity, on the calling thread, so a test can
+//! observe that a buffer was wiped on a given exit. Otherwise nothing is
+//! recorded.
 
 /// The buffer a [`Tagged`] holds.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -93,11 +93,13 @@ pub(crate) enum WipedBuffer {
     DecryptSHat,
     /// NTT⁻¹(ŝᵀ ∘ NTT(u′)) (FIPS 203 Algorithm 15 step 6).
     DecryptW,
+    /// The module's copy of the shared secret `encapsulate` returns.
+    SharedSecret,
 }
 
 /// Every [`WipedBuffer`], for the tests that check each one.
 #[cfg(all(test, feature = "fault-injection"))]
-pub(crate) const ALL: [WipedBuffer; 39] = {
+pub(crate) const ALL: [WipedBuffer; 40] = {
     use WipedBuffer::*;
     [
         D,
@@ -139,11 +141,24 @@ pub(crate) const ALL: [WipedBuffer; 39] = {
         DecryptV,
         DecryptSHat,
         DecryptW,
+        SharedSecret,
     ]
 };
 
+// Each identity sits at its own discriminant, so `ALL` holds every one once.
 #[cfg(all(test, feature = "fault-injection"))]
-const _: () = assert!(WipedBuffer::DecryptW as usize + 1 == ALL.len());
+#[allow(
+    clippy::indexing_slicing,
+    reason = "evaluated at compile time, where an index out of range fails the build"
+)]
+const _: () = {
+    assert!(WipedBuffer::SharedSecret as usize + 1 == ALL.len());
+    let mut i = 0;
+    while i < ALL.len() {
+        assert!(ALL[i] as usize == i);
+        i += 1;
+    }
+};
 
 /// A polynomial temporary of key generation, encryption or decryption,
 /// which `Poly`'s `Drop` zeroizes. Outside this crate's own tests with the

@@ -3,10 +3,10 @@
 //! own tests with the feature, it also counts the constructions and wipes of
 //! the buffers of `crate::wipe` per thread.
 //!
-//! [`corrupt_next_pk`](crate::seam::corrupt_next_pk) is process-global: one flag, shared by the three
-//! parameter sets, consumed by the next key generation in the process
-//! whichever set it is. With the flag clear, key generation takes its
-//! production path unchanged.
+//! [`corrupt_next_pk`](crate::seam::corrupt_next_pk) is process-global:
+//! one flag, shared by the three parameter sets, consumed by the next key
+//! generation in the process whichever set it is. With the flag clear, key
+//! generation takes its production path unchanged.
 //!
 //! The module also holds the ACVP key-generation vectors for ML-DSA-44 and
 //! ML-DSA-65 that the crate's unit tests and its fault tests check
