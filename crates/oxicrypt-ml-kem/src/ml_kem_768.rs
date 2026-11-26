@@ -48,9 +48,9 @@ mod tests {
         let z = [0x77u8; 32];
         let m = [0xABu8; 32];
 
-        let (ek, dk) = keygen_internal(&d, &z).unwrap();
-        let (k, ct) = encaps_internal(&ek, &m).unwrap();
-        let k2 = decaps_internal(&dk, &ct).unwrap();
+        let (ek, dk) = keygen_internal_guarded(&d, &z).unwrap();
+        let (k, ct) = encaps_internal_guarded(&ek, &m).unwrap();
+        let k2 = decaps_internal_guarded(&dk, &ct).unwrap();
         assert_eq!(k, k2, "round-trip failed: shared secrets differ");
     }
 
@@ -61,10 +61,10 @@ mod tests {
         let z = [0x02u8; 32];
         let m = [0x03u8; 32];
 
-        let (ek, dk) = keygen_internal(&d, &z).unwrap();
-        let (k, mut ct) = encaps_internal(&ek, &m).unwrap();
+        let (ek, dk) = keygen_internal_guarded(&d, &z).unwrap();
+        let (k, mut ct) = encaps_internal_guarded(&ek, &m).unwrap();
         ct[10] ^= 0xFF;
-        let k_bad = decaps_internal(&dk, &ct).unwrap();
+        let k_bad = decaps_internal_guarded(&dk, &ct).unwrap();
         assert_ne!(k, k_bad);
     }
 
@@ -77,8 +77,8 @@ mod tests {
         let z = [0x06u8; 32];
         let m = [0x07u8; 32];
 
-        let (ek, dk) = keygen_internal(&d, &z).unwrap();
-        let (_k, mut ct) = encaps_internal(&ek, &m).unwrap();
+        let (ek, dk) = keygen_internal_guarded(&d, &z).unwrap();
+        let (_k, mut ct) = encaps_internal_guarded(&ek, &m).unwrap();
         ct[42] ^= 0xA5;
 
         let mut j = Shake256::new_internal().unwrap();
@@ -88,7 +88,7 @@ mod tests {
         let mut expected_k_bar = [0u8; 32];
         j.squeeze(&mut expected_k_bar).unwrap();
 
-        let actual = decaps_internal(&dk, &ct).unwrap();
+        let actual = decaps_internal_guarded(&dk, &ct).unwrap();
         assert_eq!(
             actual, expected_k_bar,
             "implicit rejection key must equal J(z || c) byte-exactly per FIPS 203 §7.3"
@@ -118,8 +118,8 @@ mod tests {
     #[test]
     fn determinism() {
         crate::test_support::start_module();
-        let (ek1, dk1) = keygen_internal(&[0x5au8; 32], &[0xa5u8; 32]).unwrap();
-        let (ek2, dk2) = keygen_internal(&[0x5au8; 32], &[0xa5u8; 32]).unwrap();
+        let (ek1, dk1) = keygen_internal_guarded(&[0x5au8; 32], &[0xa5u8; 32]).unwrap();
+        let (ek2, dk2) = keygen_internal_guarded(&[0x5au8; 32], &[0xa5u8; 32]).unwrap();
         assert_eq!(ek1, ek2);
         assert_eq!(dk1, dk2);
     }

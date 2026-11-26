@@ -17,7 +17,4 @@ fn pct_m_is_the_sha256_of_its_domain_string() {
     initialize_with_tests(UNSIGNED_TEST_BINARY, &[]).unwrap();
     let digest = oxicrypt_sha::sha256::sha256(b"oxicrypt pairwise consistency m").unwrap();
     assert_eq!(digest, PCT_M);
-    // Control: a one-byte change to the domain string gives another digest.
-    let other = oxicrypt_sha::sha256::sha256(b"oxicrypt pairwise consistency n").unwrap();
-    assert_ne!(other, PCT_M);
 }

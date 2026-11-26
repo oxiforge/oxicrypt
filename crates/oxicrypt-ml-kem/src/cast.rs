@@ -40,7 +40,7 @@ fn verdict(pass: bool) -> Result<(), SelfTestFailure> {
 /// the encapsulation key must match the copy of it the expected
 /// decapsulation key holds at offset `384 · k` (FIPS 203 Algorithm 16).
 fn keygen() -> Result<(), SelfTestFailure> {
-    keygen_with(p::keygen_internal)
+    keygen_with(p::keygen_internal_guarded)
 }
 
 /// The key-generation primitive the key-generation CAST runs.
@@ -61,7 +61,7 @@ fn keygen_with(keygen: KeygenFn) -> Result<(), SelfTestFailure> {
 /// Encapsulation from fixed (ek, m); the ciphertext and the shared secret
 /// must both match.
 fn encaps() -> Result<(), SelfTestFailure> {
-    encaps_with(p::encaps_internal)
+    encaps_with(p::encaps_internal_guarded)
 }
 
 /// The encapsulation primitive the encapsulation CAST runs.
@@ -85,7 +85,7 @@ type DecapsFn = fn(
 
 /// Decapsulation of a valid ciphertext; the shared secret must match.
 fn decaps() -> Result<(), SelfTestFailure> {
-    decaps_with(p::decaps_internal)
+    decaps_with(p::decaps_internal_guarded)
 }
 
 /// The valid-ciphertext decapsulation CAST, run on `decaps`.
@@ -96,7 +96,7 @@ fn decaps_with(decaps: DecapsFn) -> Result<(), SelfTestFailure> {
 /// Decapsulation of a modified ciphertext; the implicit-rejection shared
 /// secret must match.
 fn decaps_implicit_rejection() -> Result<(), SelfTestFailure> {
-    decaps_implicit_rejection_with(p::decaps_internal)
+    decaps_implicit_rejection_with(p::decaps_internal_guarded)
 }
 
 /// The implicit-rejection decapsulation CAST, run on `decaps`.
@@ -144,9 +144,9 @@ mod tests {
     fn keygen_cast_rejects_a_corrupted_encapsulation_key() {
         use crate::ml_kem_1024 as p;
         crate::test_support::start_module();
-        assert!(keygen_with(p::keygen_internal).is_ok());
+        assert!(keygen_with(p::keygen_internal_guarded).is_ok());
         let corrupts_ek: super::KeygenFn = |d, z| {
-            let (mut ek, dk) = p::keygen_internal(d, z)?;
+            let (mut ek, dk) = p::keygen_internal_guarded(d, z)?;
             if let Some(b) = ek.last_mut() {
                 *b ^= 0x01;
             }
@@ -164,16 +164,16 @@ mod tests {
     fn encaps_cast_rejects_a_wrong_secret_or_ciphertext() {
         use crate::ml_kem_1024 as p;
         crate::test_support::start_module();
-        assert!(encaps_with(p::encaps_internal).is_ok());
+        assert!(encaps_with(p::encaps_internal_guarded).is_ok());
         let wrong_k: super::EncapsFn = |ek, m| {
-            let (mut k, c) = p::encaps_internal(ek, m)?;
+            let (mut k, c) = p::encaps_internal_guarded(ek, m)?;
             if let Some(b) = k.first_mut() {
                 *b ^= 0x01;
             }
             Ok((k, c))
         };
         let wrong_c: super::EncapsFn = |ek, m| {
-            let (k, mut c) = p::encaps_internal(ek, m)?;
+            let (k, mut c) = p::encaps_internal_guarded(ek, m)?;
             if let Some(b) = c.first_mut() {
                 *b ^= 0x01;
             }
@@ -194,10 +194,10 @@ mod tests {
     fn decaps_casts_reject_a_wrong_secret() {
         use crate::ml_kem_1024 as p;
         crate::test_support::start_module();
-        assert!(decaps_with(p::decaps_internal).is_ok());
-        assert!(decaps_implicit_rejection_with(p::decaps_internal).is_ok());
+        assert!(decaps_with(p::decaps_internal_guarded).is_ok());
+        assert!(decaps_implicit_rejection_with(p::decaps_internal_guarded).is_ok());
         let wrong: super::DecapsFn = |dk, c| {
-            let mut k = p::decaps_internal(dk, c)?;
+            let mut k = p::decaps_internal_guarded(dk, c)?;
             if let Some(b) = k.first_mut() {
                 *b ^= 0x01;
             }

@@ -65,7 +65,7 @@ type SignFn<const SK: usize, const SIG: usize> =
 
 /// Key generation from a fixed ξ; the private key must match.
 fn keygen() -> Result<(), SelfTestFailure> {
-    keygen_with(p::keygen_internal)
+    keygen_with(p::keygen_internal_guarded)
 }
 
 /// The key-generation CAST, run on `keygen`.
@@ -77,7 +77,7 @@ fn keygen_with(keygen: KeygenFn<{ p::PK_LEN }, { p::SK_LEN }>) -> Result<(), Sel
 /// Deterministic signing of a fixed M′ under a fixed private key; the
 /// signature must match byte for byte.
 fn sign() -> Result<(), SelfTestFailure> {
-    sign_with(p::sign_internal)
+    sign_with(p::sign_internal_guarded)
 }
 
 /// The signature-generation CAST, run on `sign`.
@@ -99,7 +99,10 @@ fn sha256(parts: &[&[u8]]) -> Result<[u8; 32], SelfTestFailure> {
 macro_rules! sign_cast {
     ($name:ident, $with:ident, $set:ident) => {
         fn $name() -> Result<(), SelfTestFailure> {
-            $with(crate::$set::keygen_internal, crate::$set::sign_internal)
+            $with(
+                crate::$set::keygen_internal_guarded,
+                crate::$set::sign_internal_guarded,
+            )
         }
 
         /// The CAST, run on `keygen` and `sign`.
@@ -240,10 +243,10 @@ mod tests {
     fn keygen_cast_rejects_a_wrong_private_key() {
         use crate::ml_dsa_87 as p;
         crate::test_support::start_module();
-        assert!(keygen_with(p::keygen_internal).is_ok());
+        assert!(keygen_with(p::keygen_internal_guarded).is_ok());
         assert!(
             keygen_with(|xi| {
-                let (pk, mut sk) = p::keygen_internal(xi)?;
+                let (pk, mut sk) = p::keygen_internal_guarded(xi)?;
                 if let Some(b) = sk.first_mut() {
                     *b ^= 1;
                 }
@@ -260,10 +263,10 @@ mod tests {
     fn sign_cast_rejects_a_wrong_signature() {
         use crate::ml_dsa_87 as p;
         crate::test_support::start_module();
-        assert!(sign_with(p::sign_internal).is_ok());
+        assert!(sign_with(p::sign_internal_guarded).is_ok());
         assert!(
             sign_with(|sk, msg, rnd| {
-                let mut sig = p::sign_internal(sk, msg, rnd)?;
+                let mut sig = p::sign_internal_guarded(sk, msg, rnd)?;
                 if let Some(b) = sig.first_mut() {
                     *b ^= 1;
                 }
@@ -282,24 +285,26 @@ mod tests {
         crate::test_support::start_module();
         {
             use crate::ml_dsa_87 as p;
-            assert!(sign_rejections_with(p::keygen_internal, p::sign_internal).is_ok());
+            assert!(
+                sign_rejections_with(p::keygen_internal_guarded, p::sign_internal_guarded).is_ok()
+            );
             assert!(
                 sign_rejections_with(
                     |seed| {
-                        let (mut pk, sk) = p::keygen_internal(seed)?;
+                        let (mut pk, sk) = p::keygen_internal_guarded(seed)?;
                         if let Some(b) = pk.first_mut() {
                             *b ^= 1;
                         }
                         Ok((pk, sk))
                     },
-                    p::sign_internal
+                    p::sign_internal_guarded
                 )
                 .is_err(),
                 "ML-DSA-87: a wrong key pair passed"
             );
             assert!(
-                sign_rejections_with(p::keygen_internal, |sk, msg, rnd| {
-                    let mut sig = p::sign_internal(sk, msg, rnd)?;
+                sign_rejections_with(p::keygen_internal_guarded, |sk, msg, rnd| {
+                    let mut sig = p::sign_internal_guarded(sk, msg, rnd)?;
                     if let Some(b) = sig.first_mut() {
                         *b ^= 1;
                     }
@@ -311,24 +316,30 @@ mod tests {
         }
         {
             use crate::ml_dsa_44 as p;
-            assert!(sign_rejections_ml_dsa_44_with(p::keygen_internal, p::sign_internal).is_ok());
+            assert!(
+                sign_rejections_ml_dsa_44_with(
+                    p::keygen_internal_guarded,
+                    p::sign_internal_guarded
+                )
+                .is_ok()
+            );
             assert!(
                 sign_rejections_ml_dsa_44_with(
                     |seed| {
-                        let (mut pk, sk) = p::keygen_internal(seed)?;
+                        let (mut pk, sk) = p::keygen_internal_guarded(seed)?;
                         if let Some(b) = pk.first_mut() {
                             *b ^= 1;
                         }
                         Ok((pk, sk))
                     },
-                    p::sign_internal
+                    p::sign_internal_guarded
                 )
                 .is_err(),
                 "ML-DSA-44: a wrong key pair passed"
             );
             assert!(
-                sign_rejections_ml_dsa_44_with(p::keygen_internal, |sk, msg, rnd| {
-                    let mut sig = p::sign_internal(sk, msg, rnd)?;
+                sign_rejections_ml_dsa_44_with(p::keygen_internal_guarded, |sk, msg, rnd| {
+                    let mut sig = p::sign_internal_guarded(sk, msg, rnd)?;
                     if let Some(b) = sig.first_mut() {
                         *b ^= 1;
                     }
@@ -349,19 +360,26 @@ mod tests {
         crate::test_support::start_module();
 
         let _ = rejection_counts::take();
-        let sig =
-            crate::ml_dsa_87::sign_internal(&ml_dsa_87::SIGN_SK, &ml_dsa_87::SIGN_MSG, &[0u8; 32]);
+        let sig = crate::ml_dsa_87::sign_internal_guarded(
+            &ml_dsa_87::SIGN_SK,
+            &ml_dsa_87::SIGN_MSG,
+            &[0u8; 32],
+        );
         assert!(sig.is_ok_and(|s| s == ml_dsa_87::SIGN_SIG));
         let tc177 = rejection_counts::take();
 
-        let (_, sk) = crate::ml_dsa_87::keygen_internal(&ml_dsa_87::REJ_SEED).unwrap();
+        let (_, sk) = crate::ml_dsa_87::keygen_internal_guarded(&ml_dsa_87::REJ_SEED).unwrap();
         let _ = rejection_counts::take();
-        assert!(crate::ml_dsa_87::sign_internal(&sk, &ml_dsa_87::REJ_MSG, &[0u8; 32]).is_ok());
+        assert!(
+            crate::ml_dsa_87::sign_internal_guarded(&sk, &ml_dsa_87::REJ_MSG, &[0u8; 32]).is_ok()
+        );
         let row13 = rejection_counts::take();
 
-        let (_, sk) = crate::ml_dsa_44::keygen_internal(&ml_dsa_44::REJ_SEED).unwrap();
+        let (_, sk) = crate::ml_dsa_44::keygen_internal_guarded(&ml_dsa_44::REJ_SEED).unwrap();
         let _ = rejection_counts::take();
-        assert!(crate::ml_dsa_44::sign_internal(&sk, &ml_dsa_44::REJ_MSG, &[0u8; 32]).is_ok());
+        assert!(
+            crate::ml_dsa_44::sign_internal_guarded(&sk, &ml_dsa_44::REJ_MSG, &[0u8; 32]).is_ok()
+        );
         let row1 = rejection_counts::take();
 
         let at_least = |got: [u32; 4], min: [u32; 4], case: &str| {

@@ -15,6 +15,10 @@
 //! Test cases:
 //!   - keyGen  tgId=3, tcId=51: seed → (pk, sk)
 //!   - sigGen  tgId=5, tcId=73: (sk, M) → signature (deterministic, empty ctx)
+//!   - keyGen  tgId=3, tcId=52: seed → (pk, sk)
+//!   - sigGen  tgId=12, tcId=166: (sk, M') → signature (deterministic, internal interface)
+//!   - a round trip: the tcId=51 key pair signs and verifies a fixed message
+#![cfg(feature = "testing-interfaces")]
 #![allow(clippy::expect_used, clippy::unwrap_used, clippy::similar_names)]
 
 use oxicrypt_ml_dsa::{
@@ -79,14 +83,13 @@ fn nist_siggen_kat() {
     let raw_message = load("mldsa87_nist_siggen_message.bin");
     let expected_sig = load_arr::<SIG_LEN>("mldsa87_nist_siggen_signature.bin");
 
-    // Wrap M with empty context: M' = 0x00 ‖ 0x00 ‖ M
     let mut m_prime = Vec::with_capacity(2 + raw_message.len());
-    m_prime.push(0x00); // format byte
-    m_prime.push(0x00); // |ctx| = 0
+    m_prime.push(0x00);
+    m_prime.push(0x00);
     m_prime.extend_from_slice(&raw_message);
 
     let sig = sign_internal(&sk, &m_prime, &[0u8; 32])
-        .expect("sign_internal returned None for valid NIST secret key");
+        .expect("sign_internal failed for a valid NIST secret key");
 
     assert_eq!(
         sig, expected_sig,
@@ -126,7 +129,7 @@ fn nist_siggen_kat_2() {
     let expected_sig = load_arr::<SIG_LEN>("mldsa87_nist_siggen2_signature.bin");
 
     let sig = sign_internal(&sk, &m_prime, &[0u8; 32])
-        .expect("sign_internal returned None for valid NIST secret key");
+        .expect("sign_internal failed for a valid NIST secret key");
 
     assert_eq!(
         sig, expected_sig,

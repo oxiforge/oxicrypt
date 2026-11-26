@@ -32,7 +32,7 @@
 -->
 
 - [ ] `cargo build --release --workspace` — clean
-- [ ] `cargo test --workspace --all-features` — green (X/X passing)
+- [ ] `cargo test --workspace --all-features --exclude oxicrypt-ml-dsa --exclude oxicrypt-ml-kem`, then `cargo test -p oxicrypt-ml-dsa -p oxicrypt-ml-kem` with and without `--features testing-interfaces --tests` — green (X/X passing). Cargo unifies a feature across a workspace build, so the post-quantum crates' `compile_fail` doctests pass only per package.
 - [ ] `cargo clippy --all-targets --all-features --release -- -D warnings` — clean
 - [ ] `cargo doc --no-deps --workspace` — no warnings
 - [ ] LAMA manifest updated (or `--no-verify` documented in commit body)

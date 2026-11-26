@@ -17,19 +17,15 @@ workspace = true
 
 [features]
 default = []
-# Data-parallel expansion of the public matrix Â, default OFF.
-# `expand_a` builds the k × k matrix where each cell Â[i][j] is a pure
-# function of ρ plus the cell's (i, j) indices, sampled from a fresh
-# local SHAKE-128 XOF with no shared mutable state. Under this feature
-# the *outer* row loop is forked across a `rayon` parallel iterator:
-# each closure owns exactly its row `i` and writes only `row[j]`, and
-# the rows are recombined by position (never by completion order) — so
-# output is byte-identical to the sequential build regardless of thread
-# count. Pulls in `rayon`, which requires `std`, so the crate becomes
-# `std` only under this feature — the default build stays provably
-# `no_std` with no rayon in its graph. Performance build only: the
-# CMVP validation-target configuration is the default single-threaded build.
+# Builds the public matrix Â with its rows forked across `rayon`, default
+# OFF. Output is byte-identical to the sequential build. Pulls in `rayon` and
+# so `std`. A performance build: the CMVP validation-target configuration is
+# the default single-threaded build.
 parallel = ["dep:rayon"]
+# The derandomized `keygen_internal`, `encaps_internal` and `decaps_internal`
+# of every parameter set, which FIPS 203 §3.3 restricts to CAVP testing.
+# Default OFF, and enabled by no shipped build.
+testing-interfaces = []
 
 [dependencies]
 oxicrypt-module = { workspace = true }

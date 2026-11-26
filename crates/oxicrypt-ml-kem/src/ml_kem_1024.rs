@@ -63,9 +63,9 @@ mod tests {
         let z = [0x77u8; 32];
         let m = [0xABu8; 32];
 
-        let (ek, dk) = keygen_internal(&d, &z).unwrap();
-        let (k, ct) = encaps_internal(&ek, &m).unwrap();
-        let k2 = decaps_internal(&dk, &ct).unwrap();
+        let (ek, dk) = keygen_internal_guarded(&d, &z).unwrap();
+        let (k, ct) = encaps_internal_guarded(&ek, &m).unwrap();
+        let k2 = decaps_internal_guarded(&dk, &ct).unwrap();
         assert_eq!(k, k2, "round-trip failed: shared secrets differ");
     }
 
@@ -76,26 +76,21 @@ mod tests {
         let z = [0x02u8; 32];
         let m = [0x03u8; 32];
 
-        let (ek, dk) = keygen_internal(&d, &z).unwrap();
-        let (k, mut ct) = encaps_internal(&ek, &m).unwrap();
-        ct[10] ^= 0xFF; // tamper
-        let k_bad = decaps_internal(&dk, &ct).unwrap();
+        let (ek, dk) = keygen_internal_guarded(&d, &z).unwrap();
+        let (k, mut ct) = encaps_internal_guarded(&ek, &m).unwrap();
+        ct[10] ^= 0xFF;
+        let k_bad = decaps_internal_guarded(&dk, &ct).unwrap();
         assert_ne!(
             k, k_bad,
             "implicit rejection failed: keys match after tamper"
         );
     }
 
-    /// Tampered-ciphertext output must match the spec's `K̄ = J(z || c)`
-    /// (FIPS 203 §7.3, where `J = SHAKE-256` truncated to 32 bytes)
-    /// **byte-exactly** — not merely "different from the valid path".
+    /// A tampered ciphertext decapsulates to exactly `K̄ = J(z || c)`
+    /// (FIPS 203 Algorithm 18, `J` = SHAKE-256 truncated to 32 bytes).
     ///
-    /// The weaker `assert_ne` guard above passes for a wide range of
-    /// incorrect implementations (including a bug where `ct_select_32`
-    /// only flipped LSBs of `k_prime` instead of selecting `k_bar`
-    /// whole — different from `k_prime`, but also not equal to
-    /// `J(z || c)`). This test pins the implicit-rejection branch
-    /// against the spec-defined oracle, matching how ACVTS grades it.
+    /// The `assert_ne` above also passes for a selection that returns
+    /// neither `K′` nor `K̄`, so this test compares against `J(z || c)`.
     #[test]
     fn implicit_rejection_matches_j_z_c() {
         use oxicrypt_xof::Shake256;
@@ -105,9 +100,9 @@ mod tests {
         let z = [0x06u8; 32];
         let m = [0x07u8; 32];
 
-        let (ek, dk) = keygen_internal(&d, &z).unwrap();
-        let (_k, mut ct) = encaps_internal(&ek, &m).unwrap();
-        ct[42] ^= 0xA5; // tamper to force implicit rejection
+        let (ek, dk) = keygen_internal_guarded(&d, &z).unwrap();
+        let (_k, mut ct) = encaps_internal_guarded(&ek, &m).unwrap();
+        ct[42] ^= 0xA5;
 
         let mut j = Shake256::new_internal().unwrap();
         j.update(&z);
@@ -116,7 +111,7 @@ mod tests {
         let mut expected_k_bar = [0u8; 32];
         j.squeeze(&mut expected_k_bar).unwrap();
 
-        let actual = decaps_internal(&dk, &ct).unwrap();
+        let actual = decaps_internal_guarded(&dk, &ct).unwrap();
         assert_eq!(
             actual, expected_k_bar,
             "implicit rejection key must equal J(z || c) byte-exactly per FIPS 203 §7.3"
@@ -131,8 +126,8 @@ mod tests {
         let d2 = [0x30u8; 32];
         let z2 = [0x40u8; 32];
 
-        let (ek1, _) = keygen_internal(&d1, &z1).unwrap();
-        let (ek2, _) = keygen_internal(&d2, &z2).unwrap();
+        let (ek1, _) = keygen_internal_guarded(&d1, &z1).unwrap();
+        let (ek2, _) = keygen_internal_guarded(&d2, &z2).unwrap();
         assert_ne!(ek1, ek2, "different seeds should produce different keys");
     }
 
@@ -157,13 +152,13 @@ mod tests {
     #[test]
     fn determinism() {
         crate::test_support::start_module();
-        let (ek1, dk1) = keygen_internal(&[0x5au8; 32], &[0xa5u8; 32]).unwrap();
-        let (ek2, dk2) = keygen_internal(&[0x5au8; 32], &[0xa5u8; 32]).unwrap();
+        let (ek1, dk1) = keygen_internal_guarded(&[0x5au8; 32], &[0xa5u8; 32]).unwrap();
+        let (ek2, dk2) = keygen_internal_guarded(&[0x5au8; 32], &[0xa5u8; 32]).unwrap();
         assert_eq!(ek1, ek2);
         assert_eq!(dk1, dk2);
 
-        let (k1, ct1) = encaps_internal(&ek1, &[0x3cu8; 32]).unwrap();
-        let (k2, ct2) = encaps_internal(&ek2, &[0x3cu8; 32]).unwrap();
+        let (k1, ct1) = encaps_internal_guarded(&ek1, &[0x3cu8; 32]).unwrap();
+        let (k2, ct2) = encaps_internal_guarded(&ek2, &[0x3cu8; 32]).unwrap();
         assert_eq!(k1, k2);
         assert_eq!(ct1, ct2);
     }

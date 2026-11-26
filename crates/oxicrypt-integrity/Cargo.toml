@@ -23,6 +23,13 @@ oxicrypt-imageread = { workspace = true }
 oxicrypt-sha = { workspace = true }
 oxicrypt-zeroize = { workspace = true }
 
+# Dev-only: the verifier tests sign fixtures with the internal ML-DSA-87 key
+# generation and signing forms, including a signature over the unframed input
+# that only the internal form can make. A dev-dependency compiles no shipped
+# code.
+[dev-dependencies]
+oxicrypt-ml-dsa = { path = "../oxicrypt-ml-dsa", features = ["testing-interfaces"] }
+
 [package.metadata.lama]
 # Registry discovery (LAMA SPEC.md, "Package registry discovery"). Must be a
 # per-crate table: cargo strips [workspace] when it packages a member, so a

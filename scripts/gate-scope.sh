@@ -89,9 +89,11 @@ fi
 # Rust-relevance. A path-prefix proxy, deliberately coarse: a `.toml` under
 # crates/ can change a build output (cbindgen.toml regenerates a shipped
 # header), so narrowing this to `*.rs` would open a real hole to save minutes.
-rust_re='^(crates|benches|acvp-harness|esv-harness|oxi|oxicrypt|tools|playground|xtask)/|^Cargo\.(toml|lock)$|^rust-toolchain\.toml$|^rustfmt\.toml$|^\.cargo/'
+# The CI workflow is in scope too, so a change to a Rust job's own steps runs
+# that job.
+rust_re='^(crates|benches|acvp-harness|esv-harness|oxi|oxicrypt|tools|playground|xtask)/|^Cargo\.(toml|lock)$|^rust-toolchain\.toml$|^rustfmt\.toml$|^\.cargo/|^\.github/workflows/ci\.yml$'
 
-# oxicrypt-maxwell's dependency closure, from `cargo metadata` on 2026-08-04:
+# oxicrypt-maxwell's dependency closure, from `cargo metadata`:
 # itself plus module, sha, test-vectors and zeroize. Manifests, the lockfile,
 # the toolchain pin and .cargo config are in it too — a codegen or toolchain
 # change moves floating-point results, which is exactly what a <=1e-6 parity
@@ -107,7 +109,7 @@ maxwell_closure_re='^crates/oxicrypt-(maxwell|module|sha|test-vectors|zeroize)/|
 # above.
 bindings_re='^oxicrypt/|^crates/|^tools/oxicrypt-integrity-sign/|^scripts/(bindings-fixture|release-sign|release-signing-key|gate-scope|library-file-name)\.sh$|^scripts/git-hooks/pre-push$|^\.github/workflows/(ci|release-artifacts)\.yml$|^\.github/probes/staged-link\.c$|^docs/llm-api-manifest/llm-api\.yaml$|^Cargo\.(toml|lock)$|^rust-toolchain\.toml$|^\.cargo/'
 
-# The workspace inventory as it stood when this was written. A changed
+# The workspace inventory. A changed
 # `crates/<name>/` path outside it is a crate this file has never seen, so it is
 # treated as INSIDE the closure. Adding a crate therefore costs a full run until
 # someone extends this list — it can never silently widen a skip.

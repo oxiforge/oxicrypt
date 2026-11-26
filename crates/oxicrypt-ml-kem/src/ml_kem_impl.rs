@@ -46,7 +46,9 @@
 //! | `kpke_keygen`, `kpke_encrypt`, `kpke_decrypt` | private | FIPS 203 §5 |
 //! | `ml_kem_keygen`, `ml_kem_encaps`, `ml_kem_decaps` | private | FIPS 203 §6 |
 //! | `keygen`, `encapsulate`, `decapsulate` | `pub` | Module-gated entry points |
-//! | `keygen_internal`, `encaps_internal`, `decaps_internal` | `pub` (hidden) | Mirrors without the operational gate |
+//! | `keygen_internal`, `encaps_internal`, `decaps_internal` | `pub` (hidden), `testing-interfaces` only | Mirrors without the operational gate (FIPS 203 §3.3: CAVP testing only) |
+//! | `keygen_internal_guarded`, `encaps_internal_guarded`, `decaps_internal_guarded` | `pub(crate)` | The same behind `require_self_test_started`, for the power-up self-tests, the unit tests and the `*_internal` wrappers |
+//! | `keygen_internal_unguarded`, `encaps_internal_unguarded`, `decaps_internal_unguarded` | private | The shared bodies |
 //!
 //! # Architectural note
 //!
@@ -85,8 +87,6 @@ macro_rules! ml_kem_impl {
         use $crate::params::POLY_ENCODED_12;
         use $crate::poly::Poly;
         use $crate::sample::{sample_noise, sample_ntt};
-
-        // ── Parameter constants ─────────────────────────────────────────
 
         /// Module rank (FIPS 203 Table 2).
         pub const K: usize = $k;
@@ -130,8 +130,6 @@ macro_rules! ml_kem_impl {
 
         /// PRF output bytes for CBD(η2) sampling: 64 · η2.
         pub const PRF_ETA2_BYTES: usize = 64 * ETA2;
-
-        // ── PolyVec ─────────────────────────────────────────────────────
 
         /// A vector of `K` polynomials.
         #[derive(Clone)]
@@ -181,8 +179,6 @@ macro_rules! ml_kem_impl {
             }
         }
 
-        // ── PolyMatrix ──────────────────────────────────────────────────
-
         /// A k × k matrix of polynomials (in NTT domain).
         #[allow(dead_code)]
         pub(crate) struct PolyMatrix {
@@ -215,8 +211,6 @@ macro_rules! ml_kem_impl {
                 u
             }
         }
-
-        // ── K-dependent sampling helpers ────────────────────────────────
 
         /// Expand the k × k public matrix Â from seed ρ.
         ///
@@ -303,8 +297,6 @@ macro_rules! ml_kem_impl {
             }
             Ok((vec, nonce))
         }
-
-        // ── K-PKE (FIPS 203 §5, Algorithms 13–15) ───────────────────────
 
         /// K-PKE.KeyGen (FIPS 203 Algorithm 13).
         ///
@@ -532,8 +524,6 @@ macro_rules! ml_kem_impl {
             byte_encode(1, &v.coeffs, m);
         }
 
-        // ── ML-KEM internal (FIPS 203 §6, Algorithms 16–18) ─────────────
-
         /// ML-KEM.KeyGen_internal (FIPS 203 Algorithm 16).
         #[allow(
             clippy::indexing_slicing,
@@ -593,14 +583,10 @@ macro_rules! ml_kem_impl {
             let mut ct = [0u8; CT_LEN];
             let encrypted = kpke_encrypt(ek, m, &r, &mut ct);
 
-            // Phase 2 zeroize: `k` and `r` are CSPs derived from the
-            // FO-transform's `G(m ‖ H(ek))` expansion. `k` is the
-            // returned shared secret (the bitwise copy into the
-            // returned tuple stays — the stack slot is what we
-            // zeroize); `r` is the per-encapsulation re-encryption
-            // randomness and must not outlive the function. `g_out`
-            // is the concatenation `K ‖ r` and is zeroized alongside.
-            // See AS09.32 (ISO/IEC 19790:2012 §7.9.7).
+            // `k`, `r` and `g_out = K ‖ r` are CSPs from `G(m ‖ H(ek))`
+            // and are wiped here (AS09.32, ISO/IEC 19790:2012 §7.9.7).
+            // The returned tuple holds a copy of `k`; the wipe covers the
+            // local slot.
             let result = (k, ct);
             oxicrypt_zeroize::zeroize(&mut k);
             oxicrypt_zeroize::zeroize(&mut r);
@@ -666,32 +652,16 @@ macro_rules! ml_kem_impl {
 
             // 5. Constant-time comparison: if c == c', return Ok(K'); else K̄
             //
-            // `ct_select_32` reads `k_prime` and `k_bar` through `&[u8; 32]`
-            // and constructs a new owned `[u8; 32]` — the input stack
-            // slots are untouched by the call, so we can zeroize them
-            // immediately afterward without disturbing the byte-exact
-            // FIPS 203 §7.3 output that `implicit_rejection_matches_j_z_c`
-            // pins against `J(z ‖ c)`.
+            // `ct_select_32` returns a new array, so wiping `k_prime` and
+            // `k_bar` afterwards leaves the result intact.
             let diff = ct_bytes_eq(ct, &ct_prime);
             let result = ct_select_32(&k_prime, &k_bar, diff);
 
-            // Phase 2 zeroize: every FO-transform intermediate that
-            // carries shared-secret-derivable or candidate-shared-secret
-            // material is wiped on exit (AS09.32, ISO/IEC 19790:2012
-            // §7.9.7):
-            //   `m_prime` — re-encryption-input random (decrypted K-PKE
-            //               output; secret-key-derived).
-            //   `k_prime` — candidate shared secret in the success branch.
-            //   `k_bar`   — implicit-rejection fallback shared secret.
-            //   `r_prime` — re-encryption randomness (CSP-derived).
-            //   `g_out`   — full 64-byte `G(m' ‖ H(ek))` expansion
-            //               (concatenation of `K' ‖ r'`).
-            //   `ct_prime`— recomputed ciphertext; not a CSP on its own,
-            //               but its byte-equality with `ct` is the
-            //               implicit-rejection oracle, and the bytes
-            //               are derived from `m'` and `r'`.
-            // Order of zeroize calls is immaterial — none alias and none
-            // are reachable after `result` is constructed.
+            // Every FO-transform intermediate derived from the secret key is
+            // wiped on exit (AS09.32, ISO/IEC 19790:2012 §7.9.7): `m_prime`,
+            // the candidate `k_prime`, the rejection secret `k_bar`,
+            // `r_prime`, `g_out = K′ ‖ r′`, and `ct_prime`, whose equality
+            // with `ct` selects between the two secrets.
             oxicrypt_zeroize::zeroize(&mut m_prime);
             oxicrypt_zeroize::zeroize(&mut k_prime);
             oxicrypt_zeroize::zeroize(&mut k_bar);
@@ -703,8 +673,6 @@ macro_rules! ml_kem_impl {
             encrypted?;
             Ok(result)
         }
-
-        // ── Public API (gated) ──────────────────────────────────────────
 
         /// Generate an ML-KEM key pair.
         ///
@@ -749,16 +717,29 @@ macro_rules! ml_kem_impl {
             decaps_internal_unguarded(dk, ct)
         }
 
-        // ── Internal API (no operational gate; for KATs and ACVP) ─────────────────
-
         /// Internal keygen — no operational gate.
+        ///
+        /// Compiled only with the `testing-interfaces` feature: FIPS 203 §3.3
+        /// restricts this interface to CAVP testing.
         ///
         /// Returns [`Error::NotOperational`] unless
         /// [`oxicrypt_module::require_self_test_started`] admits the call: in
         /// `Operational`, or in `SelfTest` on the thread running the power-up
         /// self-tests.
+        #[cfg(feature = "testing-interfaces")]
         #[doc(hidden)]
         pub fn keygen_internal(
+            d: &[u8; SEED_LEN],
+            z: &[u8; SEED_LEN],
+        ) -> Result<([u8; EK_LEN], [u8; DK_LEN]), Error> {
+            oxicrypt_module::require_self_test_started()?;
+            keygen_internal_guarded(d, z)
+        }
+
+        /// Key generation behind the `require_self_test_started` guard. Called
+        /// by the key-generation self-test (ML-KEM-1024), the crate's unit
+        /// tests and `keygen_internal`.
+        pub(crate) fn keygen_internal_guarded(
             d: &[u8; SEED_LEN],
             z: &[u8; SEED_LEN],
         ) -> Result<([u8; EK_LEN], [u8; DK_LEN]), Error> {
@@ -766,7 +747,7 @@ macro_rules! ml_kem_impl {
             keygen_internal_unguarded(d, z)
         }
 
-        /// Body of [`keygen_internal`], run once its guard has passed.
+        /// Key generation once a caller's guard has passed.
         fn keygen_internal_unguarded(
             d: &[u8; SEED_LEN],
             z: &[u8; SEED_LEN],
@@ -779,12 +760,27 @@ macro_rules! ml_kem_impl {
 
         /// Internal encaps — no operational gate.
         ///
+        /// Compiled only with the `testing-interfaces` feature: FIPS 203 §3.3
+        /// restricts this interface to CAVP testing.
+        ///
         /// Returns [`Error::NotOperational`] unless
         /// [`oxicrypt_module::require_self_test_started`] admits the call: in
         /// `Operational`, or in `SelfTest` on the thread running the power-up
         /// self-tests.
+        #[cfg(feature = "testing-interfaces")]
         #[doc(hidden)]
         pub fn encaps_internal(
+            ek: &[u8; EK_LEN],
+            m: &[u8; SEED_LEN],
+        ) -> Result<([u8; SHARED_SECRET_LEN], [u8; CT_LEN]), Error> {
+            oxicrypt_module::require_self_test_started()?;
+            encaps_internal_guarded(ek, m)
+        }
+
+        /// Encapsulation behind the `require_self_test_started` guard. Called
+        /// by the encapsulation self-test (ML-KEM-1024), the crate's unit
+        /// tests and `encaps_internal`.
+        pub(crate) fn encaps_internal_guarded(
             ek: &[u8; EK_LEN],
             m: &[u8; SEED_LEN],
         ) -> Result<([u8; SHARED_SECRET_LEN], [u8; CT_LEN]), Error> {
@@ -792,7 +788,7 @@ macro_rules! ml_kem_impl {
             encaps_internal_unguarded(ek, m)
         }
 
-        /// Body of [`encaps_internal`], run once its guard has passed.
+        /// Encapsulation once a caller's guard has passed.
         fn encaps_internal_unguarded(
             ek: &[u8; EK_LEN],
             m: &[u8; SEED_LEN],
@@ -802,12 +798,27 @@ macro_rules! ml_kem_impl {
 
         /// Internal decaps — no operational gate.
         ///
+        /// Compiled only with the `testing-interfaces` feature: FIPS 203 §3.3
+        /// restricts this interface to CAVP testing.
+        ///
         /// Returns [`Error::NotOperational`] unless
         /// [`oxicrypt_module::require_self_test_started`] admits the call: in
         /// `Operational`, or in `SelfTest` on the thread running the power-up
         /// self-tests.
+        #[cfg(feature = "testing-interfaces")]
         #[doc(hidden)]
         pub fn decaps_internal(
+            dk: &[u8; DK_LEN],
+            ct: &[u8; CT_LEN],
+        ) -> Result<[u8; SHARED_SECRET_LEN], Error> {
+            oxicrypt_module::require_self_test_started()?;
+            decaps_internal_guarded(dk, ct)
+        }
+
+        /// Decapsulation behind the `require_self_test_started` guard. Called
+        /// by both decapsulation self-tests (ML-KEM-1024), the crate's unit
+        /// tests and `decaps_internal`.
+        pub(crate) fn decaps_internal_guarded(
             dk: &[u8; DK_LEN],
             ct: &[u8; CT_LEN],
         ) -> Result<[u8; SHARED_SECRET_LEN], Error> {
@@ -815,7 +826,7 @@ macro_rules! ml_kem_impl {
             decaps_internal_unguarded(dk, ct)
         }
 
-        /// Body of [`decaps_internal`], run once its guard has passed.
+        /// Decapsulation once a caller's guard has passed.
         fn decaps_internal_unguarded(
             dk: &[u8; DK_LEN],
             ct: &[u8; CT_LEN],
@@ -823,24 +834,14 @@ macro_rules! ml_kem_impl {
             ml_kem_decaps(dk, ct)
         }
 
-        // Make `K`, `Q_U16`, `N`, `Poly`, `sample_*`, `Shake128`,
-        // `Shake256`, etc. addressable from the unit-test module
-        // without leaking them in public API.
+        // Fails to compile for K = 0.
         #[allow(dead_code)]
         const _ASSERT_K_GT_0: usize = K - 1;
 
-        // ── Determinism oracle (parallel feature only) ──────────────
-        //
-        // Oracle choice: `expand_a` is reachable in-crate (the per-variant
-        // unit-test module reaches the macro-internal items via
-        // `use super::*`), so we add a direct equality oracle rather than
-        // relying only on keygen known-answer tests. We rebuild the
-        // matrix with an always-sequential reference loop (which never
-        // touches the rayon path) and assert it equals the feature-gated
-        // `expand_a` cell-for-cell, for a few deterministic ρ values. Only
-        // ML-KEM-1024 has an end-to-end keygen known-answer test (the
-        // keygen CAST and `tests/nist_kat.rs`: fixed seeds → fixed ek/dk);
-        // this test pins `expand_a` itself, for every parameter set.
+        // The feature-gated `expand_a` must equal an always-sequential
+        // reference loop, which never touches the rayon path, cell for cell
+        // for a few fixed ρ. Key-generation known-answer tests cover only
+        // ML-KEM-1024, so this pins `expand_a` for every parameter set.
         #[cfg(all(test, feature = "parallel"))]
         #[allow(clippy::cast_possible_truncation, clippy::needless_range_loop)]
         mod parallel_determinism {

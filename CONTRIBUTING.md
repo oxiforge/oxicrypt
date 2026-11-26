@@ -85,7 +85,7 @@ they have their own row.
 | Gate | Command |
 |---|---|
 | Build | `OXICRYPT_LIB_OPTIONAL=1 cargo build --release --workspace` |
-| Tests | `OXICRYPT_LIB_OPTIONAL=1 cargo test --workspace --all-features` |
+| Tests | `OXICRYPT_LIB_OPTIONAL=1 cargo test --workspace --all-features --exclude oxicrypt-ml-dsa --exclude oxicrypt-ml-kem`, then `cargo test -p oxicrypt-ml-dsa -p oxicrypt-ml-kem` and the same with `--features testing-interfaces --tests`. Cargo unifies a feature across a workspace build, so the `compile_fail` doctests of the two post-quantum crates pass only per package. |
 | Clippy (strict) | `OXICRYPT_LIB_OPTIONAL=1 cargo clippy --all-targets --all-features --release -- -D warnings` |
 | Clippy (aarch64) | `rustup target add aarch64-apple-darwin aarch64-unknown-linux-gnu`, then `OXICRYPT_LIB_OPTIONAL=1 cargo clippy --workspace --all-targets --target <triple> -- -D warnings` for each triple; type-checks only, no ARM hardware needed |
 | Rustdocs | `OXICRYPT_LIB_OPTIONAL=1 cargo doc --no-deps --workspace` (no warnings) |
@@ -141,8 +141,7 @@ tests-pass evidence on a PR touching the estimators.
 
 The FIPS 140-3 Security Policy is withheld from this repository and held privately;
 [`docs/security-policy/README.md`](docs/security-policy/README.md) explains why and how to request
-access. **You need it for nothing.** `OXICRYPT_LIB_OPTIONAL=1 cargo test --workspace` (see the gate
-stack above) passes without it and without any other configuration: the five `doc-guard` tests that assert the document's stated numerals against the
+access. **You need it for nothing.** The test row of the gate stack above passes without it and without any other configuration: the five `doc-guard` tests that assert the document's stated numerals against the
 workspace skip, and `doc_guard::tests::security_policy_is_provisioned` passes with a note saying so.
 
 That gate only *fails* if your checkout claims to have the document — `$OXICRYPT_SECURITY_POLICY` is

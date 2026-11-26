@@ -63,12 +63,11 @@
 //! # Backward compatibility
 //!
 //! The crate root re-exports the ML-DSA-87 surface ([`keygen`],
-//! [`sign`], [`verify`], [`keygen_internal`], [`sign_internal`],
-//! [`verify_internal`], [`PK_LEN`], [`SK_LEN`], [`SIG_LEN`]) so
-//! existing callers (acvp-harness, oxicrypt-ffi, nist KAT tests)
-//! continue to resolve `oxicrypt_ml_dsa::keygen` et al. to ML-DSA-87
-//! without renames. New callers should reach for [`ml_dsa_44`],
-//! [`ml_dsa_65`], or [`ml_dsa_87`] explicitly to disambiguate.
+//! [`sign`], [`verify`], [`verify_internal`], [`PK_LEN`], [`SK_LEN`],
+//! [`SIG_LEN`], and with the `testing-interfaces` feature
+//! `keygen_internal` and `sign_internal`), so `oxicrypt_ml_dsa::keygen`
+//! and the rest resolve to ML-DSA-87. Callers that need another set name
+//! [`ml_dsa_44`], [`ml_dsa_65`] or [`ml_dsa_87`].
 //!
 //! # Sensitive security parameters
 //!
@@ -90,11 +89,52 @@
 //! profile, OpenSSL 3.5, and any other spec-conformant caller —
 //! `ctx` is `b""` for those use cases.
 //!
-//! The `*_internal` surface ([`sign_internal`], [`verify_internal`])
-//! exposes Algorithms 7 and 8 directly — the raw-message primitive
-//! with no framing. These are `#[doc(hidden)]` and intended for
-//! FIPS 204 CAVP / ACVP test harnesses that exercise the internal
-//! primitive.
+//! The `*_internal` surface (`keygen_internal`, `sign_internal`,
+//! [`verify_internal`]) exposes Algorithms 6, 7 and 8 directly: the
+//! raw-message primitive with no framing. These are `#[doc(hidden)]` and
+//! serve FIPS 204 CAVP / ACVP test harnesses.
+//!
+//! # The `testing-interfaces` feature (default OFF)
+//!
+//! FIPS 204 §6 restricts the internal key generation and signing
+//! interfaces to CAVP testing, so `keygen_internal` and `sign_internal`
+//! of every parameter set are compiled only with the `testing-interfaces`
+//! feature, which no shipped build enables. [`verify_internal`] is not
+//! restricted and is always present: the software integrity test calls
+//! it before the module is operational. Without the feature, naming any
+//! restricted function does not compile:
+//!
+//! ```compile_fail,E0425
+//! let _ = oxicrypt_ml_dsa::ml_dsa_44::keygen_internal;
+//! ```
+//! ```compile_fail,E0425
+//! let _ = oxicrypt_ml_dsa::ml_dsa_44::sign_internal;
+//! ```
+//! ```compile_fail,E0425
+//! let _ = oxicrypt_ml_dsa::ml_dsa_65::keygen_internal;
+//! ```
+//! ```compile_fail,E0425
+//! let _ = oxicrypt_ml_dsa::ml_dsa_65::sign_internal;
+//! ```
+//! ```compile_fail,E0425
+//! let _ = oxicrypt_ml_dsa::ml_dsa_87::keygen_internal;
+//! ```
+//! ```compile_fail,E0425
+//! let _ = oxicrypt_ml_dsa::ml_dsa_87::sign_internal;
+//! ```
+//! ```compile_fail,E0425
+//! let _ = oxicrypt_ml_dsa::keygen_internal;
+//! ```
+//! ```compile_fail,E0425
+//! let _ = oxicrypt_ml_dsa::sign_internal;
+//! ```
+//!
+//! [`verify_internal`] needs no feature:
+//!
+//! ```
+//! let _ = oxicrypt_ml_dsa::ml_dsa_87::verify_internal;
+//! let _ = oxicrypt_ml_dsa::verify_internal;
+//! ```
 //!
 //! # FIPS module gating
 //!
@@ -164,16 +204,9 @@ pub mod ml_dsa_65;
 /// ℓ=7, η=2, β=120, ω=75).
 pub mod ml_dsa_87;
 
-// ── Backward-compat re-export of ML-DSA-87 surface ──────────────────
-//
-// Existing callers (acvp-harness, oxicrypt-ffi, oxicrypt-ml-dsa's own
-// `tests/nist_kat.rs`) use the crate root (`oxicrypt_ml_dsa::keygen`,
-// `oxicrypt_ml_dsa::SK_LEN`, etc.). Preserving the unqualified path
-// keeps the ACVTS-session-727840/727841/727843 replays byte-identical
-// and avoids a downstream churn cycle.
-pub use ml_dsa_87::{
-    PK_LEN, SIG_LEN, SK_LEN, keygen, keygen_internal, sign, sign_internal, verify, verify_internal,
-};
+pub use ml_dsa_87::{PK_LEN, SIG_LEN, SK_LEN, keygen, sign, verify, verify_internal};
+#[cfg(feature = "testing-interfaces")]
+pub use ml_dsa_87::{keygen_internal, sign_internal};
 
 // ── External-API ctx-framing helper (shared across all variants) ────
 

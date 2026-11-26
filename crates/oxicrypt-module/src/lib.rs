@@ -1218,8 +1218,7 @@ pub enum Service {
     MlKem768Encaps = 306,
     MlKem768Decaps = 307,
     MlKem768Keygen = 308,
-    // 660..=665: the first free values after the highest existing
-    // discriminant (659), as `prd/oxi-pq-and-how-tos.md` assigns them.
+    // 660..=665 continue after 659.
     MlKem512ExpandKey = 660,
     MlKem768ExpandKey = 661,
     MlKem1024ExpandKey = 662,

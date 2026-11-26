@@ -52,13 +52,20 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+      # Fail closed: a script that cannot run, or prints no `rust=` line, would
+      # otherwise read as `rust=false` and skip every scope-gated job.
       - id: scope
         run: |
+          set -o pipefail
           base=""
           if [ "${{ github.event_name }}" = "pull_request" ]; then
             base="${{ github.event.pull_request.base.sha }}"
           fi
-          ./scripts/gate-scope.sh "$base" "${{ github.sha }}" | tee -a "$GITHUB_OUTPUT"
+          out="$(./scripts/gate-scope.sh "$base" "${{ github.sha }}")"
+          printf '%s\n' "$out"
+          grep -Eq '^rust=(true|false)$' <<<"$out" \
+            || { echo "scripts/gate-scope.sh printed no rust= decision" >&2; exit 1; }
+          printf '%s\n' "$out" >> "$GITHUB_OUTPUT"
 
   fmt:
     name: cargo fmt
@@ -95,9 +102,7 @@ jobs:
   # Sharded across four runners. The suite's cost is spread over many slow
   # tests rather than concentrated in one, which is what makes sharding the
   # right lever, and oxicrypt-slh-dsa's slow tests cost about as much as
-  # oxicrypt-maxwell's. The pre-push hook's Tier B assumes that excluding
-  # maxwell removes the expensive tail, which holds on a many-core developer
-  # machine and not on these runners.
+  # oxicrypt-maxwell's.
   #
   # `slice` rather than `hash`, and NOT `count` — which nextest deprecates as
   # "neither the even nature of sliced partitioning nor the stability of hashed
@@ -122,7 +127,7 @@ jobs:
       # nextest: per-test process isolation makes
       # oxicrypt-module's global-state mutation a non-issue — full
       # parallelism workspace-wide. nextest skips doctests, so the
-      # separate doctests job below keeps doctest coverage identical.
+      # separate doctests job below runs them, one package at a time.
       - uses: taiki-e/install-action@nextest
       # SP 800-90B estimator parity is validated here. The EA v1.1.8
       # reference datasets are the 11 `.bin` files tracked in the public NIST
@@ -225,6 +230,109 @@ jobs:
           OXICRYPT_EA_DATA: ${{ github.workspace }}/ea-reference/bin
           OXICRYPT_SECURITY_POLICY_OPTIONAL: "1"
 
+  # The ML-DSA and ML-KEM integration tests call the internal functions that
+  # FIPS 204 §6 and FIPS 203 §3.3 restrict to CAVP testing, which compile only
+  # with `testing-interfaces`; without it their binaries are empty. Each
+  # package runs on its own, so the feature is enabled on that crate directly
+  # rather than through another crate's features. Fail closed on a run that
+  # passes no test, and on an integration binary that passes none. The output
+  # is uncoloured, since the workflow-wide CARGO_TERM_COLOR splits the lines
+  # these patterns read with escape codes.
+  testing-interfaces:
+    name: cargo test (post-quantum testing interfaces)
+    runs-on: ubuntu-latest
+    needs: scope
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install stable toolchain
+        run: rustup toolchain install stable --profile minimal --component clippy
+      - uses: Swatinem/rust-cache@v2
+      - uses: taiki-e/install-action@nextest
+      - name: cargo nextest run -p oxicrypt-ml-dsa --features testing-interfaces
+        run: |
+          if [ "${{ needs.scope.outputs.rust }}" != "true" ]; then
+            echo "no Rust-relevant paths in this change — skipping (scripts/gate-scope.sh)"
+            exit 0
+          fi
+          set -o pipefail
+          log="$RUNNER_TEMP/nextest-ml-dsa-testing-interfaces.log"
+          cargo nextest run -p oxicrypt-ml-dsa --features testing-interfaces --color never 2>&1 | tee "$log"
+          grep -Eq "[1-9][0-9]* tests? run: [1-9][0-9]* passed" "$log" \
+            || { echo "the oxicrypt-ml-dsa testing-interfaces run passed no tests" >&2; exit 1; }
+          for bin in nist_kat internal_state_guard acvts_regressions; do
+            grep -Eq "PASS \[.*\] .*oxicrypt-ml-dsa::${bin} " "$log" \
+              || { echo "the oxicrypt-ml-dsa testing-interfaces run passed no test in $bin" >&2; exit 1; }
+          done
+      - name: cargo nextest run -p oxicrypt-ml-kem --features testing-interfaces
+        if: ${{ !cancelled() }}
+        run: |
+          if [ "${{ needs.scope.outputs.rust }}" != "true" ]; then
+            echo "no Rust-relevant paths in this change — skipping (scripts/gate-scope.sh)"
+            exit 0
+          fi
+          set -o pipefail
+          log="$RUNNER_TEMP/nextest-ml-kem-testing-interfaces.log"
+          cargo nextest run -p oxicrypt-ml-kem --features testing-interfaces --color never 2>&1 | tee "$log"
+          grep -Eq "[1-9][0-9]* tests? run: [1-9][0-9]* passed" "$log" \
+            || { echo "the oxicrypt-ml-kem testing-interfaces run passed no tests" >&2; exit 1; }
+          for bin in nist_kat internal_state_guard; do
+            grep -Eq "PASS \[.*\] .*oxicrypt-ml-kem::${bin} " "$log" \
+              || { echo "the oxicrypt-ml-kem testing-interfaces run passed no test in $bin" >&2; exit 1; }
+          done
+      # The control for the `compile_fail` doctests: with the feature on, every
+      # restricted name compiles, so each probe must fail, 8 for ML-DSA and 12
+      # for ML-KEM.
+      - name: compile_fail doctests fail with the feature
+        if: ${{ !cancelled() }}
+        run: |
+          if [ "${{ needs.scope.outputs.rust }}" != "true" ]; then
+            echo "no Rust-relevant paths in this change — skipping (scripts/gate-scope.sh)"
+            exit 0
+          fi
+          for want in oxicrypt-ml-dsa:8 oxicrypt-ml-kem:12; do
+            pkg="${want%%:*}"; n="${want##*:}"
+            log="$RUNNER_TEMP/doctest-control-$pkg.log"
+            set +e
+            cargo test -p "$pkg" --doc --features testing-interfaces --color never 2>&1 | tee "$log"
+            status="${PIPESTATUS[0]}"
+            set -e
+            [ "$status" -ne 0 ] || { echo "$pkg doctests passed with testing-interfaces on" >&2; exit 1; }
+            grep -Eq "test result: FAILED\. 0 passed; $n failed;" "$log" \
+              || { echo "$pkg: expected exactly $n failed compile_fail doctests" >&2; exit 1; }
+          done
+      # Lints the feature-off configuration the module ships, which a
+      # workspace clippy never sees: `acvp-harness` turns the feature on there.
+      - name: cargo clippy -p oxicrypt-ml-dsa -p oxicrypt-ml-kem (feature off)
+        if: ${{ !cancelled() }}
+        run: |
+          if [ "${{ needs.scope.outputs.rust }}" != "true" ]; then
+            echo "no Rust-relevant paths in this change — skipping (scripts/gate-scope.sh)"
+            exit 0
+          fi
+          cargo clippy -p oxicrypt-ml-dsa -p oxicrypt-ml-kem --all-targets -- -D warnings
+      # Neither feature reaches a shipped package's build. The control on
+      # `acvp-harness`, which enables `testing-interfaces`, must match.
+      - name: shipped packages enable neither testing-interfaces nor fault-injection
+        if: ${{ !cancelled() }}
+        run: |
+          if [ "${{ needs.scope.outputs.rust }}" != "true" ]; then
+            echo "no Rust-relevant paths in this change — skipping (scripts/gate-scope.sh)"
+            exit 0
+          fi
+          set -o pipefail
+          for pkg in oxicrypt-ffi oxicrypt-cli; do
+            for feature in testing-interfaces fault-injection; do
+              tree="$(cargo tree -p "$pkg" -e features)"
+              n="$(grep -c "$feature" <<<"$tree" || true)"
+              echo "$pkg $feature: $n"
+              [ "$n" -eq 0 ] || { echo "$pkg enables $feature" >&2; exit 1; }
+            done
+          done
+          tree="$(cargo tree -p acvp-harness -e features)"
+          n="$(grep -c testing-interfaces <<<"$tree" || true)"
+          echo "control acvp-harness testing-interfaces: $n"
+          [ "$n" -gt 0 ] || { echo "the cargo tree probe matched nothing on acvp-harness" >&2; exit 1; }
+
   # The `oxicrypt` crate against a library built and signed with a key this
   # job generates. Gated on scripts/gate-scope.sh's `bindings` key: the crate,
   # the C library and its header, the signer, the signing and fixture scripts,
@@ -288,7 +396,16 @@ jobs:
             exit 1
           fi
           for pkg in $pkgs; do
-            cargo test -p "$pkg" --doc
+            cargo test -p "$pkg" --doc --color never 2>&1 | tee "$RUNNER_TEMP/doctest-$pkg.log"
+          done
+          # The post-quantum crates' `compile_fail` probes must have run: at
+          # least 1 + 8 passed doctests for ML-DSA and 12 for ML-KEM.
+          for want in oxicrypt-ml-dsa:9 oxicrypt-ml-kem:12; do
+            pkg="${want%%:*}"; min="${want##*:}"
+            n="$(grep -Eo 'test result: ok\. [0-9]+ passed' "$RUNNER_TEMP/doctest-$pkg.log" \
+              | awk '{s += $4} END {print s + 0}')"
+            echo "$pkg: $n doctests passed"
+            [ "$n" -ge "$min" ] || { echo "$pkg passed $n doctests, expected at least $min" >&2; exit 1; }
           done
       # The gate's own warning goes to stderr, which nextest discards on a
       # passing test — so without this the caveat would be invisible in every
@@ -343,7 +460,7 @@ jobs:
           # nothing would look identical to one that worked, because the check
           # below would pass either way if the binary had been signed already.
           #
-          # The existence test is part of the control, not throat-clearing. A
+          # The existence test is part of the control. A
           # missing or non-executable binary also exits non-zero, so without it
           # the control reports "ok" for a binary it never ran — and `xtask sign`
           # would then build one, sign it, and the step would pass green having
@@ -673,17 +790,26 @@ jobs:
           # The `parallel` and `accel-keccak` builds of the post-quantum
           # crates are off by default, so no other job compiles or runs them.
           # Each crate's power-up self-test runs here on the parallel path,
-          # whose workers carry the caller's self-test proof. The
+          # whose workers carry the caller's self-test proof. With
+          # `testing-interfaces` the known-answer integration tests run on the
+          # same build; `--tests` leaves out the doctests, whose `compile_fail`
+          # cases require that feature to be off. The
           # `internal_state_guard` tests re-execute themselves one per
           # process, so plain `cargo test` isolates them as nextest does.
+          # `kat` rows must run a non-empty `tests/nist_kat.rs`, so a binary
+          # left empty by its `#![cfg]` fails the row.
           - crate: oxicrypt-ml-kem
-            flags: --features parallel
+            flags: --features parallel,testing-interfaces --tests
+            kat: true
           - crate: oxicrypt-ml-dsa
-            flags: --features parallel
+            flags: --features parallel,testing-interfaces --tests
+            kat: true
           - crate: oxicrypt-ml-dsa
-            flags: --features accel-keccak
+            flags: --features accel-keccak,testing-interfaces --tests
+            kat: true
           - crate: oxicrypt-ml-dsa
-            flags: --features accel-keccak,parallel
+            flags: --features accel-keccak,parallel,testing-interfaces --tests
+            kat: true
           - crate: oxicrypt-slh-dsa
             flags: --features parallel
     steps:
@@ -691,4 +817,12 @@ jobs:
       - name: Install stable toolchain
         run: rustup toolchain install stable --profile minimal
       - uses: Swatinem/rust-cache@v2
-      - run: cargo test -p ${{ matrix.crate }} --release ${{ matrix.flags }}
+      - run: |
+          set -o pipefail
+          log="$RUNNER_TEMP/feature-matrix.log"
+          cargo test -p ${{ matrix.crate }} --release ${{ matrix.flags }} --color never 2>&1 | tee "$log"
+          if [ "${{ matrix.kat }}" = "true" ]; then
+            awk '/Running tests\/nist_kat\.rs/ {f = 1; next} f && /test result:/ {print; exit}' "$log" \
+              | grep -Eq 'test result: ok\. [1-9][0-9]* passed' \
+              || { echo "tests/nist_kat.rs ran no known-answer test" >&2; exit 1; }
+          fi

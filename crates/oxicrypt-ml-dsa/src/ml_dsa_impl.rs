@@ -48,7 +48,9 @@
 //! | `pack_eta`, `unpack_eta`, `pack_z`, `unpack_z`, `pack_t0`, `unpack_t0`, `pack_t1`, `unpack_t1`, `pack_hint`, `unpack_hint`, `pack_pk/sk/sig`, `unpack_pk/sk/sig`, `pack_w1` | private | Per-variant byte encoding |
 //! | `ml_dsa_keygen`, `ml_dsa_sign`, `ml_dsa_verify` | private | FIPS 204 §6 internal primitives |
 //! | `keygen`, `sign`, `verify` | `pub` | Module-gated FIPS 204 §5.2 external API (with `ctx` framing) |
-//! | `keygen_internal`, `sign_internal`, `verify_internal` | `pub` (hidden) | FIPS 204 §6 mirrors without the operational gate |
+//! | `keygen_internal`, `sign_internal` | `pub` (hidden), `testing-interfaces` only | FIPS 204 §6 mirrors without the operational gate (CAVP testing only) |
+//! | `verify_internal` | `pub` (hidden) | FIPS 204 §6 mirror without the operational gate |
+//! | `keygen_internal_guarded`, `sign_internal_guarded` | `pub(crate)` | The same behind `require_self_test_started`, for the power-up self-tests |
 //!
 //! # Architectural note
 //!
@@ -93,8 +95,6 @@ macro_rules! ml_dsa_impl {
         use $crate::params::{D, N, Q, SEED_LEN as SHARED_SEED_LEN, T0_PACKED, T1_PACKED};
         use $crate::poly::Poly;
 
-        // ── Parameter constants ─────────────────────────────────────────
-
         /// Security category bits (128 / 192 / 256).
         pub const LAMBDA: usize = $lambda;
 
@@ -124,8 +124,6 @@ macro_rules! ml_dsa_impl {
 
         /// Keygen seed length (32 bytes, FIPS 204 §6.1).
         pub use $crate::params::SEED_LEN;
-
-        // ── Derived sizes ───────────────────────────────────────────────
 
         /// Challenge seed length c̃ in bytes = λ / 4 (= 2λ / 8).
         ///
@@ -162,8 +160,6 @@ macro_rules! ml_dsa_impl {
 
         /// Signature size in bytes: c̃ + z (ℓ · Z_PACKED) + hint (ω + k).
         pub const SIG_LEN: usize = CTILDE_LEN + L * Z_PACKED + H_PACKED;
-
-        // ── PolyVec types (K/L-dependent) ───────────────────────────────
 
         /// A vector of `K` polynomials.
         #[derive(Clone)]
@@ -303,8 +299,6 @@ macro_rules! ml_dsa_impl {
             $crate::ntt::pointwise_mul(&mut c.coeffs, &a.coeffs, &b.coeffs);
         }
 
-        // ── Rounding (γ₂-dependent) ─────────────────────────────────────
-
         /// `Power2Round(r)`: decompose r ∈ [0, q) into (r₁, r₀) such
         /// that r ≡ r₁·2^d + r₀ (mod q) and r₀ ∈ (−2^(d−1), 2^(d−1)].
         #[inline]
@@ -361,17 +355,13 @@ macro_rules! ml_dsa_impl {
         /// `a1` is `w₁ = HighBits(w)` at the same coefficient position.
         ///
         /// Returns 1 iff applying the perturbation `c·t₀` would flip
-        /// the high-bits bin — equivalent to
-        /// `HighBits(r) ≠ HighBits(r + z)` in Algorithm 39, but with
-        /// the `−γ₂` fence case made explicit so the `Decompose`
-        /// top-bin wrap (where `r⁺ = q − γ₂` maps to `r₁ = 0,
-        /// r₀ = −γ₂`) is still classified as a bin flip when
-        /// `w₁ ≠ 0`.  The spec-form
-        /// `HighBits(r) ≠ HighBits(r + z)` aliases this fence onto
-        /// `r₁ = 0`, hiding the flip.  Matches
-        /// pq-crystals/dilithium's `make_hint` in `rounding.c` so
-        /// ACVP-grading produces byte-identical signatures across the
-        /// centered/unsigned representation boundary.
+        /// the high-bits bin, which is `HighBits(r) ≠ HighBits(r + z)`
+        /// in Algorithm 39. At `a0 = −γ₂` with `w₁ ≠ 0`, Decompose keeps
+        /// `r₀` in `(−γ₂, γ₂]`, so `r₁ = w₁ − 1` and the hint is 1; at
+        /// `w₁ = 0` the top-bin wrap (`r⁺ = q − γ₂` maps to `r₁ = 0`)
+        /// makes it 0. The explicit fence test gives both answers on the
+        /// centered `a0`. Matches pq-crystals/dilithium's `make_hint` in
+        /// `rounding.c`.
         #[inline]
         fn make_hint(a0: i32, a1: i32) -> i32 {
             let outside = !(-GAMMA2..=GAMMA2).contains(&a0);
@@ -471,7 +461,6 @@ macro_rules! ml_dsa_impl {
                     }
                 }
             } else {
-                // 6 bits per coefficient, 4 coefficients into 3 bytes.
                 let mut offset = 0;
                 for i in 0..K {
                     for j in (0..N).step_by(4) {
@@ -487,8 +476,6 @@ macro_rules! ml_dsa_impl {
                 }
             }
         }
-
-        // ── Sampling (per-variant) ──────────────────────────────────────
 
         /// RejNTTPoly: rejection-sample a polynomial in NTT domain
         /// from a SHAKE-128 stream (FIPS 204 §7.3 Algorithm 30).
@@ -600,7 +587,6 @@ macro_rules! ml_dsa_impl {
             let total = cells.len();
             let mut base = 0;
             while base + 4 <= total {
-                // The four equal-length (34-byte) absorb inputs ρ ‖ [j, i].
                 let mut inputs = [[0u8; 34]; 4];
                 for lane in 0..4 {
                     let (i, j) = cells[base + lane];
@@ -617,7 +603,6 @@ macro_rules! ml_dsa_impl {
                 ]);
                 sponge.finalize_4(0x1f);
 
-                // Four rej_ntt_poly accumulators advanced in lockstep.
                 let mut polys: [Poly; 4] = core::array::from_fn(|_| Poly::zero());
                 let mut counts = [0usize; 4];
                 let mut rounds = 0usize;
@@ -783,7 +768,6 @@ macro_rules! ml_dsa_impl {
                         j += 1;
                     }
                 } else {
-                    // ETA == 4
                     if t0 < 9 {
                         poly.coeffs[j] = ETA - t0 as i32;
                         j += 1;
@@ -867,7 +851,6 @@ macro_rules! ml_dsa_impl {
                     poly.coeffs[4 * i + 3] = GAMMA1 - c3 as i32;
                 }
             } else {
-                // GAMMA1 == 1 << 17
                 let mut wiped = $crate::Wiped([0u8; 576]);
                 xof.squeeze(&mut wiped.0)?;
                 let buf = &wiped.0;
@@ -937,8 +920,6 @@ macro_rules! ml_dsa_impl {
             Ok(c)
         }
 
-        // ── Byte encoding (per-variant) ─────────────────────────────────
-
         /// Pack a polynomial with coefficients in [−η, η].
         ///
         /// η=2: 3 bits/coeff (8 coeffs → 3 bytes), 96 bytes/poly.
@@ -957,7 +938,6 @@ macro_rules! ml_dsa_impl {
                     buf[3 * i + 2] = (t[5] >> 1) | (t[6] << 2) | (t[7] << 5);
                 }
             } else {
-                // ETA == 4: 4-bit unsigned coefficients in [0, 8].
                 for i in 0..N / 2 {
                     let a = (ETA - poly.coeffs[2 * i]) as u8;
                     let b = (ETA - poly.coeffs[2 * i + 1]) as u8;
@@ -1107,7 +1087,6 @@ macro_rules! ml_dsa_impl {
                     buf[10 * i + 9] = (t[3] >> 12) as u8;
                 }
             } else {
-                // γ₁ = 2¹⁷ → 18 bits per coefficient, 4 coeffs → 9 bytes
                 for i in 0..N / 4 {
                     let mut wiped = $crate::WipedWords([0u32; 4]);
                     let t = &mut wiped.0;
@@ -1327,8 +1306,6 @@ macro_rules! ml_dsa_impl {
             unpack_hint(&sig[off..off + H_PACKED], h)
         }
 
-        // ── FIPS 204 §6 internal primitives ────────────────────────────
-
         /// ML-DSA.KeyGen_internal (FIPS 204 §6.1 / Algorithm 6) per parameter set.
         ///
         /// Every intermediate this function owns is wiped when it is dropped,
@@ -1522,19 +1499,14 @@ macro_rules! ml_dsa_impl {
                     continue;
                 }
 
-                // 4j. Compute hint h per FIPS 204 §6.2 Algorithm 7 step 26:
+                // FIPS 204 §6.2 Algorithm 7 step 26:
                 //   h = MakeHint(−c·t₀, w − c·s₂ + c·t₀)
                 //
-                // Use pq-crystals/dilithium's centered shortcut form so
-                // the `a0 == −γ₂ && w₁ ≠ 0` fence case is handled
-                // explicitly.  The spec-form
-                // `HighBits(r) ≠ HighBits(r + z)` aliases this fence
-                // onto `r₁ = 0 = v₁` via the Decompose top-bin wrap
-                // (`r⁺ = q − γ₂ → r₁ = 0, r₀ = −γ₂`), silently flipping
-                // the hint at rare inputs. The ACVP regression in
-                // `tests/acvts_regressions.rs` exercises this case.
-                //
-                // a0 = centered(LowBits(w) − c·s₂ + c·t₀)
+                // Computed in pq-crystals/dilithium's centered shortcut form,
+                // from a0 = centered(LowBits(w) − c·s₂ + c·t₀) and w₁. The
+                // `a0 == −γ₂` fence must give 1 when `w₁ ≠ 0`, as Decompose's
+                // `(−γ₂, γ₂]` convention makes Algorithm 39 return; the ACVP
+                // regression in `tests/acvts_regressions.rs` exercises it.
                 let mut a0 = r0.clone();
                 a0.add_assign(&ct0);
                 reduce_polyveck(&mut a0);
@@ -1546,7 +1518,6 @@ macro_rules! ml_dsa_impl {
                     }
                 }
 
-                // a1 = w₁ (high-bits of the original w, recorded above)
                 let mut h_vec = PolyVecK::zero();
                 let hint_count = polyveck_make_hint(&mut h_vec, &a0, &w1);
 
@@ -1567,7 +1538,7 @@ macro_rules! ml_dsa_impl {
             }
         }
 
-        /// ML-DSA.Verify (FIPS 204 §6.3 / Algorithm 8).
+        /// ML-DSA.Verify_internal (FIPS 204 §6.3 Algorithm 8).
         ///
         /// Every intermediate this function owns (ρ, t1, c̃, z, h, tr, μ, c,
         /// w′, w1′, c̃′ and the packed w1′) is wiped when it is dropped, on
@@ -1659,13 +1630,11 @@ macro_rules! ml_dsa_impl {
             Ok(ctilde.0 == ctilde_prime.0)
         }
 
-        // ── Public gated API (FIPS 204 §5.2 external) ───────────────────
-
         /// Generate a key pair (FIPS 204 §6.1).
         pub fn keygen(xi: &[u8; SEED_LEN]) -> Result<([u8; PK_LEN], [u8; SK_LEN]), Error> {
             oxicrypt_module::require_operational()?;
             oxicrypt_module::require_allowed($svc_keygen)?;
-            keygen_internal(xi)
+            keygen_internal_guarded(xi)
         }
 
         /// Sign a message (FIPS 204 §5.2 Algorithm 2, deterministic).
@@ -1697,29 +1666,36 @@ macro_rules! ml_dsa_impl {
             }
         }
 
-        // ── Internal API (no operational gate; for KATs and ACVP) ─────────────────
-
         /// Internal keygen — no operational gate (FIPS 204 §6.1).
+        ///
+        /// Compiled only with the `testing-interfaces` feature: FIPS 204 §6
+        /// restricts this interface to CAVP testing.
         ///
         /// Returns [`Error::NotOperational`] unless
         /// [`oxicrypt_module::require_self_test_started`] admits the call: in
         /// `Operational`, or in `SelfTest` on the thread running the power-up
         /// self-tests.
+        #[cfg(feature = "testing-interfaces")]
         #[doc(hidden)]
         pub fn keygen_internal(xi: &[u8; SEED_LEN]) -> Result<([u8; PK_LEN], [u8; SK_LEN]), Error> {
             oxicrypt_module::require_self_test_started()?;
-            keygen_internal_unguarded(xi)
+            ml_dsa_keygen(xi)
         }
 
-        /// Body of [`keygen_internal`], run once its guard has passed.
-        fn keygen_internal_unguarded(
+        /// Key generation behind the `require_self_test_started` guard, for
+        /// the power-up self-tests and `keygen_internal`.
+        pub(crate) fn keygen_internal_guarded(
             xi: &[u8; SEED_LEN],
         ) -> Result<([u8; PK_LEN], [u8; SK_LEN]), Error> {
+            oxicrypt_module::require_self_test_started()?;
             ml_dsa_keygen(xi)
         }
 
         /// Internal sign — no operational gate, no `ctx` framing
         /// (FIPS 204 §6.2 Algorithm 7).
+        ///
+        /// Compiled only with the `testing-interfaces` feature: FIPS 204 §6
+        /// restricts this interface to CAVP testing.
         ///
         /// `rnd` is Algorithm 7's 32-byte randomizer. 32 zero bytes select the
         /// deterministic variant (FIPS 204 §3.4), which is what [`sign`] uses.
@@ -1728,6 +1704,7 @@ macro_rules! ml_dsa_impl {
         /// [`oxicrypt_module::require_self_test_started`] admits the call: in
         /// `Operational`, or in `SelfTest` on the thread running the power-up
         /// self-tests.
+        #[cfg(feature = "testing-interfaces")]
         #[doc(hidden)]
         pub fn sign_internal(
             sk: &[u8; SK_LEN],
@@ -1735,16 +1712,18 @@ macro_rules! ml_dsa_impl {
             rnd: &[u8; 32],
         ) -> Result<[u8; SIG_LEN], Error> {
             oxicrypt_module::require_self_test_started()?;
-            sign_internal_unguarded(sk, message, rnd)?.ok_or(Error::InvalidInput)
+            ml_dsa_sign(sk, &[], message, rnd)?.ok_or(Error::InvalidInput)
         }
 
-        /// Body of [`sign_internal`], run once its guard has passed.
-        fn sign_internal_unguarded(
+        /// Signing behind the `require_self_test_started` guard, for the
+        /// power-up self-tests and `sign_internal`.
+        pub(crate) fn sign_internal_guarded(
             sk: &[u8; SK_LEN],
             message: &[u8],
             rnd: &[u8; 32],
-        ) -> Result<Option<[u8; SIG_LEN]>, Error> {
-            ml_dsa_sign(sk, &[], message, rnd)
+        ) -> Result<[u8; SIG_LEN], Error> {
+            oxicrypt_module::require_self_test_started()?;
+            ml_dsa_sign(sk, &[], message, rnd)?.ok_or(Error::InvalidInput)
         }
 
         /// Internal verify — no operational gate, no `ctx` framing
@@ -1778,18 +1757,12 @@ macro_rules! ml_dsa_impl {
         #[allow(dead_code)]
         const _ASSERT_SEED_LEN_MATCHES: usize = SHARED_SEED_LEN - SEED_LEN;
 
-        // ── Determinism oracle (parallel feature only) ──────────────
-        //
-        // Oracle choice: `expand_a` is reachable in-crate (the per-variant
-        // unit-test module reaches the macro-internal items via
-        // `use super::*`), so we add a direct equality oracle rather than
-        // relying only on keygen known-answer tests. We rebuild the
-        // matrix with an always-sequential reference loop (which never
-        // touches the rayon path) and assert it equals the feature-gated
-        // `expand_a` cell-for-cell, for a few deterministic ρ values. Only
-        // ML-DSA-87 has an end-to-end keygen known-answer test (the keygen
-        // CAST and `tests/nist_kat.rs`: fixed ξ → fixed pk/sk); this test
-        // pins `expand_a` itself, for every parameter set.
+        // The feature-gated `expand_a` must equal an always-sequential
+        // reference loop, which never touches the rayon path, cell for cell
+        // for a few fixed ρ. Key-generation known-answer tests cover
+        // ML-DSA-87 byte for byte and ML-DSA-44 through a digest in its
+        // rejection CAST, and none covers ML-DSA-65, so this pins
+        // `expand_a` itself for every parameter set.
         #[cfg(all(test, feature = "parallel"))]
         mod parallel_determinism {
             use super::*;
@@ -1842,8 +1815,9 @@ macro_rules! ml_dsa_impl {
         /// cell, never the batched [`oxicrypt_sha::keccak::Sponge4`]
         /// path) over many random ρ. Generated once per parameter set,
         /// so it covers ML-DSA-44 / -65 / -87 — including the ML-DSA-65
-        /// tail-of-2 batching. Non-tautological: the reference shares no
-        /// code with the batched sampler.
+        /// tail-of-2 batching. The reference shares only the scalar
+        /// [`rej_ntt_poly`] with the batched sampler, which uses it for the
+        /// 1–3 cell tail; the four-lane path is checked against it.
         #[cfg(all(test, feature = "accel-keccak"))]
         mod accel_keccak_determinism {
             use super::*;
@@ -1941,6 +1915,26 @@ macro_rules! ml_dsa_impl {
                         );
                     }
                 }
+            }
+        }
+
+        #[cfg(test)]
+        mod randomizer {
+            use super::*;
+
+            /// FIPS 204 Algorithm 7 absorbs `rnd` into ρ″, so a non-zero `rnd`
+            /// gives a signature other than the deterministic one, and both
+            /// verify.
+            #[test]
+            fn a_nonzero_rnd_changes_the_signature_and_it_verifies() {
+                crate::test_support::start_module();
+                let (pk, sk) = ml_dsa_keygen(&[0x42u8; 32]).unwrap();
+                let msg = b"randomizer test message";
+                let zero = ml_dsa_sign(&sk, &[], msg, &[0u8; 32]).unwrap().unwrap();
+                let hedged = ml_dsa_sign(&sk, &[], msg, &[0xA5u8; 32]).unwrap().unwrap();
+                assert_ne!(hedged, zero, "rnd did not reach the signature");
+                assert!(ml_dsa_verify(&pk, &[], msg, &hedged).unwrap());
+                assert!(ml_dsa_verify(&pk, &[], msg, &zero).unwrap());
             }
         }
     };

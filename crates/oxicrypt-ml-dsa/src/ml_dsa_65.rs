@@ -9,7 +9,7 @@
 //!
 //! ML-DSA-65 is **not** part of CNSA 2.0 (which mandates ML-DSA-87)
 //! and is **not** in the CNSA 1.0 suite. The
-//! `Service::MlDsa65Sign` / `Verify` / `Keygen` / `ExpandKey` variants are
+//! `Service::MlDsa65Sign` / `Verify` / `Keygen` variants are
 //! permitted only under [`oxicrypt_module::AlgorithmProfile::Unrestricted`].
 //! See `crates/oxicrypt-module/src/lib.rs` `is_cnsa1_allowed` and
 //! `is_cnsa2_allowed` — neither extends to ML-DSA-65.
@@ -78,9 +78,9 @@ mod tests {
     fn round_trip_basic() {
         crate::test_support::start_module();
         let xi = [0x42u8; 32];
-        let (pk, sk) = keygen_internal(&xi).unwrap();
+        let (pk, sk) = keygen_internal_guarded(&xi).unwrap();
         let msg = b"hello, ML-DSA-65";
-        let sig = sign_internal(&sk, msg, &[0u8; 32]).unwrap();
+        let sig = sign_internal_guarded(&sk, msg, &[0u8; 32]).unwrap();
         assert!(verify_internal(&pk, msg, &sig).unwrap());
     }
 
@@ -88,8 +88,8 @@ mod tests {
     fn wrong_message_rejected() {
         crate::test_support::start_module();
         let xi = [0x01u8; 32];
-        let (pk, sk) = keygen_internal(&xi).unwrap();
-        let sig = sign_internal(&sk, b"original", &[0u8; 32]).unwrap();
+        let (pk, sk) = keygen_internal_guarded(&xi).unwrap();
+        let sig = sign_internal_guarded(&sk, b"original", &[0u8; 32]).unwrap();
         assert!(!verify_internal(&pk, b"tampered", &sig).unwrap());
     }
 
@@ -97,9 +97,9 @@ mod tests {
     fn tampered_signature_rejected() {
         crate::test_support::start_module();
         let xi = [0x55u8; 32];
-        let (pk, sk) = keygen_internal(&xi).unwrap();
+        let (pk, sk) = keygen_internal_guarded(&xi).unwrap();
         let msg = b"test message";
-        let mut sig = sign_internal(&sk, msg, &[0u8; 32]).unwrap();
+        let mut sig = sign_internal_guarded(&sk, msg, &[0u8; 32]).unwrap();
         sig[50] ^= 0xFF;
         assert!(!verify_internal(&pk, msg, &sig).unwrap());
     }

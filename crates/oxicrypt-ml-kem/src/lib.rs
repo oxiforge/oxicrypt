@@ -54,17 +54,61 @@
 //! under the CNSA 2.0, Migration and Unrestricted profiles, so the
 //! self-tested set is one that CNSA 2.0 uses; all three parameter sets share one implementation through the `ml_kem_impl!` macro.
 //!
-//! # Backward compatibility
+//! # Crate-root re-exports
 //!
 //! The crate root re-exports the ML-KEM-1024 surface
 //! ([`keygen`], [`encapsulate`], [`decapsulate`], [`EK_LEN`],
-//! [`DK_LEN`], [`CT_LEN`], [`SEED_LEN`], [`SHARED_SECRET_LEN`],
-//! [`keygen_internal`], [`encaps_internal`], [`decaps_internal`]) so
-//! existing callers (acvp-harness, oxicrypt-ffi, oxicrypt-integrity
-//! self-test driver) continue to resolve `oxicrypt_ml_kem::keygen`
-//! et al. to ML-KEM-1024 without renames. New callers should reach
-//! for [`ml_kem_512`], [`ml_kem_768`], or [`ml_kem_1024`] explicitly
-//! to disambiguate.
+//! [`DK_LEN`], [`CT_LEN`], [`SEED_LEN`], [`SHARED_SECRET_LEN`], and with
+//! the `testing-interfaces` feature `keygen_internal`, `encaps_internal`
+//! and `decaps_internal`), so `oxicrypt_ml_kem::keygen` and the rest
+//! resolve to ML-KEM-1024. Callers that need another set name
+//! [`ml_kem_512`], [`ml_kem_768`] or [`ml_kem_1024`].
+//!
+//! # The `testing-interfaces` feature (default OFF)
+//!
+//! FIPS 203 §3.3 restricts the internal key generation, encapsulation and
+//! decapsulation interfaces to CAVP testing, so `keygen_internal`,
+//! `encaps_internal` and `decaps_internal` of every parameter set are
+//! compiled only with the `testing-interfaces` feature, which no shipped
+//! build enables. Without the feature, naming any of them does not
+//! compile:
+//!
+//! ```compile_fail,E0425
+//! let _ = oxicrypt_ml_kem::ml_kem_512::keygen_internal;
+//! ```
+//! ```compile_fail,E0425
+//! let _ = oxicrypt_ml_kem::ml_kem_512::encaps_internal;
+//! ```
+//! ```compile_fail,E0425
+//! let _ = oxicrypt_ml_kem::ml_kem_512::decaps_internal;
+//! ```
+//! ```compile_fail,E0425
+//! let _ = oxicrypt_ml_kem::ml_kem_768::keygen_internal;
+//! ```
+//! ```compile_fail,E0425
+//! let _ = oxicrypt_ml_kem::ml_kem_768::encaps_internal;
+//! ```
+//! ```compile_fail,E0425
+//! let _ = oxicrypt_ml_kem::ml_kem_768::decaps_internal;
+//! ```
+//! ```compile_fail,E0425
+//! let _ = oxicrypt_ml_kem::ml_kem_1024::keygen_internal;
+//! ```
+//! ```compile_fail,E0425
+//! let _ = oxicrypt_ml_kem::ml_kem_1024::encaps_internal;
+//! ```
+//! ```compile_fail,E0425
+//! let _ = oxicrypt_ml_kem::ml_kem_1024::decaps_internal;
+//! ```
+//! ```compile_fail,E0425
+//! let _ = oxicrypt_ml_kem::keygen_internal;
+//! ```
+//! ```compile_fail,E0425
+//! let _ = oxicrypt_ml_kem::encaps_internal;
+//! ```
+//! ```compile_fail,E0425
+//! let _ = oxicrypt_ml_kem::decaps_internal;
+//! ```
 //!
 //! # Sensitive security parameters
 //!
@@ -95,10 +139,10 @@
 //! Public entry points (`keygen`, `encapsulate`, `decapsulate` per
 //! variant) gate on [`oxicrypt_module::require_operational`] and
 //! [`oxicrypt_module::require_allowed`]. The `*_internal` surface
-//! (hidden) runs without the operational gate so power-up KATs can
-//! execute during `SelfTest`; it calls
-//! [`oxicrypt_module::require_self_test_started`] instead, so it refuses
-//! in every state other than `SelfTest` and `Operational`.
+//! (hidden, `testing-interfaces` only) runs without the operational gate:
+//! it calls [`oxicrypt_module::require_self_test_started`] instead, so it
+//! refuses in every state other than `SelfTest` and `Operational`. The
+//! power-up self-tests reach the same guarded cores without the feature.
 //!
 //! # Constant-time behaviour
 //!
@@ -150,16 +194,11 @@ pub mod ml_kem_768;
 /// ML-KEM-1024 instantiation (FIPS 203 Table 2: k=4, η₁=η₂=2, dᵤ=11, dᵥ=5).
 pub mod ml_kem_1024;
 
-// ── Backward-compat re-export of ML-KEM-1024 surface ────────────────
-//
-// Existing callers (acvp-harness, oxicrypt-ffi) use the crate root
-// (`oxicrypt_ml_kem::keygen`, `oxicrypt_ml_kem::EK_LEN`, etc.).
-// Preserving the unqualified path keeps the ACVTS-session-727796
-// replay byte-identical and avoids a downstream churn cycle.
 pub use ml_kem_1024::{
-    CT_LEN, DK_LEN, EK_LEN, SEED_LEN, SHARED_SECRET_LEN, decaps_internal, decapsulate,
-    encaps_internal, encapsulate, keygen, keygen_internal,
+    CT_LEN, DK_LEN, EK_LEN, SEED_LEN, SHARED_SECRET_LEN, decapsulate, encapsulate, keygen,
 };
+#[cfg(feature = "testing-interfaces")]
+pub use ml_kem_1024::{decaps_internal, encaps_internal, keygen_internal};
 
 pub use cast::KATS;
 

@@ -5,6 +5,7 @@
 //! every test here runs in a fresh process of its own (see [`isolated`]),
 //! under `cargo nextest` and `cargo test` alike.
 
+#![cfg(feature = "testing-interfaces")]
 #![allow(clippy::unwrap_used, clippy::panic)]
 
 use oxicrypt_module::{Error, KatEntry, SelfTestFailure, State, initialize_with_tests, state};

@@ -115,8 +115,12 @@ optional and absent by default — the SP 800-90B reference datasets and the wit
 say so rather than failing.
 
 ```bash
-# Full test suite
-cargo test --workspace
+# Full test suite. The two post-quantum crates run on their own: cargo unifies
+# a feature across a workspace build, so their compile_fail doctests pass only
+# per package.
+cargo test --workspace --exclude oxicrypt-ml-dsa --exclude oxicrypt-ml-kem
+cargo test -p oxicrypt-ml-dsa -p oxicrypt-ml-kem
+cargo test -p oxicrypt-ml-dsa -p oxicrypt-ml-kem --features testing-interfaces --tests
 
 # ACVP round-trip tests only
 cargo test -p acvp-harness

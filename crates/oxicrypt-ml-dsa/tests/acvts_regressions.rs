@@ -5,14 +5,16 @@
 //!
 //! ## ACVTS session 730469 vsId 3859350 tcId 8
 //!
-//! `make_hint` boundary case at `a0 == -γ_2 && w1 != 0`, which the
-//! spec-form `HighBits(r) != HighBits(r + z)` misses because both sides
-//! land on `HighBits = 0` via the Decompose top-bin wrap rule for
-//! `r = q - γ_2` (centered −γ_2).  FIPS 204 Algorithm 39's intent —
-//! and pq-crystals/dilithium's shortcut form — explicitly returns 1
-//! at this fence when `w1` is non-zero.  The case turns on the single
-//! coefficient at (poly=3, coeff=206), so an implementation that misses
-//! it differs from the reference in the hint section only.
+//! `make_hint` boundary case at `a0 == -γ_2 && w1 != 0`. There
+//! `r = w1·2γ_2 − γ_2`, and Decompose keeps `r0` in `(−γ_2, γ_2]`, so
+//! `HighBits(r) = w1 − 1` while `HighBits(r + z) = w1`: FIPS 204
+//! Algorithm 39 returns 1, as pq-crystals/dilithium's shortcut form does.
+//! An implementation that places `a0 = −γ_2` inside bin `w1`, for
+//! example by decomposing the centered value without the `(−γ_2, γ_2]`
+//! convention, returns 0 instead. The case turns on the single
+//! coefficient at (poly=3, coeff=206), so such an implementation differs
+//! from the reference in the hint section only.
+#![cfg(feature = "testing-interfaces")]
 #![allow(clippy::expect_used, clippy::unwrap_used)]
 
 use oxicrypt_ml_dsa::{SIG_LEN, SK_LEN, sign_internal};
@@ -58,7 +60,7 @@ fn acvts_730469_tc8_siggen_make_hint_neg_gamma2_boundary() {
     let expected_sig = load_arr::<SIG_LEN>("mldsa87_acvts_tc8_siggen_signature.bin");
 
     let sig = sign_internal(&sk, &m_prime, &[0u8; 32])
-        .expect("sign_internal returned None for ACVTS tc8 inputs");
+        .expect("sign_internal failed for the ACVTS tc8 inputs");
 
     assert_eq!(
         sig, expected_sig,

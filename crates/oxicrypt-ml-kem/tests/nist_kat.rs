@@ -7,6 +7,7 @@
 //!   - keyGen: given (d, z) → verify (ek, dk) match expected values
 //!   - encapDecap: given (ek, m) → verify (c, K) match expected values,
 //!     then decapsulate and verify shared secret matches K
+#![cfg(feature = "testing-interfaces")]
 #![allow(clippy::expect_used, clippy::unwrap_used, clippy::similar_names)]
 
 use oxicrypt_ml_kem::{
@@ -29,8 +30,6 @@ fn start_module() {
     assert_eq!(oxicrypt_module::require_self_test_started(), Ok(()));
 }
 
-// ── Vector helpers ──────────────────────────────────────────────────────────
-
 fn load(name: &str) -> Vec<u8> {
     let path = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/data/");
     std::fs::read(format!("{path}{name}")).expect("test data not found")
@@ -41,8 +40,6 @@ fn load_arr<const N: usize>(name: &str) -> [u8; N] {
     assert_eq!(v.len(), N, "unexpected length for {name}");
     v.try_into().unwrap()
 }
-
-// ── keyGen KAT ──────────────────────────────────────────────────────────────
 
 /// ACVP ML-KEM-1024 keyGen: tgId=3, tcId=51.
 ///
@@ -56,8 +53,7 @@ fn nist_keygen_kat() {
     let expected_ek = load_arr::<EK_LEN>("mlkem1024_nist_keygen_ek.bin");
     let expected_dk = load_arr::<DK_LEN>("mlkem1024_nist_keygen_dk.bin");
 
-    let (ek, dk) =
-        keygen_internal(&d, &z).expect("keygen_internal returned None for valid NIST seeds");
+    let (ek, dk) = keygen_internal(&d, &z).expect("keygen_internal failed for valid NIST seeds");
 
     assert_eq!(
         ek, expected_ek,
@@ -68,8 +64,6 @@ fn nist_keygen_kat() {
         "ML-KEM-1024 keyGen: dk does not match NIST ACVP vector (tgId=3, tcId=51)"
     );
 }
-
-// ── encapDecap KAT ──────────────────────────────────────────────────────────
 
 /// ACVP ML-KEM-1024 encapDecap (encapsulation): tgId=3, tcId=51.
 ///
@@ -115,12 +109,7 @@ fn nist_decap_kat() {
     );
 }
 
-// ── Second keyGen KAT ──────────────────────────────────────────────────────
-
 /// ACVP ML-KEM-1024 keyGen: tgId=3, tcId=52.
-///
-/// Second independent test case from the NIST ACVP Server projection,
-/// providing additional assurance that keygen is fully correct.
 #[test]
 fn nist_keygen_kat_2() {
     start_module();
@@ -129,8 +118,7 @@ fn nist_keygen_kat_2() {
     let expected_ek = load_arr::<EK_LEN>("mlkem1024_nist_keygen2_ek.bin");
     let expected_dk = load_arr::<DK_LEN>("mlkem1024_nist_keygen2_dk.bin");
 
-    let (ek, dk) =
-        keygen_internal(&d, &z).expect("keygen_internal returned None for valid NIST seeds");
+    let (ek, dk) = keygen_internal(&d, &z).expect("keygen_internal failed for valid NIST seeds");
 
     assert_eq!(
         ek, expected_ek,
@@ -141,8 +129,6 @@ fn nist_keygen_kat_2() {
         "ML-KEM-1024 keyGen: dk does not match NIST ACVP vector (tgId=3, tcId=52)"
     );
 }
-
-// ── Second encapDecap KAT ──────────────────────────────────────────────────
 
 /// ACVP ML-KEM-1024 encapDecap (encapsulation): tgId=3, tcId=52.
 #[test]
