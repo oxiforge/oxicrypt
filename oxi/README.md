@@ -136,8 +136,9 @@ system has file modes. A secret temporary left by a failed write is
 zero-filled before it is removed; on a copy-on-write filesystem (Btrfs, ZFS,
 APFS) that overwrite does not reach the blocks first written. Outputs are
 written in a fixed order: public key, then
-secret key; encapsulation key, then decapsulation key; ciphertext, then
-secret.
+secret key, then the seed when `--seed-out` is given; encapsulation key,
+then decapsulation key, then the seed when `--seed-out` is given;
+ciphertext, then secret.
 
 **Exit codes.**
 

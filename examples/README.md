@@ -54,7 +54,7 @@ The first eight lines are fixed. The ninth is the shared secret of this run, fre
 
 A program exits 0 only when it printed every line. It exits 1 at the first result that differs from its expected line, printing the expected and the actual line; and it exits 1 printing the return code when `oxi_init`, `oxi_drbg_instantiate` or any other call fails, with the integrity status and the verify key's fingerprint when the module refused to start. A wrong number of arguments exits 2.
 
-Each directory's `run.sh <bundle-dir> [out-dir]` builds the program if it needs building and runs it against the bundle. Without `<out-dir>` it writes the files to a temporary directory and removes it afterwards; with one it leaves them there. The release workflow runs, against every library it ships for a host it can execute on, each example whose toolchain that host has, and fails if a toolchain the host is known to have is missing.
+Each directory's `run.sh <bundle-dir> [out-dir]` builds the program if it needs building and runs it against the bundle. Without `<out-dir>` it writes the files to a temporary directory and removes it afterwards; with one it leaves them there. The release workflow runs all six examples (C, Python, Go, Node.js, Java and C#) against every library it ships for a platform its runner can execute (Linux, macOS and Windows), installs each toolchain before they run, and fails the release if any of the six is missing or does not pass. The Android libraries are not run by the examples.
 
 ## A known answer from NIST
 

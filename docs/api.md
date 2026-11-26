@@ -288,20 +288,32 @@ HMAC_DRBG: `HmacDrbgSha256`, `HmacDrbgSha384`, `HmacDrbgSha512`.
 
 ### Common operations
 
-| Method | Description |
-|--------|-------------|
-| `new()` | Create uninstantiated DRBG |
-| `instantiate_df(entropy, nonce, personalization)` | Instantiate with derivation function |
-| `instantiate_no_df(seed_material)` | Instantiate without DF (fixed-length seed) |
-| `reseed_df(entropy, additional)` | Reseed with DF |
-| `generate_df(output, additional)` | Generate random bytes |
-| `generate_df_pr(entropy, output, additional)` | Generate with prediction resistance |
-| `uninstantiate()` | Zeroize and reset |
+The module seeds every instance from its own entropy source; no method
+in a default build takes an entropy input.
+
+| Method | Signature | Description |
+|--------|-----------|-------------|
+| `instantiate_from_module` | `(personalization: &[u8]) -> Result<Self, Error>` | Draw the entropy input and nonce from the module and instantiate (CTR_DRBG: `use df`) |
+| `reseed_from_module` | `(&mut self, additional_input: &[u8]) -> Result<(), Error>` | Draw fresh entropy from the module and reseed |
+| `generate` (Hash_DRBG, HMAC_DRBG) | `(&mut self, additional_input: Option<&[u8]>, out: &mut [u8]) -> Result<(), DrbgError>` | Fill `out` with random bytes |
+| `generate_df` (CTR_DRBG) | `(&mut self, additional_input: Option<&[u8]>, out: &mut [u8]) -> Result<(), DrbgError>` | Fill `out`, additional input through `Block_Cipher_df` |
+| `generate_no_df` (CTR_DRBG) | `(&mut self, additional_input: Option<&[u8]>, out: &mut [u8]) -> Result<(), DrbgError>` | Fill `out`, `no df` variant |
+| `uninstantiate` | `(&mut self)` | Zeroize and reset |
+
+An instance seeded by the module reseeds itself from the module when its
+reseed counter reaches the SP 800-90A Table 3 interval. The forms that
+take a caller's entropy input (`instantiate`, `reseed` and `generate_pr`
+for Hash_DRBG and HMAC_DRBG; `instantiate_df`, `instantiate_no_df`,
+`reseed_df`, `reseed_no_df`, `generate_df_pr` and `generate_no_df_pr`
+for CTR_DRBG) exist only behind the default-off `testing-interfaces`
+feature, for the CAVP tests.
 
 ### Error type
 
 `DrbgError`: `Uninstantiated`, `ReseedRequired`, `InputTooLong`,
-`InvalidSeedLength`, `RequestTooLong`.
+`InvalidSeedLength`, `EntropyInputTooShort`, `RequestTooLong`, and
+`Module(Error)` for a module-level refusal. The module-seeded constructors
+and reseed return the module's `Error` directly.
 
 ## RSA-2048 — `oxicrypt_rsa`
 
@@ -398,8 +410,10 @@ one-shot functions.
 
 Lattice-based key encapsulation (FIPS 203). Three parameter sets, each in
 its own module: `ml_kem_512`, `ml_kem_768`, `ml_kem_1024`. The crate root
-re-exports `keygen`, `encapsulate`, `decapsulate` and the constants of
-`ml_kem_1024`.
+re-exports `keygen`, `keygen_with_seed`, `expand_key`, `encapsulate`,
+`decapsulate`, `check_encapsulation_key`, `check_decapsulation_key` and the
+constants (`EK_LEN`, `DK_LEN`, `CT_LEN`, `SEED_LEN`, `SHARED_SECRET_LEN`)
+of `ml_kem_1024`.
 
 ### Free functions (per variant module)
 
@@ -437,8 +451,9 @@ pub const CT_LEN: usize;   // 768  / 1088 / 1568
 ## ML-DSA — `oxicrypt_ml_dsa`
 
 Lattice-based digital signatures (FIPS 204). Modules `ml_dsa_44`,
-`ml_dsa_65`, `ml_dsa_87`; the crate root re-exports `keygen`, `sign`,
-`verify`, `verify_internal` and the constants of `ml_dsa_87`.
+`ml_dsa_65`, `ml_dsa_87`; the crate root re-exports `keygen`,
+`keygen_with_seed`, `expand_key`, `sign`, `verify`, `verify_internal` and
+the constants of `ml_dsa_87`.
 
 ### Free functions (per variant module)
 

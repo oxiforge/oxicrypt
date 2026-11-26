@@ -139,7 +139,7 @@ So CTR_DRBG with AES-128 serves ML-KEM-512 only, AES-192 adds ML-KEM-768, ML-DSA
 
 ## Keys
 
-**Generation and its self-test.** ML-DSA and ML-KEM key generation and key expansion run a pairwise consistency test on every pair before anything is written (FIPS 140-3 IG 10.3.A Additional Comment 1): ML-DSA signs a fixed message and verifies the signature with the new public key, ML-KEM encapsulates to the new encapsulation key and checks that decapsulation recovers the same secret. ECDH, ECDSA, Ed25519 and RSA key generation run their own. A failure returns `OXI_RESULT_CONDITIONAL_TEST_FAILED`, writes no key, and puts the module in its error state for the rest of the process (see [Process lifetime](#process-lifetime)). The test runs on expansion from a stored seed too.
+**Generation and its self-test.** ML-DSA and ML-KEM key generation and key expansion run a pairwise consistency test on every pair before anything is written (FIPS 140-3 IG 10.3.A Additional Comment 1): ML-DSA signs a fixed message and verifies the signature with the new public key, ML-KEM encapsulates to the new encapsulation key and checks that decapsulation recovers the same secret. ECDH, ECDSA and RSA key generation run their own. Ed25519 at the C ABI runs none, because `oxi_ed25519_keygen` only derives a public key from the caller's seed (the Rust `Ed25519PrivateKey` constructors `generate` and `from_seed` do run one). A failure returns `OXI_RESULT_CONDITIONAL_TEST_FAILED`, writes no key, and puts the module in its error state for the rest of the process (see [Process lifetime](#process-lifetime)). The test runs on expansion from a stored seed too.
 
 **Sizes, in bytes.** Each buffer must be at least this long; the post-quantum functions take no length argument.
 

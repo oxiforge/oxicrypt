@@ -131,16 +131,32 @@ The header has no `#define` for any length; each size lives in a function's docu
 | `AES_GCM_TAG_LEN` | 16 | `oxi_aes_gcm_seal`, `oxi_aes_gcm_open` |
 | `HMAC_DRBG_MAX_PROVIDED_LEN` | 768 | HMAC_DRBG's bound on provided input at `oxi_drbg_instantiate`; the tests use it, `instantiate` does not check it |
 | `HMAC_DRBG_MAX_REQUEST_LEN` | 65,536 | `oxi_drbg_generate`, checked by `Drbg::generate` (SP 800-90A Tables 2 and 3) |
-| `ML_DSA_87_SEED_LEN` | 32 | `oxi_ml_dsa_87_keygen` |
-| `ML_DSA_87_PUBLIC_KEY_LEN` | 2,592 | `oxi_ml_dsa_87_keygen` |
-| `ML_DSA_87_SECRET_KEY_LEN` | 4,896 | `oxi_ml_dsa_87_keygen` |
+| `ML_DSA_44_SEED_LEN` | 32 | `oxi_ml_dsa_44_keygen_rbg`, `oxi_ml_dsa_44_expand_key` (the seed `ξ`) |
+| `ML_DSA_44_PUBLIC_KEY_LEN` | 1,312 | `oxi_ml_dsa_44_keygen_rbg`, `oxi_ml_dsa_44_expand_key` |
+| `ML_DSA_44_SECRET_KEY_LEN` | 2,560 | `oxi_ml_dsa_44_keygen_rbg`, `oxi_ml_dsa_44_expand_key` |
+| `ML_DSA_44_SIGNATURE_LEN` | 2,420 | `oxi_ml_dsa_44_sign` |
+| `ML_DSA_65_SEED_LEN` | 32 | `oxi_ml_dsa_65_keygen_rbg`, `oxi_ml_dsa_65_expand_key` (the seed `ξ`) |
+| `ML_DSA_65_PUBLIC_KEY_LEN` | 1,952 | `oxi_ml_dsa_65_keygen_rbg`, `oxi_ml_dsa_65_expand_key` |
+| `ML_DSA_65_SECRET_KEY_LEN` | 4,032 | `oxi_ml_dsa_65_keygen_rbg`, `oxi_ml_dsa_65_expand_key` |
+| `ML_DSA_65_SIGNATURE_LEN` | 3,309 | `oxi_ml_dsa_65_sign` |
+| `ML_DSA_87_SEED_LEN` | 32 | `oxi_ml_dsa_87_keygen_rbg`, `oxi_ml_dsa_87_expand_key` (the seed `ξ`) |
+| `ML_DSA_87_PUBLIC_KEY_LEN` | 2,592 | `oxi_ml_dsa_87_keygen_rbg`, `oxi_ml_dsa_87_expand_key` |
+| `ML_DSA_87_SECRET_KEY_LEN` | 4,896 | `oxi_ml_dsa_87_keygen_rbg`, `oxi_ml_dsa_87_expand_key` |
 | `ML_DSA_87_SIGNATURE_LEN` | 4,627 | `oxi_ml_dsa_87_sign` |
-| `ML_DSA_87_MAX_CONTEXT_LEN` | 255 | `oxi_ml_dsa_87_sign` (FIPS 204 §5.2) |
-| `ML_KEM_1024_SEED_LEN` | 32 | `oxi_ml_kem_1024_keygen` (each of `d`, `z`, `m`) |
-| `ML_KEM_1024_ENCAPSULATION_KEY_LEN` | 1,568 | `oxi_ml_kem_1024_keygen` |
-| `ML_KEM_1024_DECAPSULATION_KEY_LEN` | 3,168 | `oxi_ml_kem_1024_keygen` |
-| `ML_KEM_1024_CIPHERTEXT_LEN` | 1,568 | `oxi_ml_kem_1024_encapsulate` |
-| `ML_KEM_1024_SHARED_SECRET_LEN` | 32 | `oxi_ml_kem_1024_encapsulate` |
+| `ML_DSA_MAX_CONTEXT_LEN` | 255 | every `oxi_ml_dsa_*_sign` and `_verify` (FIPS 204 §5.2); `ML_DSA_87_MAX_CONTEXT_LEN` is the same value under the ML-DSA-87 name |
+| `ML_KEM_512_SEED_LEN` | 64 | `oxi_ml_kem_512_keygen_rbg` (the seed `d ‖ z`); `oxi_ml_kem_512_expand_key` takes `d` and `z` as 32 bytes each |
+| `ML_KEM_512_ENCAPSULATION_KEY_LEN` | 800 | `oxi_ml_kem_512_keygen_rbg`, `oxi_ml_kem_512_expand_key` |
+| `ML_KEM_512_DECAPSULATION_KEY_LEN` | 1,632 | `oxi_ml_kem_512_keygen_rbg`, `oxi_ml_kem_512_expand_key` |
+| `ML_KEM_512_CIPHERTEXT_LEN` | 768 | `oxi_ml_kem_512_encapsulate_rbg` |
+| `ML_KEM_768_SEED_LEN` | 64 | `oxi_ml_kem_768_keygen_rbg` (the seed `d ‖ z`); `oxi_ml_kem_768_expand_key` takes `d` and `z` as 32 bytes each |
+| `ML_KEM_768_ENCAPSULATION_KEY_LEN` | 1,184 | `oxi_ml_kem_768_keygen_rbg`, `oxi_ml_kem_768_expand_key` |
+| `ML_KEM_768_DECAPSULATION_KEY_LEN` | 2,400 | `oxi_ml_kem_768_keygen_rbg`, `oxi_ml_kem_768_expand_key` |
+| `ML_KEM_768_CIPHERTEXT_LEN` | 1,088 | `oxi_ml_kem_768_encapsulate_rbg` |
+| `ML_KEM_1024_SEED_LEN` | 64 | `oxi_ml_kem_1024_keygen_rbg` (the seed `d ‖ z`); `oxi_ml_kem_1024_expand_key` takes `d` and `z` as 32 bytes each |
+| `ML_KEM_1024_ENCAPSULATION_KEY_LEN` | 1,568 | `oxi_ml_kem_1024_keygen_rbg`, `oxi_ml_kem_1024_expand_key` |
+| `ML_KEM_1024_DECAPSULATION_KEY_LEN` | 3,168 | `oxi_ml_kem_1024_keygen_rbg`, `oxi_ml_kem_1024_expand_key` |
+| `ML_KEM_1024_CIPHERTEXT_LEN` | 1,568 | `oxi_ml_kem_1024_encapsulate_rbg` |
+| `ML_KEM_SHARED_SECRET_LEN` | 32 | every `oxi_ml_kem_*_encapsulate_rbg` and `_decapsulate`; `ML_KEM_1024_SHARED_SECRET_LEN` is the same value under the ML-KEM-1024 name |
 
 Two tests pin them. A behavioural test runs each operation against the real signed library with known-answer inputs from `oxicrypt-test-vectors` (a dev-dependency: vector data, no module code, never compiled into a consumer) and requires the known output, which no wrong length produces. A workspace test compares each constant with the algorithm crate's own constant (`oxicrypt_ml_dsa`, `oxicrypt_ml_kem`, `oxicrypt_sha`, `oxicrypt_kdf`, `oxicrypt_aes`, `oxicrypt_drbg`), also as dev-dependencies, so the crate's numbers cannot drift from the module's. Neither test reaches a consumer's build.
 
