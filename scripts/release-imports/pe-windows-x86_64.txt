@@ -39,6 +39,7 @@ kernel32.dll!VirtualQuery
 
 # The DRBG seed path on an environment the table does not list: the operating
 # system's random generator.
+needs bcryptprimitives.dll
 bcryptprimitives.dll!ProcessPrng
 
 # The Rust standard library: memory, threads and their parking, files,
@@ -74,6 +75,9 @@ kernel32.dll!HeapAlloc
 kernel32.dll!HeapFree
 kernel32.dll!HeapReAlloc
 kernel32.dll!InitializeSListHead
+# IsProcessorFeaturePresent: the C runtime's abort path asks whether the
+# fast-fail instruction is available before it uses it.
+kernel32.dll!IsProcessorFeaturePresent
 kernel32.dll!LoadLibraryA
 kernel32.dll!MultiByteToWideChar
 kernel32.dll!QueryPerformanceCounter

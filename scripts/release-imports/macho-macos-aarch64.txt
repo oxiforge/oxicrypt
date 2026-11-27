@@ -62,6 +62,7 @@ _malloc
 _memcmp
 _memcpy
 _memmove
+_memset
 _mmap
 _munmap
 _open
