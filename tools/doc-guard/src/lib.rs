@@ -506,15 +506,88 @@ mod tests {
         })
     }
 
-    /// Count `pub … extern "C" fn` declarations across `oxicrypt-ffi/src/`.
+    /// The ABI number `crates/oxicrypt-ffi/src/abi_version.rs` declares.
+    fn abi_version() -> u32 {
+        let src = fs::read_to_string(repo_root().join("crates/oxicrypt-ffi/src/abi_version.rs"))
+            .expect("abi_version.rs readable");
+        src.lines()
+            .find_map(|l| {
+                l.trim()
+                    .strip_prefix("const OXI_ABI_VERSION: i32 = ")
+                    .and_then(|rest| rest.trim_end_matches(';').parse().ok())
+            })
+            .expect("OXI_ABI_VERSION declared as `const OXI_ABI_VERSION: i32 = <n>;`")
+    }
+
+    /// The highest-numbered inventory under `crates/oxicrypt-ffi/abi/`, as an
+    /// independent reading of which ABI is current.
+    fn newest_inventory_version() -> u32 {
+        fs::read_dir(repo_root().join("crates/oxicrypt-ffi/abi"))
+            .expect("abi dir")
+            .filter_map(Result::ok)
+            .filter_map(|e| {
+                let name = e.file_name().to_string_lossy().into_owned();
+                name.strip_prefix('v')?
+                    .strip_suffix(".txt")?
+                    .parse::<u32>()
+                    .ok()
+            })
+            .max()
+            .expect("at least one abi/v<n>.txt")
+    }
+
+    /// Count the functions the shipped C library exports: the function lines
+    /// of the current ABI inventory, `crates/oxicrypt-ffi/abi/v<n>.txt`, which
+    /// `crates/oxicrypt-ffi/src/abi_tests.rs` pins against the header in both
+    /// directions. A function line is `name(params) -> type`; a status-code
+    /// line is `NAME = n`; comment lines start with `#`.
     ///
-    /// Counting assumptions, pinned: a declaration's `pub … extern "C" fn`
-    /// prefix stays on one line (rustfmt wraps after the parameter paren, and
-    /// keeps `pub unsafe extern "C" fn` together), and every exported function
-    /// in `oxicrypt-ffi` is declared literally — none are macro-generated. If
-    /// either assumption changes, this counter undercounts and the §3.1 probe
-    /// fails on the stale prose number, which is the safe direction.
+    /// The inventory, not the source, is the oracle because `oxicrypt-ffi/src/`
+    /// also declares `pub extern "C" fn` items that compile only under the
+    /// `fault-injection` feature (`crates/oxicrypt-ffi/src/test_api.rs`). A
+    /// library built without that feature, which is every shipped library,
+    /// does not contain them, and the Security Policy does not count them.
     fn ffi_fn_count() -> usize {
+        inventory_fn_count(
+            &repo_root().join(format!("crates/oxicrypt-ffi/abi/v{}.txt", abi_version())),
+        )
+    }
+
+    fn inventory_fn_count(inventory: &Path) -> usize {
+        fs::read_to_string(inventory)
+            .expect("ABI inventory readable")
+            .lines()
+            .filter(|l| is_inventory_fn_line(l))
+            .count()
+    }
+
+    /// `name(params) -> type`: an identifier, an opening parenthesis, and the
+    /// ` -> ` of a return type. Status lines have no parenthesis, comment lines
+    /// start with `#`, and a size or constant line would lack the arrow.
+    fn is_inventory_fn_line(line: &str) -> bool {
+        let l = line.trim();
+        !l.starts_with('#')
+            && l.contains(") -> ")
+            && l.split('(').next().is_some_and(|name| {
+                !name.is_empty() && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+            })
+    }
+
+    /// Whether a source line declares an exported C function. Counting
+    /// assumptions, pinned: the `pub … extern "C" fn` prefix stays on one line
+    /// (rustfmt wraps after the parameter paren and keeps `pub unsafe extern
+    /// "C" fn` together), and every exported function is declared literally,
+    /// none macro-generated. If either changes, the source count falls below
+    /// the inventory's and the pin test fails, which is the safe direction.
+    fn is_extern_c_decl(line: &str) -> bool {
+        let l = line.trim_start();
+        l.starts_with("pub ") && l.contains("extern \"C\" fn")
+    }
+
+    /// Count `pub … extern "C" fn` declarations across `oxicrypt-ffi/src/`,
+    /// every feature included. Used only to show the inventory count excludes
+    /// the feature-gated test symbols.
+    fn ffi_source_extern_fn_count() -> usize {
         fn count_in(dir: &Path) -> usize {
             fs::read_dir(dir)
                 .expect("ffi src dir")
@@ -527,10 +600,7 @@ mod tests {
                         fs::read_to_string(&path)
                             .expect("ffi source readable")
                             .lines()
-                            .filter(|l| {
-                                let l = l.trim_start();
-                                l.starts_with("pub ") && l.contains("extern \"C\" fn")
-                            })
+                            .filter(|l| is_extern_c_decl(l))
                             .count()
                     } else {
                         0
@@ -539,6 +609,87 @@ mod tests {
                 .sum()
         }
         count_in(&repo_root().join("crates/oxicrypt-ffi/src"))
+    }
+
+    /// The exported-function count is the current inventory's function lines.
+    /// Pinned: the line classifier on every shape the inventory holds and on
+    /// the shapes it must refuse; the ABI version against the newest inventory
+    /// file; the `test_api.rs` symbols absent from the inventory by name and
+    /// gated behind `fault-injection` at their `mod` line; and every source
+    /// declaration accounted for as either an inventory function or a gated
+    /// test symbol.
+    #[test]
+    fn ffi_fn_count_is_the_shipped_inventory() {
+        assert!(is_inventory_fn_line("oxi_abi_version() -> int"));
+        assert!(is_inventory_fn_line("lama_manifest() -> const char *"));
+        assert!(is_inventory_fn_line(
+            "oxi_sha256(const uint8_t *, uintptr_t, uint8_t *) -> int"
+        ));
+        assert!(!is_inventory_fn_line("OXI_RESULT_OK = 0"));
+        assert!(!is_inventory_fn_line("OXI_RESULT_X = 4 (unused)"));
+        assert!(!is_inventory_fn_line(
+            "# change that would alter one (a function removed, a parameter or return type"
+        ));
+        assert!(!is_inventory_fn_line("oxi_abi_version"));
+        assert!(!is_inventory_fn_line("sizeof(OxiDrbg) = 32"));
+        assert!(!is_inventory_fn_line(""));
+
+        let version = abi_version();
+        assert_eq!(
+            version,
+            newest_inventory_version(),
+            "OXI_ABI_VERSION names the newest inventory file"
+        );
+        let inventory = repo_root().join(format!("crates/oxicrypt-ffi/abi/v{version}.txt"));
+        let inventory_text = fs::read_to_string(&inventory).expect("ABI inventory readable");
+        let counted = ffi_fn_count();
+        assert_eq!(
+            counted,
+            inventory_text
+                .lines()
+                .filter(|l| is_inventory_fn_line(l))
+                .count()
+        );
+        assert!(counted > 0);
+
+        let ffi_lib = fs::read_to_string(repo_root().join("crates/oxicrypt-ffi/src/lib.rs"))
+            .expect("ffi lib.rs readable");
+        let lib_lines: Vec<&str> = ffi_lib.lines().map(str::trim).collect();
+        let mod_line = lib_lines
+            .iter()
+            .position(|l| *l == "mod test_api;")
+            .expect("ffi lib.rs declares `mod test_api;`");
+        assert_eq!(
+            lib_lines.get(mod_line.wrapping_sub(1)).copied(),
+            Some("#[cfg(feature = \"fault-injection\")]"),
+            "`mod test_api;` is gated behind the fault-injection feature"
+        );
+
+        let test_api = fs::read_to_string(repo_root().join("crates/oxicrypt-ffi/src/test_api.rs"))
+            .expect("test_api.rs readable");
+        let gated: Vec<&str> = test_api
+            .lines()
+            .filter(|l| is_extern_c_decl(l))
+            .filter_map(|l| l.split("fn ").nth(1)?.split('(').next())
+            .collect();
+        assert!(
+            !gated.is_empty(),
+            "test_api.rs declares the fault-injection symbols"
+        );
+        for name in &gated {
+            assert!(
+                !inventory_text
+                    .lines()
+                    .any(|l| l.starts_with(&format!("{name}("))),
+                "gated symbol `{name}` must not be in the inventory"
+            );
+        }
+        assert_eq!(
+            ffi_source_extern_fn_count(),
+            counted + gated.len(),
+            "every `pub extern \"C\" fn` in oxicrypt-ffi/src is an inventory function or a \
+             test_api.rs symbol; a new gated or cfg(test) export elsewhere breaks this sum"
+        );
     }
 
     /// English word for the small counts the docs spell out in prose.
