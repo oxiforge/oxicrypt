@@ -156,7 +156,8 @@ Three surfaces, one direction of flow — speculative → designed → actionabl
   and failure path, every number with its derivation, every platform behaviour relied on, out of scope.
   It is approved, together with the feature's acceptance criteria in `ISA.md`, by merging both in a pull
   request that carries no feature code; no feature code is written before that merge. A gap found during
-  the build is added to the PRD and approved the same way before the code that depends on it merges. The
+  the build is added to the PRD in its own docs commit on the feature branch and is approved with the
+  feature's pull request; a new feature or new code still needs its own code-free PRD merge first. The
   document **persists** as rationale. `docs/design/*.md` holds the design records written before this
   convention and takes no new files.
 
